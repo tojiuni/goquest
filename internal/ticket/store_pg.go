@@ -149,7 +149,7 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 
 	now := time.Now().UTC()
 	var completedAt *time.Time
-	if newStatus == StatusCompleted || newStatus == StatusFailed {
+	if newStatus == StatusCompleted {
 		if current.CompletedAt != nil {
 			completedAt = current.CompletedAt
 		} else {
@@ -189,6 +189,11 @@ func (s *pgStore) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int
 	if f.Domain != nil {
 		where += fmt.Sprintf(" AND domain=$%d", i)
 		args = append(args, string(*f.Domain))
+		i++
+	}
+	if f.AssigneeType != nil {
+		where += fmt.Sprintf(" AND assignee_type=$%d", i)
+		args = append(args, string(*f.AssigneeType))
 		i++
 	}
 	if f.AssigneeID != nil {

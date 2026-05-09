@@ -99,10 +99,11 @@ type UpdateTicketReq struct {
 }
 
 type ListTicketsFilter struct {
-	Status      *Status
-	Domain      *Domain
-	AssigneeID  *string
-	RequesterID *string
-	Limit       int
-	Offset      int
+	Status       *Status
+	Domain       *Domain
+	AssigneeType *AssigneeType
+	AssigneeID   *string
+	RequesterID  *string
+	Limit        int
+	Offset       int
 }

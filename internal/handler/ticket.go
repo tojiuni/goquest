@@ -52,6 +52,10 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 		dom := ticket.Domain(d)
 		f.Domain = &dom
 	}
+	if at := q.Get("assignee_type"); at != "" {
+		at2 := ticket.AssigneeType(at)
+		f.AssigneeType = &at2
+	}
 	if a := q.Get("assignee_id"); a != "" {
 		f.AssigneeID = &a
 	}
