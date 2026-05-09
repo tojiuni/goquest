@@ -1,0 +1,90 @@
+# goquest CI — Woodpecker + Kaniko
+# 두 이미지를 빌드 & 레지스트리 푸시:
+#   artifacts.toji.homes/neunexus/goquest-service:latest
+#   artifacts.toji.homes/neunexus/goquest-bot:latest
+# ArgoCD Image Updater가 digest 변경을 감지해 자동 배포.
+
+when:
+  - event: push
+    branch: main
+  - event: pull_request
+  - event: manual
+
+steps:
+  - name: registry-login
+    image: alpine:3.20
+    environment:
+      REGISTRY_TOKEN:
+        from_secret: REGISTRY_TOKEN
+    commands:
+      - |
+        TOKEN=$(printenv REGISTRY_TOKEN || true)
+        if [ -z "$TOKEN" ]; then
+          echo "ERROR: REGISTRY_TOKEN secret is not set"
+          exit 1
+        fi
+        mkdir -p .docker
+        printf '{"auths":{"artifacts.toji.homes":{"auth":"%s"}}}\n' \
+          "$(printf 'woodpecker-ci:%s' "$TOKEN" | base64 | tr -d '\n')" \
+          > .docker/config.json
+        echo "Registry login config written."
+    when:
+      - event: push
+        branch: main
+      - event: manual
+
+  - name: build-service
+    image: gcr.io/kaniko-project/executor:debug
+    commands:
+      - |
+        export DOCKER_CONFIG=$(pwd)/.docker
+        /kaniko/executor \
+          --context=dir://$(pwd) \
+          --dockerfile=$(pwd)/Dockerfile \
+          --build-arg CMD=service \
+          --destination=artifacts.toji.homes/neunexus/goquest-service:${CI_COMMIT_SHA:0:7} \
+          --destination=artifacts.toji.homes/neunexus/goquest-service:latest \
+          --cache=true \
+          --cache-repo=artifacts.toji.homes/neunexus/goquest-service/cache
+    when:
+      - event: push
+        branch: main
+      - event: manual
+
+  - name: build-bot
+    image: gcr.io/kaniko-project/executor:debug
+    commands:
+      - |
+        export DOCKER_CONFIG=$(pwd)/.docker
+        /kaniko/executor \
+          --context=dir://$(pwd) \
+          --dockerfile=$(pwd)/Dockerfile \
+          --build-arg CMD=bot \
+          --destination=artifacts.toji.homes/neunexus/goquest-bot:${CI_COMMIT_SHA:0:7} \
+          --destination=artifacts.toji.homes/neunexus/goquest-bot:latest \
+          --cache=true \
+          --cache-repo=artifacts.toji.homes/neunexus/goquest-bot/cache
+    when:
+      - event: push
+        branch: main
+      - event: manual
+
+  - name: validate
+    image: gcr.io/kaniko-project/executor:debug
+    commands:
+      - |
+        /kaniko/executor \
+          --context=dir://$(pwd) \
+          --dockerfile=$(pwd)/Dockerfile \
+          --build-arg CMD=service \
+          --no-push \
+          --snapshot-mode=redo
+      - |
+        /kaniko/executor \
+          --context=dir://$(pwd) \
+          --dockerfile=$(pwd)/Dockerfile \
+          --build-arg CMD=bot \
+          --no-push \
+          --snapshot-mode=redo
+    when:
+      - event: pull_request
