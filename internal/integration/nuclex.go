@@ -27,11 +27,11 @@ func NewNuclexEmitter(rdb *redis.Client, stream string) *NuclexEmitter {
 }
 
 func (e *NuclexEmitter) EmitCompleted(ctx context.Context, t *ticket.Ticket) error {
-	return e.emit(ctx, t, "ticket.completed", "info", "notify_only")
+	return e.emit(ctx, t, "ticket.completed", "info", "update_task")
 }
 
 func (e *NuclexEmitter) EmitFailed(ctx context.Context, t *ticket.Ticket) error {
-	return e.emit(ctx, t, "ticket.failed", "warning", "update_task")
+	return e.emit(ctx, t, "ticket.failed", "warning", "notify_only")
 }
 
 func (e *NuclexEmitter) emit(ctx context.Context, t *ticket.Ticket, eventType, severity, suggestedAction string) error {
