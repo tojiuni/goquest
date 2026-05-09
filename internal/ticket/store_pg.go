@@ -83,9 +83,25 @@ func (s *pgStore) Get(ctx context.Context, id uuid.UUID) (*Ticket, error) {
 }
 
 func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq) (*Ticket, error) {
-	current, err := s.Get(ctx, id)
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	row := tx.QueryRow(ctx, `
+		SELECT id, title, description, type, status, priority,
+		       assignee_type, assignee_id, requester_id, source_bot,
+		       domain, agent_context, vikunja_task_id, metadata,
+		       created_at, updated_at, completed_at
+		FROM tickets WHERE id = $1 FOR UPDATE`, id)
+
+	current, err := scanTicket(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get ticket for update: %w", err)
 	}
 
 	if req.Status != nil {
@@ -141,7 +157,7 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 		}
 	}
 
-	_, err = s.db.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
 		UPDATE tickets SET
 			status=$2, assignee_id=$3, assignee_type=$4, domain=$5,
 			agent_context=$6, vikunja_task_id=$7, updated_at=$8, completed_at=$9
@@ -151,6 +167,10 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update ticket: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit tx: %w", err)
 	}
 
 	return s.Get(ctx, id)

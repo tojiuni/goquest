@@ -2,7 +2,7 @@ package auth
 
 import (
 	"context"
-	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -32,8 +32,7 @@ func Middleware(jwksURL string, skip bool) func(http.Handler) http.Handler {
 
 	jwks, err := keyfunc.NewDefault([]string{jwksURL})
 	if err != nil {
-		// non-fatal at boot — requests will fail to validate until JWKS is reachable
-		_ = fmt.Sprintf("warn: could not initialise JWKS from %s: %v", jwksURL, err)
+		log.Printf("warn: could not initialise JWKS from %s: %v", jwksURL, err)
 	}
 
 	return func(next http.Handler) http.Handler {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 
 	"github.com/tojiuni/goquest/internal/ticket"
 )
@@ -205,16 +206,11 @@ func buildQueryString(payload map[string]any) string {
 	if len(payload) == 0 {
 		return ""
 	}
-	q := "?"
-	first := true
+	q := url.Values{}
 	for k, v := range payload {
-		if !first {
-			q += "&"
-		}
-		q += fmt.Sprintf("%s=%v", k, v)
-		first = false
+		q.Set(k, fmt.Sprintf("%v", v))
 	}
-	return q
+	return "?" + q.Encode()
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
