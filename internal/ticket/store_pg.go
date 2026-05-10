@@ -123,9 +123,16 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	row := tx.QueryRow(ctx,
-		ticketSelectSQL+"WHERE t.id = $1 GROUP BY t.id FOR UPDATE OF t", id)
+	// Lock the row first (FOR UPDATE is incompatible with GROUP BY in PostgreSQL).
+	var lockID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM tickets WHERE id = $1 FOR UPDATE`, id).Scan(&lockID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("lock ticket for update: %w", err)
+	}
 
+	row := tx.QueryRow(ctx, ticketSelectSQL+"WHERE t.id = $1 GROUP BY t.id", id)
 	current, err := scanTicket(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
