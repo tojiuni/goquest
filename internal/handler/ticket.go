@@ -151,6 +151,65 @@ func (h *TicketHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
+func (h *TicketHandler) ListSubtasks(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUID(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid ticket id")
+		return
+	}
+
+	subtasks, err := h.svc.ListSubtasks(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"subtasks": subtasks})
+}
+
+func (h *TicketHandler) SubmitAttempt(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUID(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid ticket id")
+		return
+	}
+
+	var req ticket.SubmitAttemptReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	userID := auth.RequesterID(r)
+	attempt, err := h.svc.SubmitAttempt(r.Context(), id, userID, req)
+	if err != nil {
+		if errors.Is(err, ticket.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "ticket not found")
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, attempt)
+}
+
+func (h *TicketHandler) ListAttempts(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUID(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid ticket id")
+		return
+	}
+
+	attempts, err := h.svc.ListAttempts(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"attempts": attempts})
+}
+
 func parseUUID(s string) (uuid.UUID, error) {
 	return uuid.Parse(s)
 }

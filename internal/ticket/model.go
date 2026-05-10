@@ -1,6 +1,7 @@
 package ticket
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
@@ -55,47 +56,108 @@ const (
 	DomainPM        Domain = "pm"
 )
 
+// Visibility controls who can see a ticket beyond RBAC.
+type Visibility string
+
+const (
+	VisibilityProject    Visibility = "project"
+	VisibilityRestricted Visibility = "restricted"
+)
+
+// CompletionMode defines how a ticket is marked completed.
+type CompletionMode string
+
+const (
+	CompletionManual  CompletionMode = "manual"
+	CompletionAnswer  CompletionMode = "answer"
+	CompletionAgent   CompletionMode = "agent"
+	CompletionSubtask CompletionMode = "subtask"
+)
+
+// CompletionSpec is the JSONB payload for answer/agent modes.
+type CompletionSpec map[string]any
+
+func (c CompletionSpec) MarshalJSON() ([]byte, error) {
+	if c == nil {
+		return []byte("{}"), nil
+	}
+	return json.Marshal(map[string]any(c))
+}
+
 type Ticket struct {
-	ID            uuid.UUID      `json:"id"`
-	Title         string         `json:"title"`
-	Description   string         `json:"description"`
-	Type          TicketType     `json:"type"`
-	Status        Status         `json:"status"`
-	Priority      Priority       `json:"priority"`
-	AssigneeType  AssigneeType   `json:"assignee_type"`
-	AssigneeID    string         `json:"assignee_id"`
-	RequesterID   string         `json:"requester_id"`
-	SourceBot     string         `json:"source_bot,omitempty"`
-	Domain        Domain         `json:"domain,omitempty"`
-	AgentContext  map[string]any `json:"agent_context,omitempty"`
-	VikunjaTaskID *int64         `json:"vikunja_task_id,omitempty"`
-	Metadata      map[string]any `json:"metadata,omitempty"`
-	CreatedAt     time.Time      `json:"created_at"`
-	UpdatedAt     time.Time      `json:"updated_at"`
-	CompletedAt   *time.Time     `json:"completed_at,omitempty"`
+	ID             uuid.UUID      `json:"id"`
+	Title          string         `json:"title"`
+	Description    string         `json:"description"`
+	Type           TicketType     `json:"type"`
+	Status         Status         `json:"status"`
+	Priority       Priority       `json:"priority"`
+	AssigneeType   AssigneeType   `json:"assignee_type"`
+	AssigneeID     string         `json:"assignee_id"`
+	RequesterID    string         `json:"requester_id"`
+	SourceBot      string         `json:"source_bot,omitempty"`
+	Domain         Domain         `json:"domain,omitempty"`
+	AgentContext   map[string]any `json:"agent_context,omitempty"`
+	VikunjaTaskID  *int64         `json:"vikunja_task_id,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
+	// Phase 0: multi-tenancy + game quest fields
+	ProjectID      *uuid.UUID     `json:"project_id,omitempty"`
+	ParentID       *uuid.UUID     `json:"parent_id,omitempty"`
+	Visibility     Visibility     `json:"visibility"`
+	CompletionMode CompletionMode `json:"completion_mode"`
+	CompletionSpec CompletionSpec `json:"completion_spec,omitempty"`
+	RewardXP       int            `json:"reward_xp"`
+	DueAt          *time.Time     `json:"due_at,omitempty"`
+	CallbackURL    string         `json:"callback_url,omitempty"`
+	Tags           []Tag          `json:"tags,omitempty"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+	CompletedAt    *time.Time     `json:"completed_at,omitempty"`
+}
+
+// Tag is a workspace-scoped label attached to tickets.
+type Tag struct {
+	ID    uuid.UUID `json:"id"`
+	Name  string    `json:"name"`
+	Color string    `json:"color"`
 }
 
 type CreateTicketReq struct {
-	Title         string         `json:"title"`
-	Description   string         `json:"description"`
-	Type          TicketType     `json:"type"`
-	Priority      Priority       `json:"priority"`
-	AssigneeType  AssigneeType   `json:"assignee_type"`
-	AssigneeID    string         `json:"assignee_id"`
-	Domain        Domain         `json:"domain,omitempty"`
-	AgentContext  map[string]any `json:"agent_context,omitempty"`
-	SourceBot     string         `json:"source_bot,omitempty"`
-	VikunjaTaskID *int64         `json:"vikunja_task_id,omitempty"`
-	Metadata      map[string]any `json:"metadata,omitempty"`
+	Title          string         `json:"title"`
+	Description    string         `json:"description"`
+	Type           TicketType     `json:"type"`
+	Priority       Priority       `json:"priority"`
+	AssigneeType   AssigneeType   `json:"assignee_type"`
+	AssigneeID     string         `json:"assignee_id"`
+	Domain         Domain         `json:"domain,omitempty"`
+	AgentContext   map[string]any `json:"agent_context,omitempty"`
+	SourceBot      string         `json:"source_bot,omitempty"`
+	VikunjaTaskID  *int64         `json:"vikunja_task_id,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
+	ProjectID      *uuid.UUID     `json:"project_id,omitempty"`
+	ParentID       *uuid.UUID     `json:"parent_id,omitempty"`
+	Visibility     Visibility     `json:"visibility,omitempty"`
+	CompletionMode CompletionMode `json:"completion_mode,omitempty"`
+	CompletionSpec CompletionSpec `json:"completion_spec,omitempty"`
+	RewardXP       int            `json:"reward_xp,omitempty"`
+	DueAt          *time.Time     `json:"due_at,omitempty"`
+	CallbackURL    string         `json:"callback_url,omitempty"`
+	TagIDs         []uuid.UUID    `json:"tag_ids,omitempty"`
 }
 
 type UpdateTicketReq struct {
-	Status        *Status        `json:"status,omitempty"`
-	AssigneeID    *string        `json:"assignee_id,omitempty"`
-	AssigneeType  *AssigneeType  `json:"assignee_type,omitempty"`
-	Domain        *Domain        `json:"domain,omitempty"`
-	AgentContext  map[string]any `json:"agent_context,omitempty"`
-	VikunjaTaskID *int64         `json:"vikunja_task_id,omitempty"`
+	Status         *Status        `json:"status,omitempty"`
+	AssigneeID     *string        `json:"assignee_id,omitempty"`
+	AssigneeType   *AssigneeType  `json:"assignee_type,omitempty"`
+	Domain         *Domain        `json:"domain,omitempty"`
+	AgentContext   map[string]any `json:"agent_context,omitempty"`
+	VikunjaTaskID  *int64         `json:"vikunja_task_id,omitempty"`
+	Visibility     *Visibility    `json:"visibility,omitempty"`
+	CompletionMode *CompletionMode `json:"completion_mode,omitempty"`
+	CompletionSpec CompletionSpec  `json:"completion_spec,omitempty"`
+	RewardXP       *int           `json:"reward_xp,omitempty"`
+	DueAt          *time.Time     `json:"due_at,omitempty"`
+	CallbackURL    *string        `json:"callback_url,omitempty"`
+	TagIDs         []uuid.UUID    `json:"tag_ids,omitempty"`
 }
 
 type ListTicketsFilter struct {
@@ -104,6 +166,40 @@ type ListTicketsFilter struct {
 	AssigneeType *AssigneeType
 	AssigneeID   *string
 	RequesterID  *string
+	ProjectID    *uuid.UUID
+	ParentID     *uuid.UUID
+	TagIDs       []uuid.UUID
 	Limit        int
 	Offset       int
+}
+
+// Attempt records a user's answer submission for answer-mode tickets.
+type Attempt struct {
+	ID          uuid.UUID `json:"id"`
+	TicketID    uuid.UUID `json:"ticket_id"`
+	UserID      string    `json:"user_id"`
+	Answer      string    `json:"answer"`
+	IsCorrect   *bool     `json:"is_correct"`
+	AIFeedback  string    `json:"ai_feedback,omitempty"`
+	AttemptedAt time.Time `json:"attempted_at"`
+}
+
+type SubmitAttemptReq struct {
+	Answer string `json:"answer"`
+}
+
+// AnswerSpec is the parsed completion_spec for answer-mode tickets.
+type AnswerSpec struct {
+	Question      string   `json:"question"`
+	AnswerType    string   `json:"answer_type"` // "exact" | "choice" | "ai_eval"
+	CorrectAnswer string   `json:"correct_answer,omitempty"`
+	Choices       []string `json:"choices,omitempty"`
+	MaxAttempts   int      `json:"max_attempts"`
+	Hint          string   `json:"hint,omitempty"`
+	AIAgentID     string   `json:"ai_agent_id,omitempty"`
+}
+
+// IsTerminal returns true for statuses that allow no further transitions.
+func (s Status) IsTerminal() bool {
+	return s == StatusCompleted || s == StatusCancelled || s == StatusFailed
 }

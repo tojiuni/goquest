@@ -18,8 +18,11 @@ import (
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/integration"
 	"github.com/tojiuni/goquest/internal/migrate"
+	"github.com/tojiuni/goquest/internal/project"
 	"github.com/tojiuni/goquest/internal/queue"
+	"github.com/tojiuni/goquest/internal/tag"
 	"github.com/tojiuni/goquest/internal/ticket"
+	"github.com/tojiuni/goquest/internal/workspace"
 )
 
 func main() {
@@ -61,8 +64,20 @@ func main() {
 	nuclexEmitter := integration.NewNuclexEmitter(rdb, cfg.NuclexEventsStream)
 	svc := ticket.NewService(store, pub, nuclexEmitter)
 
+	wsStore := workspace.NewPGStore(pool)
+	wsSvc := workspace.NewService(wsStore)
+
+	pjStore := project.NewPGStore(pool)
+	pjSvc := project.NewService(pjStore)
+
+	tagStore := tag.NewPGStore(pool)
+	tagSvc := tag.NewService(tagStore)
+
 	ticketH := handler.NewTicketHandler(svc)
 	healthH := handler.NewHealthHandler(pool, rdb)
+	wsH := handler.NewWorkspaceHandler(wsSvc)
+	pjH := handler.NewProjectHandler(pjSvc)
+	tagH := handler.NewTagHandler(tagSvc)
 
 	// --- Router ---
 	r := chi.NewRouter()
@@ -72,6 +87,11 @@ func main() {
 	r.Use(middleware.Recoverer)
 
 	authMiddleware := auth.Middleware(cfg.JWKSUrl, cfg.SkipAuth)
+	requireWsViewer := auth.RequireWorkspaceRole(wsStore, workspace.RoleViewer)
+	requireWsAdmin := auth.RequireWorkspaceRole(wsStore, workspace.RoleAdmin)
+	requireWsOwner := auth.RequireWorkspaceRole(wsStore, workspace.RoleOwner)
+	requirePjViewer := auth.RequireProjectRole(pjStore, project.RoleViewer)
+	requirePjAdmin := auth.RequireProjectRole(pjStore, project.RoleAdmin)
 
 	r.Get("/healthz", healthH.Health)
 
@@ -81,11 +101,63 @@ func main() {
 
 		r.Group(func(r chi.Router) {
 			r.Use(authMiddleware)
+
+			// ── Legacy ticket routes (no project context) ──────────
 			r.Post("/tickets", ticketH.Create)
 			r.Get("/tickets", ticketH.List)
-			r.Get("/tickets/{id}", ticketH.Get)
-			r.Patch("/tickets/{id}", ticketH.Update)
-			r.Delete("/tickets/{id}", ticketH.Cancel)
+			r.Route("/tickets/{id}", func(r chi.Router) {
+				r.Get("/", ticketH.Get)
+				r.Patch("/", ticketH.Update)
+				r.Delete("/", ticketH.Cancel)
+				r.Get("/subtasks", ticketH.ListSubtasks)
+				r.Post("/attempts", ticketH.SubmitAttempt)
+				r.Get("/attempts", ticketH.ListAttempts)
+			})
+
+			// ── Workspace ──────────────────────────────────────────
+			r.Post("/workspaces", wsH.Create)
+			r.Get("/workspaces", wsH.List)
+
+			r.Route("/workspaces/{wid}", func(r chi.Router) {
+				r.With(requireWsViewer).Get("/", wsH.Get)
+				r.With(requireWsAdmin).Patch("/", wsH.Update)
+				r.With(requireWsOwner).Delete("/", wsH.Delete)
+
+				r.With(requireWsViewer).Get("/members", wsH.ListMembers)
+				r.With(requireWsOwner).Patch("/members/{uid}/role", wsH.SetMemberRole)
+				r.With(requireWsAdmin).Delete("/members/{uid}", wsH.RemoveMember)
+
+				r.With(requireWsAdmin).Post("/invitations", wsH.CreateInvitation)
+				r.With(requireWsAdmin).Get("/invitations", wsH.ListInvitations)
+				r.With(requireWsAdmin).Delete("/invitations/{iid}", wsH.DeleteInvitation)
+
+				// ── Tags ──────────────────────────────────────────
+				r.With(requireWsAdmin).Post("/tags", tagH.Create)
+				r.With(requireWsViewer).Get("/tags", tagH.List)
+				r.Route("/tags/{tid}", func(r chi.Router) {
+					r.With(requireWsViewer).Get("/", tagH.Get)
+					r.With(requireWsAdmin).Patch("/", tagH.Update)
+					r.With(requireWsAdmin).Delete("/", tagH.Delete)
+				})
+
+				// ── Project ────────────────────────────────────────
+				r.With(requireWsAdmin).Post("/projects", pjH.Create)
+				r.With(requireWsViewer).Get("/projects", pjH.List)
+
+				r.Route("/projects/{pid}", func(r chi.Router) {
+					r.With(requireWsViewer, requirePjViewer).Get("/", pjH.Get)
+					r.With(requireWsViewer, requirePjAdmin).Patch("/", pjH.Update)
+					r.With(requireWsAdmin).Delete("/", pjH.Delete)
+
+					r.With(requireWsViewer, requirePjViewer).Get("/members", pjH.ListMembers)
+					r.With(requireWsViewer, requirePjAdmin).Post("/members", pjH.AddMember)
+					r.With(requireWsViewer, requirePjAdmin).Patch("/members/{uid}/role", pjH.SetMemberRole)
+					r.With(requireWsViewer, requirePjAdmin).Delete("/members/{uid}", pjH.RemoveMember)
+				})
+			})
+
+			// ── Invitation accept (global, no workspace middleware) ─
+			r.Post("/invitations/{token}/accept", wsH.AcceptInvitation)
 		})
 	})
 
