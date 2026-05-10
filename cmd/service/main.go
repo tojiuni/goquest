@@ -24,6 +24,7 @@ import (
 	"github.com/tojiuni/goquest/internal/tag"
 	"github.com/tojiuni/goquest/internal/ticket"
 	"github.com/tojiuni/goquest/internal/workspace"
+	"github.com/tojiuni/goquest/internal/xp"
 )
 
 func main() {
@@ -60,10 +61,13 @@ func main() {
 	}
 
 	// --- Wiring ---
+	xpStore := xp.NewPGStore(pool)
+	xpSvc := xp.NewService(xpStore)
+
 	store := ticket.NewPGStore(pool)
 	pub := queue.NewPublisher(rdb)
 	nuclexEmitter := integration.NewNuclexEmitter(rdb, cfg.NuclexEventsStream)
-	svc := ticket.NewService(store, pub, nuclexEmitter)
+	svc := ticket.NewService(store, pub, nuclexEmitter, xpSvc)
 
 	wsStore := workspace.NewPGStore(pool)
 	wsSvc := workspace.NewService(wsStore)
@@ -95,6 +99,7 @@ func main() {
 	wsH := handler.NewWorkspaceHandler(wsSvc)
 	pjH := handler.NewProjectHandler(pjSvc)
 	tagH := handler.NewTagHandler(tagSvc)
+	xpH := handler.NewXPHandler(xpSvc)
 
 	// --- Router ---
 	r := chi.NewRouter()
@@ -131,6 +136,9 @@ func main() {
 				r.Get("/attempts", ticketH.ListAttempts)
 			})
 
+			// ── XP Levels ─────────────────────────────────────────
+			r.Get("/xp/levels", xpH.ListLevels)
+
 			// ── Workspace ──────────────────────────────────────────
 			r.Post("/workspaces", wsH.Create)
 			r.Get("/workspaces", wsH.List)
@@ -139,6 +147,8 @@ func main() {
 				r.With(requireWsViewer).Get("/", wsH.Get)
 				r.With(requireWsAdmin).Patch("/", wsH.Update)
 				r.With(requireWsOwner).Delete("/", wsH.Delete)
+
+				r.With(requireWsViewer).Get("/xp/me", xpH.GetMyXP)
 
 				r.With(requireWsViewer).Get("/members", wsH.ListMembers)
 				r.With(requireWsOwner).Patch("/members/{uid}/role", wsH.SetMemberRole)

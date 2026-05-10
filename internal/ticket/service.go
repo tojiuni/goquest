@@ -23,14 +23,20 @@ type NuclexEmitter interface {
 	EmitFailed(ctx context.Context, t *Ticket) error
 }
 
+// XPAwarder is called when a ticket is completed to grant XP.
+type XPAwarder interface {
+	AwardXP(ctx context.Context, workspaceID, userID string, amount int) error
+}
+
 type Service struct {
 	store  Store
 	pub    Publisher
 	nuclex NuclexEmitter
+	xp     XPAwarder
 }
 
-func NewService(store Store, pub Publisher, nuclex NuclexEmitter) *Service {
-	return &Service{store: store, pub: pub, nuclex: nuclex}
+func NewService(store Store, pub Publisher, nuclex NuclexEmitter, xp XPAwarder) *Service {
+	return &Service{store: store, pub: pub, nuclex: nuclex, xp: xp}
 }
 
 // Create creates a new ticket. requesterID is pre-extracted from the JWT by the HTTP handler.
@@ -138,6 +144,13 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 			}
 			if emitErr != nil {
 				log.Printf("warn: nuclex emit: %v", emitErr)
+			}
+		}
+		// Award XP to requester on successful completion.
+		if t.Status == StatusCompleted && t.RewardXP > 0 && t.ProjectID != nil && s.xp != nil {
+			workspaceID := t.ProjectID.String() // proxy: workspace derived from context at higher layer
+			if err := s.xp.AwardXP(ctx, workspaceID, t.RequesterID, t.RewardXP); err != nil {
+				log.Printf("warn: award xp: %v", err)
 			}
 		}
 	}
