@@ -18,11 +18,29 @@ type pgStore struct{ pool *pgxpool.Pool }
 
 func NewPGStore(pool *pgxpool.Pool) Store { return &pgStore{pool: pool} }
 
+const apiKeySelectFields = `
+	id, project_id, name, created_by,
+	scope, allowed_capabilities, allowed_origins, rate_limit_per_min, daily_quota,
+	expires_at, last_used_at, created_at`
+
+func scanAPIKey(row interface{ Scan(dest ...any) error }, k *APIKey) error {
+	return row.Scan(
+		&k.ID, &k.ProjectID, &k.Name, &k.CreatedBy,
+		&k.Scope, &k.AllowedCapabilities, &k.AllowedOrigins, &k.RateLimitPerMin, &k.DailyQuota,
+		&k.ExpiresAt, &k.LastUsedAt, &k.CreatedAt,
+	)
+}
+
 func (s *pgStore) Create(ctx context.Context, k *APIKey, keyHash string) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO project_api_keys (id, project_id, name, key_hash, created_by, expires_at, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		k.ID, k.ProjectID, k.Name, keyHash, k.CreatedBy, k.ExpiresAt, k.CreatedAt,
+		INSERT INTO project_api_keys
+			(id, project_id, name, key_hash, created_by,
+			 scope, allowed_capabilities, allowed_origins, rate_limit_per_min, daily_quota,
+			 expires_at, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+		k.ID, k.ProjectID, k.Name, keyHash, k.CreatedBy,
+		string(k.Scope), k.AllowedCapabilities, k.AllowedOrigins, k.RateLimitPerMin, k.DailyQuota,
+		k.ExpiresAt, k.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert api key: %w", err)
@@ -32,7 +50,7 @@ func (s *pgStore) Create(ctx context.Context, k *APIKey, keyHash string) error {
 
 func (s *pgStore) List(ctx context.Context, projectID uuid.UUID) ([]*APIKey, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, project_id, name, created_by, expires_at, last_used_at, created_at
+		SELECT `+apiKeySelectFields+`
 		FROM project_api_keys
 		WHERE project_id = $1
 		ORDER BY created_at DESC`, projectID)
@@ -44,8 +62,7 @@ func (s *pgStore) List(ctx context.Context, projectID uuid.UUID) ([]*APIKey, err
 	var keys []*APIKey
 	for rows.Next() {
 		k := &APIKey{}
-		if err := rows.Scan(&k.ID, &k.ProjectID, &k.Name, &k.CreatedBy,
-			&k.ExpiresAt, &k.LastUsedAt, &k.CreatedAt); err != nil {
+		if err := scanAPIKey(rows, k); err != nil {
 			return nil, fmt.Errorf("scan api key: %w", err)
 		}
 		keys = append(keys, k)
@@ -60,19 +77,16 @@ func (s *pgStore) Delete(ctx context.Context, id uuid.UUID) error {
 
 func (s *pgStore) FindByHash(ctx context.Context, keyHash string) (*APIKey, error) {
 	k := &APIKey{}
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, project_id, name, created_by, expires_at, last_used_at, created_at
+	err := scanAPIKey(s.pool.QueryRow(ctx, `
+		SELECT `+apiKeySelectFields+`
 		FROM project_api_keys
-		WHERE key_hash = $1`, keyHash).
-		Scan(&k.ID, &k.ProjectID, &k.Name, &k.CreatedBy,
-			&k.ExpiresAt, &k.LastUsedAt, &k.CreatedAt)
+		WHERE key_hash = $1`, keyHash), k)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("find api key: %w", err)
 	}
-	// Reject expired keys.
 	if k.ExpiresAt != nil && k.ExpiresAt.Before(time.Now()) {
 		return nil, ErrNotFound
 	}

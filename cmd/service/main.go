@@ -17,6 +17,7 @@ import (
 	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/comment"
 	"github.com/tojiuni/goquest/internal/config"
+	"github.com/tojiuni/goquest/internal/macro"
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/integration"
 	"github.com/tojiuni/goquest/internal/migrate"
@@ -122,6 +123,15 @@ func main() {
 	// Phase H3+: customer-token contexts must downgrade this to false.
 	commentH := handler.NewCommentHandler(commentSvc, nil)
 
+	macroStore := macro.NewPGStore(pool)
+	macroSvc := macro.NewService(macroStore)
+	macroH := handler.NewMacroHandler(macroSvc)
+
+	// Adapter: apikey.Service implements VerifyAPIKey (string) but VerifyAPIKeyMeta
+	// returns *apikey.MetaInfo. Wrap it so the auth middleware can take a
+	// RichKeyVerifier returning *auth.APIKeyMeta without an apikey↔auth import cycle.
+	richKeyVerifier := &keyVerifierAdapter{svc: apiKeySvc}
+
 	// SSE hub — reads all ticket streams and fans out to connected clients.
 	sseHub := sse.New(rdb,
 		queue.StreamCreated,
@@ -152,8 +162,12 @@ func main() {
 
 		r.Group(func(r chi.Router) {
 			// API key check runs before JWT so agents can use X-API-Key header.
-			r.Use(auth.APIKeyMiddleware(apiKeySvc))
+			// APIKeyMiddlewareRich also stores APIKeyMeta in the context so per-route
+			// capability/origin/rate-limit middleware can enforce policy.
+			r.Use(auth.APIKeyMiddlewareRich(richKeyVerifier))
 			r.Use(authMiddleware)
+			r.Use(auth.EnforceKeyOrigin())
+			r.Use(auth.EnforceKeyRateLimit(rdb))
 
 			// ── Legacy ticket routes (no project context) ──────────
 			r.Post("/tickets", ticketH.Create)
@@ -207,6 +221,14 @@ func main() {
 					r.With(requireWsViewer).Get("/", tagH.Get)
 					r.With(requireWsAdmin).Patch("/", tagH.Update)
 					r.With(requireWsAdmin).Delete("/", tagH.Delete)
+				})
+
+				// ── Macros (Phase H2) ─────────────────────────────
+				r.With(requireWsAdmin).Post("/macros", macroH.Create)
+				r.With(requireWsViewer).Get("/macros", macroH.List)
+				r.Route("/macros/{mid}", func(r chi.Router) {
+					r.With(requireWsAdmin).Patch("/", macroH.Update)
+					r.With(requireWsAdmin).Delete("/", macroH.Delete)
 				})
 
 				// ── Project ────────────────────────────────────────
@@ -294,4 +316,29 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown: %v", err)
 	}
+}
+
+// keyVerifierAdapter wraps apikey.Service to satisfy auth.RichKeyVerifier.
+// apikey.Service.VerifyAPIKeyMeta returns *apikey.MetaInfo (a per-package
+// struct chosen to avoid an apikey↔auth import cycle); this adapter converts
+// that to *auth.APIKeyMeta which the middleware understands.
+type keyVerifierAdapter struct{ svc *apikey.Service }
+
+func (a *keyVerifierAdapter) VerifyAPIKey(ctx context.Context, plainKey string) (string, error) {
+	return a.svc.VerifyAPIKey(ctx, plainKey)
+}
+
+func (a *keyVerifierAdapter) VerifyAPIKeyMeta(ctx context.Context, plainKey string) (string, *auth.APIKeyMeta, error) {
+	rid, info, err := a.svc.VerifyAPIKeyMeta(ctx, plainKey)
+	if err != nil {
+		return "", nil, err
+	}
+	return rid, &auth.APIKeyMeta{
+		ID:                  info.ID,
+		ProjectID:           info.ProjectID,
+		Scope:               info.Scope,
+		AllowedCapabilities: info.AllowedCapabilities,
+		AllowedOrigins:      info.AllowedOrigins,
+		RateLimitPerMin:     info.RateLimitPerMin,
+	}, nil
 }
