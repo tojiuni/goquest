@@ -69,7 +69,7 @@ func callExecute(t *testing.T, h *Handler, req ExecuteRequest) ExecuteResponse {
 }
 
 func TestExecute_UnknownCapability(t *testing.T) {
-	h := NewHandler("http://unused", nil)
+	h := NewHandler("http://unused", "", "", nil)
 	resp := callExecute(t, h, ExecuteRequest{Capability: "unknown.cap"})
 	if resp.OK {
 		t.Error("expected OK=false for unknown capability")
@@ -80,7 +80,7 @@ func TestExecute_UnknownCapability(t *testing.T) {
 }
 
 func TestExecute_Health(t *testing.T) {
-	h := NewHandler("http://unused", nil)
+	h := NewHandler("http://unused", "", "", nil)
 	resp := callExecute(t, h, ExecuteRequest{Capability: "ticket.health", TaskID: "test-123"})
 	if !resp.OK {
 		t.Errorf("expected OK=true for ticket.health, got error: %s", resp.Error)
@@ -91,7 +91,7 @@ func TestExecute_Health(t *testing.T) {
 }
 
 func TestExecute_GetTicket_MissingID(t *testing.T) {
-	h := NewHandler("http://unused", nil)
+	h := NewHandler("http://unused", "", "", nil)
 	resp := callExecute(t, h, ExecuteRequest{
 		Capability: "ticket.get",
 		Payload:    map[string]any{},
@@ -106,7 +106,7 @@ func TestExecute_ListTickets_CallsService(t *testing.T) {
 	srv := newFakeService(http.StatusOK, ticketList)
 	defer srv.Close()
 
-	h := NewHandler(srv.URL, &http.Client{})
+	h := NewHandler(srv.URL, "", "", &http.Client{})
 	resp := callExecute(t, h, ExecuteRequest{
 		Capability: "ticket.list",
 		Payload:    map[string]any{"limit": 10},
@@ -120,7 +120,7 @@ func TestExecute_CreateTicket_ServiceError(t *testing.T) {
 	srv := newFakeService(http.StatusBadRequest, map[string]string{"error": "title required"})
 	defer srv.Close()
 
-	h := NewHandler(srv.URL, &http.Client{})
+	h := NewHandler(srv.URL, "", "", &http.Client{})
 	resp := callExecute(t, h, ExecuteRequest{
 		Capability: "ticket.create",
 		Payload:    map[string]any{"title": ""},
@@ -140,7 +140,7 @@ func TestExecute_AssignTicket_DomainToAssigneeID(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	h := NewHandler(srv.URL, &http.Client{})
+	h := NewHandler(srv.URL, "", "", &http.Client{})
 	resp := callExecute(t, h, ExecuteRequest{
 		Capability: "ticket.assign",
 		Payload: map[string]any{
@@ -160,7 +160,7 @@ func TestExecute_AssignTicket_DomainToAssigneeID(t *testing.T) {
 }
 
 func TestExecute_InvalidJSON(t *testing.T) {
-	h := NewHandler("http://unused", nil)
+	h := NewHandler("http://unused", "", "", nil)
 	r := httptest.NewRequest(http.MethodPost, "/execute", strings.NewReader("{invalid json"))
 	w := httptest.NewRecorder()
 	h.Execute(w, r)
