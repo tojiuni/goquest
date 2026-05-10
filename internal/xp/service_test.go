@@ -36,6 +36,14 @@ func (m *mockStore) LevelForXP(_ context.Context, _ int) (*xp.Level, error) {
 	return m.levelFor, nil
 }
 
+func (m *mockStore) ListLeaderboard(_ context.Context, _ string, _ int) ([]*xp.UserXP, error) {
+	return nil, nil
+}
+
+func (m *mockStore) ListXPHistory(_ context.Context, _, _ string, _ int) ([]*xp.XPEvent, error) {
+	return nil, nil
+}
+
 // --- helpers ---
 
 func makeUserXP(xpVal, level int) *xp.UserXP {

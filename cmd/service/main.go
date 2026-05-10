@@ -176,6 +176,8 @@ func main() {
 				r.With(requireWsOwner).Delete("/", wsH.Delete)
 
 				r.With(requireWsViewer).Get("/xp/me", xpH.GetMyXP)
+				r.With(requireWsViewer).Get("/xp/leaderboard", xpH.Leaderboard)
+				r.With(requireWsViewer).Get("/xp/history", xpH.GetXPHistory)
 
 				r.With(requireWsViewer).Get("/members", wsH.ListMembers)
 				r.With(requireWsOwner).Patch("/members/{uid}/role", wsH.SetMemberRole)
