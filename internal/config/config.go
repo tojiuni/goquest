@@ -21,6 +21,13 @@ type Config struct {
 	SkipAuth  bool
 	PublicURL string // SPA public URL, used for magic-link emails
 
+	// SMTP (Phase H4) — empty SMTPHost = log-only dev mode
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUser     string
+	SMTPPassword string
+	SMTPFrom     string
+
 	GoquestServiceURL  string
 	GoquestAPIKey      string
 	DefaultProjectID   string
@@ -49,6 +56,12 @@ func Load() *Config {
 		SkipAuth:  parseBool(os.Getenv("SKIP_AUTH"), false),
 		PublicURL: envOrDefault("GOQUEST_PUBLIC_URL", "https://goquest.toji.homes"),
 
+		SMTPHost:     os.Getenv("SMTP_HOST"),
+		SMTPPort:     parseInt(os.Getenv("SMTP_PORT"), 587),
+		SMTPUser:     os.Getenv("SMTP_USER"),
+		SMTPPassword: os.Getenv("SMTP_PASSWORD"),
+		SMTPFrom:     envOrDefault("SMTP_FROM", "Goquest <noreply@toji.homes>"),
+
 		GoquestServiceURL:  os.Getenv("GOQUEST_SERVICE_URL"),
 		GoquestAPIKey:      os.Getenv("GOQUEST_API_KEY"),
 		DefaultProjectID:   os.Getenv("GOQUEST_DEFAULT_PROJECT_ID"),
@@ -70,6 +83,17 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func parseInt(s string, def int) int {
+	if s == "" {
+		return def
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return def
+	}
+	return v
 }
 
 func parseBool(s string, def bool) bool {

@@ -21,6 +21,7 @@ import (
 	"github.com/tojiuni/goquest/internal/config"
 	"github.com/tojiuni/goquest/internal/macro"
 	"github.com/tojiuni/goquest/internal/magic"
+	"github.com/tojiuni/goquest/internal/notify"
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/integration"
 	"github.com/tojiuni/goquest/internal/migrate"
@@ -137,7 +138,14 @@ func main() {
 	if publicURL == "" {
 		publicURL = "https://goquest.toji.homes"
 	}
-	magicH := handler.NewMagicHandler(magicSvc, nil, publicURL) // Phase H4 wires EmailDelivery
+	mailer := notify.New(notify.Config{
+		Host:     cfg.SMTPHost,
+		Port:     cfg.SMTPPort,
+		Username: cfg.SMTPUser,
+		Password: cfg.SMTPPassword,
+		From:     cfg.SMTPFrom,
+	})
+	magicH := handler.NewMagicHandler(magicSvc, mailer, publicURL)
 
 	// Adapter: apikey.Service implements VerifyAPIKey (string) but VerifyAPIKeyMeta
 	// returns *apikey.MetaInfo. Wrap it so the auth middleware can take a
