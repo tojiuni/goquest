@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 
+	"github.com/google/uuid"
 	"github.com/tojiuni/goquest/internal/ticket"
 )
 
@@ -26,15 +27,22 @@ type ExecuteResponse struct {
 }
 
 type Handler struct {
-	serviceURL string
-	client     *http.Client
+	serviceURL       string
+	apiKey           string
+	defaultProjectID string
+	client           *http.Client
 }
 
-func NewHandler(serviceURL string, client *http.Client) *Handler {
+func NewHandler(serviceURL, apiKey, defaultProjectID string, client *http.Client) *Handler {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Handler{serviceURL: serviceURL, client: client}
+	return &Handler{
+		serviceURL:       serviceURL,
+		apiKey:           apiKey,
+		defaultProjectID: defaultProjectID,
+		client:           client,
+	}
 }
 
 func (h *Handler) Execute(w http.ResponseWriter, r *http.Request) {
@@ -60,8 +68,14 @@ func (h *Handler) Execute(w http.ResponseWriter, r *http.Request) {
 		result, err = h.updateTicket(r, req)
 	case "ticket.cancel":
 		result, err = h.cancelTicket(r, req)
+	case "ticket.complete":
+		result, err = h.completeTicket(r, req)
 	case "ticket.assign":
 		result, err = h.assignTicket(r, req)
+	case "ticket.subtasks":
+		result, err = h.listSubtasks(r, req)
+	case "project.list":
+		result, err = h.listProjects(r, req)
 	case "ticket.health":
 		writeJSON(w, http.StatusOK, ExecuteResponse{OK: true, Result: map[string]string{"status": "ok"}, TaskID: req.TaskID})
 		return
@@ -87,6 +101,13 @@ func (h *Handler) createTicket(r *http.Request, req ExecuteRequest) (any, error)
 	if err := remapPayload(req.Payload, &createReq); err != nil {
 		return nil, fmt.Errorf("invalid payload: %w", err)
 	}
+	// inject default project_id when not provided by the caller
+	if createReq.ProjectID == nil && h.defaultProjectID != "" {
+		pid, err := uuid.Parse(h.defaultProjectID)
+		if err == nil {
+			createReq.ProjectID = &pid
+		}
+	}
 	return h.callService(r, "POST", "/api/v1/tickets", createReq)
 }
 
@@ -108,7 +129,6 @@ func (h *Handler) updateTicket(r *http.Request, req ExecuteRequest) (any, error)
 	if !ok || id == "" {
 		return nil, fmt.Errorf("payload.id is required")
 	}
-	// strip id from the update body
 	updatePayload := make(map[string]any, len(req.Payload))
 	for k, v := range req.Payload {
 		if k != "id" {
@@ -128,6 +148,23 @@ func (h *Handler) cancelTicket(r *http.Request, req ExecuteRequest) (any, error)
 		return nil, fmt.Errorf("payload.id is required")
 	}
 	return h.callService(r, "DELETE", "/api/v1/tickets/"+id, nil)
+}
+
+func (h *Handler) completeTicket(r *http.Request, req ExecuteRequest) (any, error) {
+	id, ok := req.Payload["id"].(string)
+	if !ok || id == "" {
+		return nil, fmt.Errorf("payload.id is required")
+	}
+	status := ticket.StatusCompleted
+	updateReq := ticket.UpdateTicketReq{Status: &status}
+	if result, ok := req.Payload["result"]; ok {
+		if m, ok := result.(map[string]any); ok {
+			updateReq.AgentContext = m
+		} else {
+			updateReq.AgentContext = map[string]any{"result": result}
+		}
+	}
+	return h.callService(r, "PATCH", "/api/v1/tickets/"+id, updateReq)
 }
 
 func (h *Handler) assignTicket(r *http.Request, req ExecuteRequest) (any, error) {
@@ -151,6 +188,22 @@ func (h *Handler) assignTicket(r *http.Request, req ExecuteRequest) (any, error)
 	return h.callService(r, "PATCH", "/api/v1/tickets/"+id, updateReq)
 }
 
+func (h *Handler) listSubtasks(r *http.Request, req ExecuteRequest) (any, error) {
+	id, ok := req.Payload["id"].(string)
+	if !ok || id == "" {
+		return nil, fmt.Errorf("payload.id is required")
+	}
+	return h.callService(r, "GET", "/api/v1/tickets/"+id+"/subtasks", nil)
+}
+
+func (h *Handler) listProjects(r *http.Request, req ExecuteRequest) (any, error) {
+	wid, _ := req.Payload["workspace_id"].(string)
+	if wid == "" {
+		return nil, fmt.Errorf("payload.workspace_id is required")
+	}
+	return h.callService(r, "GET", "/api/v1/workspaces/"+wid+"/projects", nil)
+}
+
 func (h *Handler) callService(r *http.Request, method, path string, body any) (any, error) {
 	var bodyReader io.Reader
 	if body != nil {
@@ -161,18 +214,21 @@ func (h *Handler) callService(r *http.Request, method, path string, body any) (a
 		bodyReader = bytes.NewReader(b)
 	}
 
-	req, err := http.NewRequestWithContext(r.Context(), method, h.serviceURL+path, bodyReader)
+	outReq, err := http.NewRequestWithContext(r.Context(), method, h.serviceURL+path, bodyReader)
 	if err != nil {
 		return nil, fmt.Errorf("build request: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	outReq.Header.Set("Content-Type", "application/json")
 
-	// forward auth header from the incoming bot request
-	if auth := r.Header.Get("Authorization"); auth != "" {
-		req.Header.Set("Authorization", auth)
+	// Authenticate with goquest-service: prefer configured API key,
+	// otherwise forward the incoming Authorization header (JWT path).
+	if h.apiKey != "" {
+		outReq.Header.Set("X-API-Key", h.apiKey)
+	} else if auth := r.Header.Get("Authorization"); auth != "" {
+		outReq.Header.Set("Authorization", auth)
 	}
 
-	resp, err := h.client.Do(req)
+	resp, err := h.client.Do(outReq)
 	if err != nil {
 		return nil, fmt.Errorf("call service: %w", err)
 	}

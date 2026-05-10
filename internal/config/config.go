@@ -21,6 +21,8 @@ type Config struct {
 	SkipAuth bool
 
 	GoquestServiceURL  string
+	GoquestAPIKey      string
+	DefaultProjectID   string
 	NuclexEventsStream string
 
 	// SpiceDB
@@ -46,6 +48,8 @@ func Load() *Config {
 		SkipAuth: parseBool(os.Getenv("SKIP_AUTH"), false),
 
 		GoquestServiceURL:  os.Getenv("GOQUEST_SERVICE_URL"),
+		GoquestAPIKey:      os.Getenv("GOQUEST_API_KEY"),
+		DefaultProjectID:   os.Getenv("GOQUEST_DEFAULT_PROJECT_ID"),
 		NuclexEventsStream: envOrDefault("NUCLEX_EVENTS_STREAM", "nuclex.events"),
 
 		SpiceDBEndpoint: envOrDefault("SPICEDB_ENDPOINT", "localhost:50051"),

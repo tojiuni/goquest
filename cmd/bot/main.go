@@ -26,7 +26,7 @@ func main() {
 	defer cancel()
 
 	httpClient := &http.Client{Timeout: 30 * time.Second}
-	botHandler := bot.NewHandler(cfg.GoquestServiceURL, httpClient)
+	botHandler := bot.NewHandler(cfg.GoquestServiceURL, cfg.GoquestAPIKey, cfg.DefaultProjectID, httpClient)
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
