@@ -171,12 +171,14 @@ func TestWorkspaceHandler_List_200(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rr.Code)
 	}
-	var out []*workspace.Workspace
+	var out struct {
+		Workspaces []*workspace.Workspace `json:"workspaces"`
+	}
 	if err := json.NewDecoder(rr.Body).Decode(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(out) != 2 {
-		t.Errorf("expected 2 workspaces, got %d", len(out))
+	if len(out.Workspaces) != 2 {
+		t.Errorf("expected 2 workspaces, got %d", len(out.Workspaces))
 	}
 }
 

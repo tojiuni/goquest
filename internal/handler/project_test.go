@@ -141,11 +141,13 @@ func TestProjectHandler_List_200(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rr.Code)
 	}
-	var out []*project.Project
+	var out struct {
+		Projects []*project.Project `json:"projects"`
+	}
 	if err := json.NewDecoder(rr.Body).Decode(&out); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(out) != 2 {
-		t.Errorf("expected 2 projects, got %d", len(out))
+	if len(out.Projects) != 2 {
+		t.Errorf("expected 2 projects, got %d", len(out.Projects))
 	}
 }

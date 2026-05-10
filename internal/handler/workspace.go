@@ -60,7 +60,7 @@ func (h *WorkspaceHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSON(w, http.StatusOK, map[string]any{"workspaces": list})
 }
 
 // GET /workspaces/:wid
@@ -124,7 +124,7 @@ func (h *WorkspaceHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, members)
+	writeJSON(w, http.StatusOK, map[string]any{"members": members})
 }
 
 // PATCH /workspaces/:wid/members/:uid/role
@@ -197,7 +197,7 @@ func (h *WorkspaceHandler) ListInvitations(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	writeJSON(w, http.StatusOK, map[string]any{"invitations": list})
 }
 
 // DELETE /workspaces/:wid/invitations/:iid
