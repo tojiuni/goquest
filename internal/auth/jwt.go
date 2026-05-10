@@ -72,6 +72,12 @@ func RequesterID(r *http.Request) string {
 	return v
 }
 
+// WithRequesterID returns a copy of ctx with the requester id set.
+// Primarily for tests that need to bypass JWT/API-key middleware.
+func WithRequesterID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, requesterKey, id)
+}
+
 func bearerToken(r *http.Request) string {
 	h := r.Header.Get("Authorization")
 	if h == "" {

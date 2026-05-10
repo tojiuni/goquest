@@ -15,6 +15,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/tojiuni/goquest/internal/apikey"
 	"github.com/tojiuni/goquest/internal/auth"
+	"github.com/tojiuni/goquest/internal/comment"
 	"github.com/tojiuni/goquest/internal/config"
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/integration"
@@ -115,6 +116,12 @@ func main() {
 	tagH := handler.NewTagHandler(tagSvc)
 	xpH := handler.NewXPHandler(xpSvc)
 
+	commentStore := comment.NewPGStore(pool)
+	commentSvc := comment.NewService(commentStore)
+	// Phase H1: any authenticated request (staff JWT) can see internal comments.
+	// Phase H3+: customer-token contexts must downgrade this to false.
+	commentH := handler.NewCommentHandler(commentSvc, nil)
+
 	// SSE hub — reads all ticket streams and fans out to connected clients.
 	sseHub := sse.New(rdb,
 		queue.StreamCreated,
@@ -158,6 +165,12 @@ func main() {
 				r.Get("/subtasks", ticketH.ListSubtasks)
 				r.Post("/attempts", ticketH.SubmitAttempt)
 				r.Get("/attempts", ticketH.ListAttempts)
+
+				// ── Helpdesk: comments (Phase H1) ────────────────
+				r.Post("/comments", commentH.Create)
+				r.Get("/comments", commentH.List)
+				r.Patch("/comments/{cid}", commentH.Update)
+				r.Delete("/comments/{cid}", commentH.Delete)
 			})
 
 			// ── XP Levels ─────────────────────────────────────────
