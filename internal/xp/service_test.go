@@ -44,7 +44,7 @@ func makeUserXP(xpVal, level int) *xp.UserXP {
 		UserID:      "u1",
 		XP:          xpVal,
 		Level:       level,
-		UpdatedAt:   time.Now().UTC(),
+		JoinedAt:    time.Now().UTC(),
 	}
 }
 

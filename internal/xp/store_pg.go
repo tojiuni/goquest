@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,13 +15,13 @@ func NewPGStore(db *pgxpool.Pool) Store { return &pgStore{db: db} }
 
 func (s *pgStore) GetUserXP(ctx context.Context, workspaceID, userID string) (*UserXP, error) {
 	row := s.db.QueryRow(ctx, `
-		SELECT workspace_id, user_id, xp, level, updated_at
+		SELECT workspace_id, user_id, xp, level, joined_at
 		FROM workspace_members
 		WHERE workspace_id=$1 AND user_id=$2`,
 		workspaceID, userID,
 	)
 	u := &UserXP{}
-	if err := row.Scan(&u.WorkspaceID, &u.UserID, &u.XP, &u.Level, &u.UpdatedAt); err != nil {
+	if err := row.Scan(&u.WorkspaceID, &u.UserID, &u.XP, &u.Level, &u.JoinedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -44,10 +43,10 @@ func (s *pgStore) AddXP(ctx context.Context, workspaceID, userID string, amount 
 	var newXP int
 	if err := tx.QueryRow(ctx, `
 		UPDATE workspace_members
-		SET xp = xp + $3, updated_at = $4
+		SET xp = xp + $3
 		WHERE workspace_id=$1 AND user_id=$2
 		RETURNING xp`,
-		workspaceID, userID, amount, time.Now().UTC(),
+		workspaceID, userID, amount,
 	).Scan(&newXP); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return 0, 0, ErrNotFound

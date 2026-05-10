@@ -86,7 +86,7 @@ func (s *pgStore) Create(ctx context.Context, t *Ticket) error {
 }
 
 func (s *pgStore) Get(ctx context.Context, id uuid.UUID) (*Ticket, error) {
-	row := s.db.QueryRow(ctx, ticketSelectSQL+"WHERE t.id = $1", id)
+	row := s.db.QueryRow(ctx, ticketSelectSQL+"WHERE t.id = $1 GROUP BY t.id", id)
 	t, err := scanTicket(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

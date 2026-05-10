@@ -15,7 +15,7 @@ type UserXP struct {
 	UserID      string    `json:"user_id"`
 	XP          int       `json:"xp"`
 	Level       int       `json:"level"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	JoinedAt    time.Time `json:"joined_at"`
 }
 
 // GainResult is returned after awarding XP; includes whether the user levelled up.
