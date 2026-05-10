@@ -77,3 +77,33 @@ func bearerToken(r *http.Request) string {
 	}
 	return parts[1]
 }
+
+// KeyVerifier validates a plain-text API key and returns the caller identity.
+type KeyVerifier interface {
+	VerifyAPIKey(ctx context.Context, plainKey string) (requesterID string, err error)
+}
+
+// APIKeyMiddleware returns a middleware that accepts X-API-Key as an alternative
+// to Bearer JWT. If the header is present, it validates the key and sets the
+// requester context; otherwise it falls through to the next handler (typically
+// the JWT middleware).
+func APIKeyMiddleware(verifier KeyVerifier) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			key := r.Header.Get("X-API-Key")
+			if key == "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			requesterID, err := verifier.VerifyAPIKey(r.Context(), key)
+			if err != nil {
+				http.Error(w, "invalid api key", http.StatusUnauthorized)
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), requesterKey, requesterID)
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}

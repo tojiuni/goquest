@@ -536,3 +536,26 @@ func (s *pgStore) CountAttempts(ctx context.Context, ticketID uuid.UUID, userID 
 	}
 	return count, nil
 }
+
+func (s *pgStore) ListOverdue(ctx context.Context) ([]*Ticket, error) {
+	rows, err := s.db.Query(ctx,
+		ticketSelectSQL+
+			`WHERE t.due_at IS NOT NULL
+			   AND t.due_at < NOW()
+			   AND t.status NOT IN ('completed', 'cancelled', 'failed')
+			 GROUP BY t.id`)
+	if err != nil {
+		return nil, fmt.Errorf("list overdue: %w", err)
+	}
+	defer rows.Close()
+
+	var tickets []*Ticket
+	for rows.Next() {
+		t, err := scanTicket(rows)
+		if err != nil {
+			return nil, err
+		}
+		tickets = append(tickets, t)
+	}
+	return tickets, rows.Err()
+}

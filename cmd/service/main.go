@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"github.com/tojiuni/goquest/internal/apikey"
 	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/config"
 	"github.com/tojiuni/goquest/internal/handler"
@@ -20,10 +21,12 @@ import (
 	"github.com/tojiuni/goquest/internal/migrate"
 	"github.com/tojiuni/goquest/internal/project"
 	"github.com/tojiuni/goquest/internal/queue"
+	"github.com/tojiuni/goquest/internal/sla"
 	"github.com/tojiuni/goquest/internal/spicedb"
-	"github.com/tojiuni/goquest/internal/tag"
-	"github.com/tojiuni/goquest/internal/ticket"
 	"github.com/tojiuni/goquest/internal/sse"
+	"github.com/tojiuni/goquest/internal/tag"
+	"github.com/tojiuni/goquest/internal/template"
+	"github.com/tojiuni/goquest/internal/ticket"
 	"github.com/tojiuni/goquest/internal/webhook"
 	"github.com/tojiuni/goquest/internal/workspace"
 	"github.com/tojiuni/goquest/internal/xp"
@@ -97,6 +100,14 @@ func main() {
 		}
 	}
 
+	apiKeyStore := apikey.NewPGStore(pool)
+	apiKeySvc := apikey.NewService(apiKeyStore)
+	apiKeyH := handler.NewAPIKeyHandler(apiKeySvc)
+
+	tmplStore := template.NewPGStore(pool)
+	tmplSvc := template.NewService(tmplStore)
+	tmplH := handler.NewTemplateHandler(tmplSvc, svc)
+
 	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter)
 	healthH := handler.NewHealthHandler(pool, rdb)
 	wsH := handler.NewWorkspaceHandler(wsSvc)
@@ -133,6 +144,8 @@ func main() {
 		r.Get("/health/deps", healthH.Deps)
 
 		r.Group(func(r chi.Router) {
+			// API key check runs before JWT so agents can use X-API-Key header.
+			r.Use(auth.APIKeyMiddleware(apiKeySvc))
 			r.Use(authMiddleware)
 
 			// ── Legacy ticket routes (no project context) ──────────
@@ -194,6 +207,20 @@ func main() {
 					r.With(requireWsViewer, requirePjAdmin).Post("/members", pjH.AddMember)
 					r.With(requireWsViewer, requirePjAdmin).Patch("/members/{uid}/role", pjH.SetMemberRole)
 					r.With(requireWsViewer, requirePjAdmin).Delete("/members/{uid}", pjH.RemoveMember)
+
+					// ── API Keys ──────────────────────────────────────
+					r.With(requireWsAdmin, requirePjAdmin).Post("/api-keys", apiKeyH.Create)
+					r.With(requireWsViewer, requirePjViewer).Get("/api-keys", apiKeyH.List)
+					r.With(requireWsAdmin, requirePjAdmin).Delete("/api-keys/{kid}", apiKeyH.Delete)
+
+					// ── Templates ─────────────────────────────────────
+					r.With(requireWsAdmin, requirePjAdmin).Post("/templates", tmplH.Create)
+					r.With(requireWsViewer, requirePjViewer).Get("/templates", tmplH.List)
+					r.Route("/templates/{tid}", func(r chi.Router) {
+						r.With(requireWsViewer, requirePjViewer).Get("/", tmplH.Get)
+						r.With(requireWsAdmin, requirePjAdmin).Delete("/", tmplH.Delete)
+						r.With(requireWsViewer, requirePjViewer).Post("/instantiate", tmplH.Instantiate)
+					})
 				})
 			})
 
@@ -217,6 +244,14 @@ func main() {
 	go func() {
 		if err := sseHub.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("sse hub exited: %v", err)
+		}
+	}()
+
+	// --- SLA worker (background) ---
+	slaWorker := sla.New(store, svc)
+	go func() {
+		if err := slaWorker.Run(ctx); err != nil && ctx.Err() == nil {
+			log.Printf("sla worker exited: %v", err)
 		}
 	}()
 

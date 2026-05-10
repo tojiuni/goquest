@@ -83,6 +83,10 @@ func (m *mockStore) CountAttempts(_ context.Context, _ uuid.UUID, _ string) (int
 	return 0, nil
 }
 
+func (m *mockStore) ListOverdue(_ context.Context) ([]*ticket.Ticket, error) {
+	return nil, nil
+}
+
 type mockPublisher struct {
 	created  int
 	assigned int
