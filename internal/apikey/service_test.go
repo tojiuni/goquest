@@ -147,3 +147,100 @@ func TestService_List(t *testing.T) {
 		t.Errorf("expected 2 keys, got %d", len(got))
 	}
 }
+
+// --- Phase H2: scope/capability/origin guards ---
+
+func TestService_Create_PrivateDefaultsToWildcardCapability(t *testing.T) {
+	svc := apikey.NewService(&mockStore{})
+	res, err := svc.Create(context.Background(), uuid.New(), apikey.CreateReq{Name: "ci-bot"}, "user1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Scope != apikey.ScopePrivate {
+		t.Fatalf("default scope should be private, got %s", res.Scope)
+	}
+	if len(res.AllowedCapabilities) != 1 || res.AllowedCapabilities[0] != apikey.CapabilityAll {
+		t.Fatalf("private default capabilities should be ['*'], got %v", res.AllowedCapabilities)
+	}
+	if res.RateLimitPerMin != 60 {
+		t.Fatalf("default rate limit should be 60, got %d", res.RateLimitPerMin)
+	}
+}
+
+func TestService_Create_PublicRejectsExtraCapabilities(t *testing.T) {
+	svc := apikey.NewService(&mockStore{})
+	_, err := svc.Create(context.Background(), uuid.New(),
+		apikey.CreateReq{
+			Name:                "web-form",
+			Scope:               apikey.ScopePublic,
+			AllowedCapabilities: []string{"ticket.create", "ticket.read"},
+			AllowedOrigins:      []string{"https://example.com"},
+		},
+		"user1")
+	if err == nil {
+		t.Fatal("expected error: public scope must only allow ticket.create")
+	}
+}
+
+func TestService_Create_PublicRequiresAllowedOrigins(t *testing.T) {
+	svc := apikey.NewService(&mockStore{})
+	_, err := svc.Create(context.Background(), uuid.New(),
+		apikey.CreateReq{Name: "web-form", Scope: apikey.ScopePublic}, "user1")
+	if err == nil {
+		t.Fatal("expected error: public scope requires allowed_origins")
+	}
+}
+
+func TestService_Create_PublicHappyPath(t *testing.T) {
+	svc := apikey.NewService(&mockStore{})
+	res, err := svc.Create(context.Background(), uuid.New(),
+		apikey.CreateReq{
+			Name:           "web-form",
+			Scope:          apikey.ScopePublic,
+			AllowedOrigins: []string{"https://gopedia.toji.homes"},
+		}, "user1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Scope != apikey.ScopePublic {
+		t.Fatal("scope should be public")
+	}
+	if len(res.AllowedCapabilities) != 1 || res.AllowedCapabilities[0] != apikey.CapabilityTicketCreate {
+		t.Fatalf("public default cap should be [ticket.create], got %v", res.AllowedCapabilities)
+	}
+}
+
+func TestAPIKey_HasCapability(t *testing.T) {
+	wildcard := &apikey.APIKey{AllowedCapabilities: []string{apikey.CapabilityAll}}
+	if !wildcard.HasCapability("anything") {
+		t.Fatal("'*' should match anything")
+	}
+	scoped := &apikey.APIKey{AllowedCapabilities: []string{apikey.CapabilityTicketCreate}}
+	if !scoped.HasCapability(apikey.CapabilityTicketCreate) {
+		t.Fatal("explicit cap should match itself")
+	}
+	if scoped.HasCapability(apikey.CapabilityTicketUpdate) {
+		t.Fatal("scoped cap should not match a different cap")
+	}
+}
+
+func TestAPIKey_OriginAllowed(t *testing.T) {
+	priv := &apikey.APIKey{Scope: apikey.ScopePrivate}
+	if !priv.OriginAllowed("anything") {
+		t.Fatal("private keys should not gate origin")
+	}
+	pub := &apikey.APIKey{
+		Scope:          apikey.ScopePublic,
+		AllowedOrigins: []string{"https://app.example.com"},
+	}
+	if !pub.OriginAllowed("https://app.example.com") {
+		t.Fatal("public key should allow listed origin")
+	}
+	if pub.OriginAllowed("https://evil.com") {
+		t.Fatal("public key should reject un-listed origin")
+	}
+
+	// silence the unused-import linter when `errors` is otherwise unused
+	_ = errors.New("ok")
+	_ = time.Now
+}
