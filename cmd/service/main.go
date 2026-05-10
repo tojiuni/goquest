@@ -214,11 +214,12 @@ func main() {
 				r.Post("/attempts", ticketH.SubmitAttempt)
 				r.Get("/attempts", ticketH.ListAttempts)
 
-				// ── Helpdesk: comments (Phase H1) ────────────────
+				// ── Helpdesk: comments (Phase H1 + H5 publish) ───
 				r.Post("/comments", commentH.Create)
 				r.Get("/comments", commentH.List)
 				r.Patch("/comments/{cid}", commentH.Update)
 				r.Delete("/comments/{cid}", commentH.Delete)
+				r.Post("/comments/{cid}/publish", commentH.Publish)
 			})
 
 			// ── XP Levels ─────────────────────────────────────────

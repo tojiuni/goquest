@@ -53,6 +53,9 @@ func (s *stubCommentSvc) Update(_ context.Context, _ uuid.UUID, _ string, req co
 }
 
 func (s *stubCommentSvc) Delete(_ context.Context, _ uuid.UUID, _ string) error { return s.err }
+func (s *stubCommentSvc) Publish(_ context.Context, _ uuid.UUID, _ comment.AuthorKind) error {
+	return s.err
+}
 
 // --- helpers ---
 
