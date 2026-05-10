@@ -135,6 +135,7 @@ type CreateTicketReq struct {
 	Metadata       map[string]any `json:"metadata,omitempty"`
 	ProjectID      *uuid.UUID     `json:"project_id,omitempty"`
 	ParentID       *uuid.UUID     `json:"parent_id,omitempty"`
+	Visibility     Visibility     `json:"visibility,omitempty"`
 	CompletionMode CompletionMode `json:"completion_mode,omitempty"`
 	CompletionSpec CompletionSpec `json:"completion_spec,omitempty"`
 	RewardXP       int            `json:"reward_xp,omitempty"`
@@ -170,4 +171,35 @@ type ListTicketsFilter struct {
 	TagIDs       []uuid.UUID
 	Limit        int
 	Offset       int
+}
+
+// Attempt records a user's answer submission for answer-mode tickets.
+type Attempt struct {
+	ID          uuid.UUID `json:"id"`
+	TicketID    uuid.UUID `json:"ticket_id"`
+	UserID      string    `json:"user_id"`
+	Answer      string    `json:"answer"`
+	IsCorrect   *bool     `json:"is_correct"`
+	AIFeedback  string    `json:"ai_feedback,omitempty"`
+	AttemptedAt time.Time `json:"attempted_at"`
+}
+
+type SubmitAttemptReq struct {
+	Answer string `json:"answer"`
+}
+
+// AnswerSpec is the parsed completion_spec for answer-mode tickets.
+type AnswerSpec struct {
+	Question      string   `json:"question"`
+	AnswerType    string   `json:"answer_type"` // "exact" | "choice" | "ai_eval"
+	CorrectAnswer string   `json:"correct_answer,omitempty"`
+	Choices       []string `json:"choices,omitempty"`
+	MaxAttempts   int      `json:"max_attempts"`
+	Hint          string   `json:"hint,omitempty"`
+	AIAgentID     string   `json:"ai_agent_id,omitempty"`
+}
+
+// IsTerminal returns true for statuses that allow no further transitions.
+func (s Status) IsTerminal() bool {
+	return s == StatusCompleted || s == StatusCancelled || s == StatusFailed
 }

@@ -56,6 +56,30 @@ func (m *mockStore) List(_ context.Context, _ ticket.ListTicketsFilter) ([]*tick
 	return m.tickets, m.total, nil
 }
 
+func (m *mockStore) ListSubtasks(_ context.Context, _ uuid.UUID) ([]*ticket.Ticket, error) {
+	return nil, nil
+}
+
+func (m *mockStore) AllSubtasksTerminal(_ context.Context, _ uuid.UUID) (bool, error) {
+	return true, nil
+}
+
+func (m *mockStore) SetTicketTags(_ context.Context, _ uuid.UUID, _ []uuid.UUID) error {
+	return nil
+}
+
+func (m *mockStore) CreateAttempt(_ context.Context, _ *ticket.Attempt) error {
+	return nil
+}
+
+func (m *mockStore) ListAttempts(_ context.Context, _ uuid.UUID) ([]*ticket.Attempt, error) {
+	return nil, nil
+}
+
+func (m *mockStore) CountAttempts(_ context.Context, _ uuid.UUID, _ string) (int, error) {
+	return 0, nil
+}
+
 type mockPublisher struct {
 	created  int
 	assigned int
@@ -233,5 +257,105 @@ func TestService_Get_NotFound(t *testing.T) {
 	_, err := svc.Get(context.Background(), uuid.New())
 	if !errors.Is(err, ticket.ErrNotFound) {
 		t.Errorf("expected ErrNotFound, got %v", err)
+	}
+}
+
+// Phase 2 tests
+
+func TestService_Create_DefaultsCompletionModeAndVisibility(t *testing.T) {
+	store := &mockStore{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{})
+
+	created, err := svc.Create(context.Background(), ticket.CreateTicketReq{Title: "quest"}, "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.CompletionMode != ticket.CompletionManual {
+		t.Errorf("completion_mode = %q, want manual", created.CompletionMode)
+	}
+	if created.Visibility != ticket.VisibilityProject {
+		t.Errorf("visibility = %q, want project", created.Visibility)
+	}
+}
+
+func TestService_SubmitAttempt_NotAnswerMode(t *testing.T) {
+	base := newTestTicket(ticket.StatusPending)
+	base.CompletionMode = ticket.CompletionManual
+	store := &mockStore{getTicket: base}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{})
+
+	_, err := svc.SubmitAttempt(context.Background(), base.ID, "u1", ticket.SubmitAttemptReq{Answer: "x"})
+	if err == nil {
+		t.Fatal("expected error for non-answer-mode ticket")
+	}
+}
+
+func TestService_SubmitAttempt_TerminalTicket(t *testing.T) {
+	base := newTestTicket(ticket.StatusCompleted)
+	base.CompletionMode = ticket.CompletionAnswer
+	base.CompletionSpec = ticket.CompletionSpec{
+		"question": "2+2?", "answer_type": "exact", "correct_answer": "4", "max_attempts": 3,
+	}
+	store := &mockStore{getTicket: base}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{})
+
+	_, err := svc.SubmitAttempt(context.Background(), base.ID, "u1", ticket.SubmitAttemptReq{Answer: "4"})
+	if err == nil {
+		t.Fatal("expected error for terminal ticket")
+	}
+}
+
+func TestService_SubmitAttempt_ExactCorrect(t *testing.T) {
+	base := newTestTicket(ticket.StatusPending)
+	base.CompletionMode = ticket.CompletionAnswer
+	base.CompletionSpec = ticket.CompletionSpec{
+		"question": "2+2?", "answer_type": "exact", "correct_answer": "4", "max_attempts": float64(3),
+	}
+	store := &mockStore{getTicket: base}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{})
+
+	attempt, err := svc.SubmitAttempt(context.Background(), base.ID, "u1", ticket.SubmitAttemptReq{Answer: "4"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if attempt.IsCorrect == nil || !*attempt.IsCorrect {
+		t.Error("expected IsCorrect = true")
+	}
+}
+
+func TestService_SubmitAttempt_ExactWrong(t *testing.T) {
+	base := newTestTicket(ticket.StatusPending)
+	base.CompletionMode = ticket.CompletionAnswer
+	base.CompletionSpec = ticket.CompletionSpec{
+		"question": "2+2?", "answer_type": "exact", "correct_answer": "4", "max_attempts": float64(3),
+	}
+	store := &mockStore{getTicket: base}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{})
+
+	attempt, err := svc.SubmitAttempt(context.Background(), base.ID, "u1", ticket.SubmitAttemptReq{Answer: "5"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if attempt.IsCorrect == nil || *attempt.IsCorrect {
+		t.Error("expected IsCorrect = false")
+	}
+}
+
+func TestService_IsTerminal(t *testing.T) {
+	cases := []struct {
+		s        ticket.Status
+		terminal bool
+	}{
+		{ticket.StatusPending, false},
+		{ticket.StatusAssigned, false},
+		{ticket.StatusInProgress, false},
+		{ticket.StatusCompleted, true},
+		{ticket.StatusCancelled, true},
+		{ticket.StatusFailed, true},
+	}
+	for _, tc := range cases {
+		if got := tc.s.IsTerminal(); got != tc.terminal {
+			t.Errorf("Status(%q).IsTerminal() = %v, want %v", tc.s, got, tc.terminal)
+		}
 	}
 }

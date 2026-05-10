@@ -2,8 +2,10 @@ package ticket
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -51,28 +53,49 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 		}
 	}
 
+	if req.CompletionMode == "" {
+		req.CompletionMode = CompletionManual
+	}
+	if req.Visibility == "" {
+		req.Visibility = VisibilityProject
+	}
+
 	now := time.Now().UTC()
 	t := &Ticket{
-		ID:            uuid.New(),
-		Title:         req.Title,
-		Description:   req.Description,
-		Type:          req.Type,
-		Status:        StatusPending,
-		Priority:      req.Priority,
-		AssigneeType:  req.AssigneeType,
-		AssigneeID:    req.AssigneeID,
-		RequesterID:   requesterID,
-		SourceBot:     req.SourceBot,
-		Domain:        req.Domain,
-		AgentContext:  req.AgentContext,
-		VikunjaTaskID: req.VikunjaTaskID,
-		Metadata:      req.Metadata,
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:             uuid.New(),
+		Title:          req.Title,
+		Description:    req.Description,
+		Type:           req.Type,
+		Status:         StatusPending,
+		Priority:       req.Priority,
+		AssigneeType:   req.AssigneeType,
+		AssigneeID:     req.AssigneeID,
+		RequesterID:    requesterID,
+		SourceBot:      req.SourceBot,
+		Domain:         req.Domain,
+		AgentContext:   req.AgentContext,
+		VikunjaTaskID:  req.VikunjaTaskID,
+		Metadata:       req.Metadata,
+		ProjectID:      req.ProjectID,
+		ParentID:       req.ParentID,
+		Visibility:     req.Visibility,
+		CompletionMode: req.CompletionMode,
+		CompletionSpec: req.CompletionSpec,
+		RewardXP:       req.RewardXP,
+		DueAt:          req.DueAt,
+		CallbackURL:    req.CallbackURL,
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 
 	if err := s.store.Create(ctx, t); err != nil {
 		return nil, fmt.Errorf("store.Create: %w", err)
+	}
+
+	if len(req.TagIDs) > 0 {
+		if err := s.store.SetTicketTags(ctx, t.ID, req.TagIDs); err != nil {
+			log.Printf("warn: set ticket tags: %v", err)
+		}
 	}
 
 	if err := s.pub.PublishCreated(ctx, t); err != nil {
@@ -135,6 +158,82 @@ func (s *Service) Cancel(ctx context.Context, id uuid.UUID) (*Ticket, error) {
 
 func (s *Service) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int, error) {
 	return s.store.List(ctx, f)
+}
+
+func (s *Service) ListSubtasks(ctx context.Context, parentID uuid.UUID) ([]*Ticket, error) {
+	return s.store.ListSubtasks(ctx, parentID)
+}
+
+func (s *Service) ListAttempts(ctx context.Context, ticketID uuid.UUID) ([]*Attempt, error) {
+	return s.store.ListAttempts(ctx, ticketID)
+}
+
+// SubmitAttempt records an answer attempt for an answer-mode ticket.
+// Returns the updated attempt (with IsCorrect set) and any error.
+func (s *Service) SubmitAttempt(ctx context.Context, ticketID uuid.UUID, userID string, req SubmitAttemptReq) (*Attempt, error) {
+	t, err := s.store.Get(ctx, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	if t.CompletionMode != CompletionAnswer {
+		return nil, fmt.Errorf("ticket is not in answer mode")
+	}
+	if t.Status.IsTerminal() {
+		return nil, fmt.Errorf("ticket is already closed")
+	}
+
+	var spec AnswerSpec
+	specBytes, err := json.Marshal(t.CompletionSpec)
+	if err != nil {
+		return nil, fmt.Errorf("marshal spec: %w", err)
+	}
+	if err := json.Unmarshal(specBytes, &spec); err != nil {
+		return nil, fmt.Errorf("parse answer spec: %w", err)
+	}
+
+	if spec.MaxAttempts > 0 {
+		count, err := s.store.CountAttempts(ctx, ticketID, userID)
+		if err != nil {
+			return nil, err
+		}
+		if count >= spec.MaxAttempts {
+			return nil, fmt.Errorf("max attempts (%d) reached", spec.MaxAttempts)
+		}
+	}
+
+	correct := false
+	switch spec.AnswerType {
+	case "exact":
+		correct = strings.EqualFold(strings.TrimSpace(req.Answer), strings.TrimSpace(spec.CorrectAnswer))
+	case "choice":
+		correct = strings.EqualFold(req.Answer, spec.CorrectAnswer)
+	default:
+		// ai_eval: leave IsCorrect nil until AI grades it
+	}
+
+	a := &Attempt{
+		ID:          uuid.New(),
+		TicketID:    ticketID,
+		UserID:      userID,
+		Answer:      req.Answer,
+		AttemptedAt: time.Now().UTC(),
+	}
+	if spec.AnswerType != "ai_eval" {
+		a.IsCorrect = &correct
+	}
+
+	if err := s.store.CreateAttempt(ctx, a); err != nil {
+		return nil, err
+	}
+
+	if a.IsCorrect != nil && *a.IsCorrect {
+		completed := StatusCompleted
+		if _, err := s.Update(ctx, ticketID, UpdateTicketReq{Status: &completed}); err != nil {
+			log.Printf("warn: auto-complete ticket after correct answer: %v", err)
+		}
+	}
+
+	return a, nil
 }
 
 var validDomains = map[Domain]struct{}{

@@ -427,3 +427,112 @@ var (
 	ErrNotFound          = errors.New("ticket not found")
 	ErrInvalidTransition = errors.New("invalid status transition")
 )
+
+func (s *pgStore) ListSubtasks(ctx context.Context, parentID uuid.UUID) ([]*Ticket, error) {
+	q := `
+		WITH RECURSIVE subtree AS (
+			SELECT t.id FROM tickets t WHERE t.parent_id = $1
+			UNION ALL
+			SELECT t.id FROM tickets t JOIN subtree st ON t.parent_id = st.id
+		)
+		` + ticketSelectSQL + `
+		JOIN subtree st ON t.id = st.id
+		GROUP BY t.id
+		ORDER BY t.created_at ASC`
+
+	rows, err := s.db.Query(ctx, q, parentID)
+	if err != nil {
+		return nil, fmt.Errorf("list subtasks: %w", err)
+	}
+	defer rows.Close()
+
+	var list []*Ticket
+	for rows.Next() {
+		t, err := scanTicket(rows)
+		if err != nil {
+			return nil, err
+		}
+		list = append(list, t)
+	}
+	return list, rows.Err()
+}
+
+func (s *pgStore) AllSubtasksTerminal(ctx context.Context, parentID uuid.UUID) (bool, error) {
+	var count int
+	err := s.db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM tickets
+		WHERE parent_id = $1 AND status NOT IN ('completed','cancelled','failed')`,
+		parentID,
+	).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("all subtasks terminal: %w", err)
+	}
+	return count == 0, nil
+}
+
+func (s *pgStore) SetTicketTags(ctx context.Context, ticketID uuid.UUID, tagIDs []uuid.UUID) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, "DELETE FROM ticket_tags WHERE ticket_id=$1", ticketID); err != nil {
+		return fmt.Errorf("delete ticket_tags: %w", err)
+	}
+	for _, tagID := range tagIDs {
+		if _, err := tx.Exec(ctx,
+			"INSERT INTO ticket_tags (ticket_id, tag_id) VALUES ($1,$2) ON CONFLICT DO NOTHING",
+			ticketID, tagID,
+		); err != nil {
+			return fmt.Errorf("insert ticket_tag: %w", err)
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *pgStore) CreateAttempt(ctx context.Context, a *Attempt) error {
+	_, err := s.db.Exec(ctx, `
+		INSERT INTO ticket_attempts (id, ticket_id, user_id, answer, is_correct, ai_feedback, attempted_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		a.ID, a.TicketID, a.UserID, a.Answer, a.IsCorrect, a.AIFeedback, a.AttemptedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("create attempt: %w", err)
+	}
+	return nil
+}
+
+func (s *pgStore) ListAttempts(ctx context.Context, ticketID uuid.UUID) ([]*Attempt, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT id, ticket_id, user_id, answer, is_correct, ai_feedback, attempted_at
+		FROM ticket_attempts WHERE ticket_id=$1 ORDER BY attempted_at ASC`,
+		ticketID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list attempts: %w", err)
+	}
+	defer rows.Close()
+
+	var list []*Attempt
+	for rows.Next() {
+		a := &Attempt{}
+		if err := rows.Scan(&a.ID, &a.TicketID, &a.UserID, &a.Answer, &a.IsCorrect, &a.AIFeedback, &a.AttemptedAt); err != nil {
+			return nil, fmt.Errorf("scan attempt: %w", err)
+		}
+		list = append(list, a)
+	}
+	return list, rows.Err()
+}
+
+func (s *pgStore) CountAttempts(ctx context.Context, ticketID uuid.UUID, userID string) (int, error) {
+	var count int
+	err := s.db.QueryRow(ctx,
+		"SELECT COUNT(*) FROM ticket_attempts WHERE ticket_id=$1 AND user_id=$2",
+		ticketID, userID,
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count attempts: %w", err)
+	}
+	return count, nil
+}
