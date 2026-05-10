@@ -17,23 +17,36 @@ func (svc *Service) Create(ctx context.Context, ticketID uuid.UUID, authorID str
 	if strings.TrimSpace(req.Body) == "" {
 		return nil, errors.New("comment body is required")
 	}
-	// Customers cannot post internal comments.
 	if kind == AuthorKindCustomer && req.IsInternal {
 		return nil, errors.New("customers cannot post internal comments")
 	}
+	if req.IsDraft && kind != AuthorKindAgent {
+		return nil, errors.New("only agents can post draft comments")
+	}
 	c := &Comment{
-		ID:         uuid.New(),
-		TicketID:   ticketID,
-		AuthorID:   authorID,
-		AuthorKind: kind,
-		Body:       req.Body,
-		IsInternal: req.IsInternal,
-		CreatedAt:  time.Now().UTC(),
+		ID:            uuid.New(),
+		TicketID:      ticketID,
+		AuthorID:      authorID,
+		AuthorKind:    kind,
+		Body:          req.Body,
+		IsInternal:    req.IsInternal,
+		IsDraft:       req.IsDraft,
+		GardenerScore: req.GardenerScore,
+		CreatedAt:     time.Now().UTC(),
 	}
 	if err := svc.store.Create(ctx, c); err != nil {
 		return nil, err
 	}
 	return c, nil
+}
+
+// Publish converts a draft (e.g. AI suggestion) to a published comment that
+// is visible to the customer. Only staff/system actors are permitted.
+func (svc *Service) Publish(ctx context.Context, id uuid.UUID, actorKind AuthorKind) error {
+	if actorKind != AuthorKindStaff && actorKind != AuthorKindSystem {
+		return ErrForbidden
+	}
+	return svc.store.Publish(ctx, id)
 }
 
 func (svc *Service) Get(ctx context.Context, id uuid.UUID) (*Comment, error) {

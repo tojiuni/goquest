@@ -14,12 +14,18 @@ type pgStore struct{ db *pgxpool.Pool }
 
 func NewPGStore(db *pgxpool.Pool) Store { return &pgStore{db: db} }
 
+const commentSelectFields = `
+	id, ticket_id, author_id, author_kind, body,
+	is_internal, is_draft, gardener_score, created_at`
+
 func (s *pgStore) Create(ctx context.Context, c *Comment) error {
 	_, err := s.db.Exec(ctx, `
 		INSERT INTO ticket_comments
-			(id, ticket_id, author_id, author_kind, body, is_internal, created_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-		c.ID, c.TicketID, c.AuthorID, string(c.AuthorKind), c.Body, c.IsInternal, c.CreatedAt,
+			(id, ticket_id, author_id, author_kind, body,
+			 is_internal, is_draft, gardener_score, created_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		c.ID, c.TicketID, c.AuthorID, string(c.AuthorKind), c.Body,
+		c.IsInternal, c.IsDraft, c.GardenerScore, c.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("create comment: %w", err)
@@ -28,19 +34,15 @@ func (s *pgStore) Create(ctx context.Context, c *Comment) error {
 }
 
 func (s *pgStore) Get(ctx context.Context, id uuid.UUID) (*Comment, error) {
-	row := s.db.QueryRow(ctx, `
-		SELECT id, ticket_id, author_id, author_kind, body, is_internal, created_at
-		FROM ticket_comments WHERE id=$1`, id)
+	row := s.db.QueryRow(ctx, `SELECT `+commentSelectFields+` FROM ticket_comments WHERE id=$1`, id)
 	return scanComment(row)
 }
 
 func (s *pgStore) ListByTicket(ctx context.Context, ticketID uuid.UUID, includeInternal bool) ([]*Comment, error) {
-	q := `
-		SELECT id, ticket_id, author_id, author_kind, body, is_internal, created_at
-		FROM ticket_comments
-		WHERE ticket_id=$1`
+	q := `SELECT ` + commentSelectFields + ` FROM ticket_comments WHERE ticket_id=$1`
 	if !includeInternal {
-		q += " AND is_internal = FALSE"
+		// Customers see only published, non-internal comments.
+		q += " AND is_internal = FALSE AND is_draft = FALSE"
 	}
 	q += " ORDER BY created_at ASC"
 
@@ -80,12 +82,25 @@ func (s *pgStore) Delete(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
+// Publish marks a draft as published (clears is_draft = FALSE).
+func (s *pgStore) Publish(ctx context.Context, id uuid.UUID) error {
+	res, err := s.db.Exec(ctx, `UPDATE ticket_comments SET is_draft = FALSE WHERE id = $1`, id)
+	if err != nil {
+		return fmt.Errorf("publish comment: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanComment(s rowScanner) (*Comment, error) {
 	c := &Comment{}
 	var kind string
-	err := s.Scan(&c.ID, &c.TicketID, &c.AuthorID, &kind, &c.Body, &c.IsInternal, &c.CreatedAt)
+	err := s.Scan(&c.ID, &c.TicketID, &c.AuthorID, &kind, &c.Body,
+		&c.IsInternal, &c.IsDraft, &c.GardenerScore, &c.CreatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound

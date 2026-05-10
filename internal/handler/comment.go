@@ -17,6 +17,7 @@ type CommentSvc interface {
 	ListByTicket(ctx context.Context, ticketID uuid.UUID, includeInternal bool) ([]*comment.Comment, error)
 	Update(ctx context.Context, id uuid.UUID, authorID string, req comment.UpdateReq) (*comment.Comment, error)
 	Delete(ctx context.Context, id uuid.UUID, authorID string) error
+	Publish(ctx context.Context, id uuid.UUID, actorKind comment.AuthorKind) error
 }
 
 // CanSeeInternal returns true if the request context is allowed to see is_internal=true comments.
@@ -103,6 +104,31 @@ func (h *CommentHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, c)
+}
+
+// POST /tickets/:id/comments/:cid/publish — staff converts an AI draft into a
+// customer-visible reply. (Phase H5)
+func (h *CommentHandler) Publish(w http.ResponseWriter, r *http.Request) {
+	cid, err := parseUUID(chi.URLParam(r, "cid"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid comment id")
+		return
+	}
+	// Phase H5: only staff JWT can publish. Customers can't reach this route
+	// because canSeeInternal-style gating is at handler level; staff is enforced
+	// here by requiring JWT (no customer-token).
+	if err := h.svc.Publish(r.Context(), cid, comment.AuthorKindStaff); err != nil {
+		switch {
+		case errors.Is(err, comment.ErrNotFound):
+			writeError(w, http.StatusNotFound, "comment not found")
+		case errors.Is(err, comment.ErrForbidden):
+			writeError(w, http.StatusForbidden, "only staff can publish drafts")
+		default:
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // DELETE /tickets/:id/comments/:cid

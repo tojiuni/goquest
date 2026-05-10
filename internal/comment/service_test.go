@@ -62,6 +62,15 @@ func (s *fakeStore) Delete(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func (s *fakeStore) Publish(_ context.Context, id uuid.UUID) error {
+	c, ok := s.items[id]
+	if !ok {
+		return comment.ErrNotFound
+	}
+	c.IsDraft = false
+	return nil
+}
+
 func TestService_Create_RejectsEmptyBody(t *testing.T) {
 	svc := comment.NewService(newFakeStore())
 	_, err := svc.Create(context.Background(), uuid.New(), "u1", comment.AuthorKindStaff,
