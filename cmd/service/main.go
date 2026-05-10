@@ -16,6 +16,7 @@ import (
 	"github.com/tojiuni/goquest/internal/apikey"
 	"github.com/google/uuid"
 
+	"github.com/tojiuni/goquest/internal/audit"
 	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/comment"
 	"github.com/tojiuni/goquest/internal/config"
@@ -147,6 +148,10 @@ func main() {
 	})
 	magicH := handler.NewMagicHandler(magicSvc, mailer, publicURL)
 
+	auditLogger := audit.New(pool)
+	auditH := handler.NewAuditHandler(auditLogger)
+	kpiH := handler.NewHelpdeskKPIHandler(pool)
+
 	// Adapter: apikey.Service implements VerifyAPIKey (string) but VerifyAPIKeyMeta
 	// returns *apikey.MetaInfo. Wrap it so the auth middleware can take a
 	// RichKeyVerifier returning *auth.APIKeyMeta without an apikey↔auth import cycle.
@@ -259,6 +264,10 @@ func main() {
 					r.With(requireWsAdmin).Patch("/", macroH.Update)
 					r.With(requireWsAdmin).Delete("/", macroH.Delete)
 				})
+
+				// ── Helpdesk KPI + Audit (Phase H6) ───────────────
+				r.With(requireWsViewer).Get("/helpdesk/kpi", kpiH.Get)
+				r.With(requireWsAdmin).Get("/audit", auditH.List)
 
 				// ── Project ────────────────────────────────────────
 				r.With(requireWsAdmin).Post("/projects", pjH.Create)
