@@ -28,6 +28,9 @@ type Event struct {
 type client struct {
 	ch     chan Event
 	userID string
+	// filter narrows which events this subscriber receives. Both empty = no filter.
+	filterWorkspaceID string
+	filterTicketID    string
 }
 
 // Hub subscribes to one or more Redis streams and broadcasts events to HTTP clients.
@@ -90,6 +93,9 @@ func (h *Hub) broadcast(ev Event) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for c := range h.clients {
+		if !c.matches(ev) {
+			continue
+		}
 		select {
 		case c.ch <- ev:
 		default: // slow client — drop rather than block
@@ -97,12 +103,46 @@ func (h *Hub) broadcast(ev Event) {
 	}
 }
 
-func (h *Hub) subscribe(userID string) *client {
-	c := &client{ch: make(chan Event, 32), userID: userID}
+func (h *Hub) subscribe(userID, filterWorkspace, filterTicket string) *client {
+	c := &client{
+		ch:                make(chan Event, 32),
+		userID:            userID,
+		filterWorkspaceID: filterWorkspace,
+		filterTicketID:    filterTicket,
+	}
 	h.mu.Lock()
 	h.clients[c] = struct{}{}
 	h.mu.Unlock()
 	return c
+}
+
+// matches returns true if the event should be delivered to this client given
+// its filter. Filtering uses substring match on the JSON payload — sufficient
+// because Redis stream events serialise IDs as plain strings. A more precise
+// filter would parse the JSON envelope per event.
+func (c *client) matches(ev Event) bool {
+	if c.filterTicketID == "" && c.filterWorkspaceID == "" {
+		return true
+	}
+	if c.filterTicketID != "" && contains(ev.Data, c.filterTicketID) {
+		return true
+	}
+	if c.filterWorkspaceID != "" && contains(ev.Data, c.filterWorkspaceID) {
+		return true
+	}
+	return false
+}
+
+func contains(s, substr string) bool {
+	if len(substr) == 0 {
+		return true
+	}
+	for i := 0; i+len(substr) <= len(s); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *Hub) unsubscribe(c *client) {
@@ -121,12 +161,26 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	userID := r.Header.Get("X-User-ID") // set by auth middleware upstream
 
+	// Phase H3: clients can narrow events to a single ticket or workspace via
+	//   ?filter=ticket:<uuid>   — single-ticket stream (customer detail page)
+	//   ?filter=workspace:<uuid> — workspace inbox stream
+	// Empty filter receives all events (legacy / staff dashboard).
+	var filterWorkspace, filterTicket string
+	if f := r.URL.Query().Get("filter"); f != "" {
+		const wsP, tP = "workspace:", "ticket:"
+		if len(f) > len(wsP) && f[:len(wsP)] == wsP {
+			filterWorkspace = f[len(wsP):]
+		} else if len(f) > len(tP) && f[:len(tP)] == tP {
+			filterTicket = f[len(tP):]
+		}
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no") // disable nginx buffering
 
-	c := h.subscribe(userID)
+	c := h.subscribe(userID, filterWorkspace, filterTicket)
 	defer h.unsubscribe(c)
 
 	heartbeat := time.NewTicker(heartbeatInterval)

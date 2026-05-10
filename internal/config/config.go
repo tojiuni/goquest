@@ -17,8 +17,9 @@ type Config struct {
 
 	RedisURL string
 
-	JWKSUrl  string
-	SkipAuth bool
+	JWKSUrl   string
+	SkipAuth  bool
+	PublicURL string // SPA public URL, used for magic-link emails
 
 	GoquestServiceURL  string
 	GoquestAPIKey      string
@@ -44,8 +45,9 @@ func Load() *Config {
 
 		RedisURL: envOrDefault("REDIS_URL", "redis://redis-master.taxon.svc:6379"),
 
-		JWKSUrl:  os.Getenv("JWKS_URL"),
-		SkipAuth: parseBool(os.Getenv("SKIP_AUTH"), false),
+		JWKSUrl:   os.Getenv("JWKS_URL"),
+		SkipAuth:  parseBool(os.Getenv("SKIP_AUTH"), false),
+		PublicURL: envOrDefault("GOQUEST_PUBLIC_URL", "https://goquest.toji.homes"),
 
 		GoquestServiceURL:  os.Getenv("GOQUEST_SERVICE_URL"),
 		GoquestAPIKey:      os.Getenv("GOQUEST_API_KEY"),

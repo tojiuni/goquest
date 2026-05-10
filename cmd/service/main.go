@@ -14,10 +14,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/tojiuni/goquest/internal/apikey"
+	"github.com/google/uuid"
+
 	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/comment"
 	"github.com/tojiuni/goquest/internal/config"
 	"github.com/tojiuni/goquest/internal/macro"
+	"github.com/tojiuni/goquest/internal/magic"
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/integration"
 	"github.com/tojiuni/goquest/internal/migrate"
@@ -119,13 +122,22 @@ func main() {
 
 	commentStore := comment.NewPGStore(pool)
 	commentSvc := comment.NewService(commentStore)
-	// Phase H1: any authenticated request (staff JWT) can see internal comments.
-	// Phase H3+: customer-token contexts must downgrade this to false.
-	commentH := handler.NewCommentHandler(commentSvc, nil)
+	// Phase H3: customer-token contexts (magic-link) MUST NOT see internal comments.
+	commentH := handler.NewCommentHandler(commentSvc, func(r *http.Request) bool {
+		return !auth.IsCustomerRequest(r)
+	})
 
 	macroStore := macro.NewPGStore(pool)
 	macroSvc := macro.NewService(macroStore)
 	macroH := handler.NewMacroHandler(macroSvc)
+
+	magicStore := magic.NewPGStore(pool)
+	magicSvc := magic.NewService(magicStore)
+	publicURL := cfg.PublicURL
+	if publicURL == "" {
+		publicURL = "https://goquest.toji.homes"
+	}
+	magicH := handler.NewMagicHandler(magicSvc, nil, publicURL) // Phase H4 wires EmailDelivery
 
 	// Adapter: apikey.Service implements VerifyAPIKey (string) but VerifyAPIKeyMeta
 	// returns *apikey.MetaInfo. Wrap it so the auth middleware can take a
@@ -160,11 +172,20 @@ func main() {
 		r.Get("/health", healthH.Health)
 		r.Get("/health/deps", healthH.Deps)
 
+		// ── Public magic-link endpoints (Phase H3) ─────────────
+		// No JWT required — caller is anonymous and identifies themselves
+		// via email; the issued ct_* token is then used for subsequent calls.
+		r.Post("/auth/magic-link/request", magicH.Request)
+		r.Post("/auth/magic-link/exchange", magicH.Exchange)
+
 		r.Group(func(r chi.Router) {
 			// API key check runs before JWT so agents can use X-API-Key header.
 			// APIKeyMiddlewareRich also stores APIKeyMeta in the context so per-route
 			// capability/origin/rate-limit middleware can enforce policy.
 			r.Use(auth.APIKeyMiddlewareRich(richKeyVerifier))
+			// Customer-token middleware runs before JWT so magic-link
+			// (Bearer ct_*) is consumed first. JWT path remains for staff.
+			r.Use(auth.CustomerTokenMiddleware(&customerTokenParser{}))
 			r.Use(authMiddleware)
 			r.Use(auth.EnforceKeyOrigin())
 			r.Use(auth.EnforceKeyRateLimit(rdb))
@@ -316,6 +337,18 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown: %v", err)
 	}
+}
+
+// customerTokenParser adapts magic.ParseCustomerAccessToken to auth.CustomerTokenParser
+// (kept here to avoid an auth↔magic import cycle).
+type customerTokenParser struct{}
+
+func (c *customerTokenParser) ParseCustomerAccessToken(raw string) (string, *uuid.UUID, error) {
+	tok, err := magic.ParseCustomerAccessToken(raw)
+	if err != nil {
+		return "", nil, err
+	}
+	return tok.Email, tok.TicketID, nil
 }
 
 // keyVerifierAdapter wraps apikey.Service to satisfy auth.RichKeyVerifier.
