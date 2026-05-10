@@ -28,15 +28,21 @@ type XPAwarder interface {
 	AwardXP(ctx context.Context, workspaceID, userID string, amount int) error
 }
 
-type Service struct {
-	store  Store
-	pub    Publisher
-	nuclex NuclexEmitter
-	xp     XPAwarder
+// WebhookSender fires an HTTP callback when a ticket reaches a terminal state.
+type WebhookSender interface {
+	Send(ctx context.Context, url string, payload any) error
 }
 
-func NewService(store Store, pub Publisher, nuclex NuclexEmitter, xp XPAwarder) *Service {
-	return &Service{store: store, pub: pub, nuclex: nuclex, xp: xp}
+type Service struct {
+	store   Store
+	pub     Publisher
+	nuclex  NuclexEmitter
+	xp      XPAwarder
+	webhook WebhookSender
+}
+
+func NewService(store Store, pub Publisher, nuclex NuclexEmitter, xp XPAwarder, wh WebhookSender) *Service {
+	return &Service{store: store, pub: pub, nuclex: nuclex, xp: xp, webhook: wh}
 }
 
 // Create creates a new ticket. requesterID is pre-extracted from the JWT by the HTTP handler.
@@ -152,6 +158,14 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 			if err := s.xp.AwardXP(ctx, workspaceID, t.RequesterID, t.RewardXP); err != nil {
 				log.Printf("warn: award xp: %v", err)
 			}
+		}
+		// Fire callback_url asynchronously so slow receivers don't block the caller.
+		if t.CallbackURL != "" && s.webhook != nil {
+			go func(url string, payload *Ticket) {
+				if err := s.webhook.Send(context.Background(), url, payload); err != nil {
+					log.Printf("warn: webhook delivery to %s: %v", url, err)
+				}
+			}(t.CallbackURL, t)
 		}
 	}
 

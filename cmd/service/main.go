@@ -23,6 +23,8 @@ import (
 	"github.com/tojiuni/goquest/internal/spicedb"
 	"github.com/tojiuni/goquest/internal/tag"
 	"github.com/tojiuni/goquest/internal/ticket"
+	"github.com/tojiuni/goquest/internal/sse"
+	"github.com/tojiuni/goquest/internal/webhook"
 	"github.com/tojiuni/goquest/internal/workspace"
 	"github.com/tojiuni/goquest/internal/xp"
 )
@@ -67,7 +69,8 @@ func main() {
 	store := ticket.NewPGStore(pool)
 	pub := queue.NewPublisher(rdb)
 	nuclexEmitter := integration.NewNuclexEmitter(rdb, cfg.NuclexEventsStream)
-	svc := ticket.NewService(store, pub, nuclexEmitter, xpSvc)
+	webhookDeliverer := webhook.New()
+	svc := ticket.NewService(store, pub, nuclexEmitter, xpSvc, webhookDeliverer)
 
 	wsStore := workspace.NewPGStore(pool)
 	wsSvc := workspace.NewService(wsStore)
@@ -100,6 +103,14 @@ func main() {
 	pjH := handler.NewProjectHandler(pjSvc)
 	tagH := handler.NewTagHandler(tagSvc)
 	xpH := handler.NewXPHandler(xpSvc)
+
+	// SSE hub — reads all ticket streams and fans out to connected clients.
+	sseHub := sse.New(rdb,
+		queue.StreamCreated,
+		queue.StreamAssigned,
+		queue.StreamUpdated,
+		queue.StreamCompleted,
+	)
 
 	// --- Router ---
 	r := chi.NewRouter()
@@ -138,6 +149,9 @@ func main() {
 
 			// ── XP Levels ─────────────────────────────────────────
 			r.Get("/xp/levels", xpH.ListLevels)
+
+			// ── SSE event stream ───────────────────────────────────
+			r.Get("/events", sseHub.ServeHTTP)
 
 			// ── Workspace ──────────────────────────────────────────
 			r.Post("/workspaces", wsH.Create)
@@ -196,6 +210,13 @@ func main() {
 	go func() {
 		if err := consumer.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("consumer exited: %v", err)
+		}
+	}()
+
+	// --- SSE hub (background) ---
+	go func() {
+		if err := sseHub.Run(ctx); err != nil && ctx.Err() == nil {
+			log.Printf("sse hub exited: %v", err)
 		}
 	}()
 

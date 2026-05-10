@@ -3,6 +3,9 @@ package ticket_test
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -104,6 +107,17 @@ func (m *mockPublisher) PublishCompleted(_ context.Context, _ *ticket.Ticket) er
 	return nil
 }
 
+type mockWebhook struct {
+	calls atomic.Int32
+	url   string
+}
+
+func (m *mockWebhook) Send(_ context.Context, url string, _ any) error {
+	m.calls.Add(1)
+	m.url = url
+	return nil
+}
+
 type mockNuclex struct {
 	completedCalls int
 	failedCalls    int
@@ -134,7 +148,7 @@ func newTestTicket(status ticket.Status) *ticket.Ticket {
 // --- tests ---
 
 func TestService_Create_RequireTitle(t *testing.T) {
-	svc := ticket.NewService(&mockStore{}, &mockPublisher{}, &mockNuclex{}, nil)
+	svc := ticket.NewService(&mockStore{}, &mockPublisher{}, &mockNuclex{}, nil, nil)
 	_, err := svc.Create(context.Background(), ticket.CreateTicketReq{}, "user1")
 	if err == nil {
 		t.Fatal("expected error for empty title")
@@ -144,7 +158,7 @@ func TestService_Create_RequireTitle(t *testing.T) {
 func TestService_Create_DefaultsApplied(t *testing.T) {
 	store := &mockStore{}
 	pub := &mockPublisher{}
-	svc := ticket.NewService(store, pub, &mockNuclex{}, nil)
+	svc := ticket.NewService(store, pub, &mockNuclex{}, nil, nil)
 
 	req := ticket.CreateTicketReq{Title: "my task"}
 	created, err := svc.Create(context.Background(), req, "user1")
@@ -171,7 +185,7 @@ func TestService_Create_DefaultsApplied(t *testing.T) {
 func TestService_Create_AgentTicketPublishesAssigned(t *testing.T) {
 	store := &mockStore{}
 	pub := &mockPublisher{}
-	svc := ticket.NewService(store, pub, &mockNuclex{}, nil)
+	svc := ticket.NewService(store, pub, &mockNuclex{}, nil, nil)
 
 	req := ticket.CreateTicketReq{
 		Title:        "agent task",
@@ -189,7 +203,7 @@ func TestService_Create_AgentTicketPublishesAssigned(t *testing.T) {
 }
 
 func TestService_Create_InvalidDomain(t *testing.T) {
-	svc := ticket.NewService(&mockStore{}, &mockPublisher{}, &mockNuclex{}, nil)
+	svc := ticket.NewService(&mockStore{}, &mockPublisher{}, &mockNuclex{}, nil, nil)
 	req := ticket.CreateTicketReq{Title: "x", Domain: "unknown-domain"}
 	_, err := svc.Create(context.Background(), req, "user1")
 	if err == nil {
@@ -202,7 +216,7 @@ func TestService_Update_CompletedEmitsNuclex(t *testing.T) {
 	store := &mockStore{getTicket: base}
 	pub := &mockPublisher{}
 	nuclex := &mockNuclex{}
-	svc := ticket.NewService(store, pub, nuclex, nil)
+	svc := ticket.NewService(store, pub, nuclex, nil, nil)
 
 	completed := ticket.StatusCompleted
 	_, err := svc.Update(context.Background(), base.ID, ticket.UpdateTicketReq{Status: &completed})
@@ -221,7 +235,7 @@ func TestService_Update_FailedEmitsNuclexFailed(t *testing.T) {
 	base := newTestTicket(ticket.StatusInProgress)
 	store := &mockStore{getTicket: base}
 	nuclex := &mockNuclex{}
-	svc := ticket.NewService(store, &mockPublisher{}, nuclex, nil)
+	svc := ticket.NewService(store, &mockPublisher{}, nuclex, nil, nil)
 
 	failed := ticket.StatusFailed
 	_, err := svc.Update(context.Background(), base.ID, ticket.UpdateTicketReq{Status: &failed})
@@ -236,7 +250,7 @@ func TestService_Update_FailedEmitsNuclexFailed(t *testing.T) {
 func TestService_Cancel(t *testing.T) {
 	base := newTestTicket(ticket.StatusPending)
 	store := &mockStore{getTicket: base}
-	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil)
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil)
 
 	_, err := svc.Cancel(context.Background(), base.ID)
 	if err != nil {
@@ -252,7 +266,7 @@ func TestService_Cancel(t *testing.T) {
 
 func TestService_Get_NotFound(t *testing.T) {
 	store := &mockStore{getErr: ticket.ErrNotFound}
-	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil)
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil)
 
 	_, err := svc.Get(context.Background(), uuid.New())
 	if !errors.Is(err, ticket.ErrNotFound) {
@@ -264,7 +278,7 @@ func TestService_Get_NotFound(t *testing.T) {
 
 func TestService_Create_DefaultsCompletionModeAndVisibility(t *testing.T) {
 	store := &mockStore{}
-	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil)
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil)
 
 	created, err := svc.Create(context.Background(), ticket.CreateTicketReq{Title: "quest"}, "u1")
 	if err != nil {
@@ -282,7 +296,7 @@ func TestService_SubmitAttempt_NotAnswerMode(t *testing.T) {
 	base := newTestTicket(ticket.StatusPending)
 	base.CompletionMode = ticket.CompletionManual
 	store := &mockStore{getTicket: base}
-	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil)
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil)
 
 	_, err := svc.SubmitAttempt(context.Background(), base.ID, "u1", ticket.SubmitAttemptReq{Answer: "x"})
 	if err == nil {
@@ -297,7 +311,7 @@ func TestService_SubmitAttempt_TerminalTicket(t *testing.T) {
 		"question": "2+2?", "answer_type": "exact", "correct_answer": "4", "max_attempts": 3,
 	}
 	store := &mockStore{getTicket: base}
-	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil)
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil)
 
 	_, err := svc.SubmitAttempt(context.Background(), base.ID, "u1", ticket.SubmitAttemptReq{Answer: "4"})
 	if err == nil {
@@ -312,7 +326,7 @@ func TestService_SubmitAttempt_ExactCorrect(t *testing.T) {
 		"question": "2+2?", "answer_type": "exact", "correct_answer": "4", "max_attempts": float64(3),
 	}
 	store := &mockStore{getTicket: base}
-	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil)
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil)
 
 	attempt, err := svc.SubmitAttempt(context.Background(), base.ID, "u1", ticket.SubmitAttemptReq{Answer: "4"})
 	if err != nil {
@@ -330,7 +344,7 @@ func TestService_SubmitAttempt_ExactWrong(t *testing.T) {
 		"question": "2+2?", "answer_type": "exact", "correct_answer": "4", "max_attempts": float64(3),
 	}
 	store := &mockStore{getTicket: base}
-	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil)
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil)
 
 	attempt, err := svc.SubmitAttempt(context.Background(), base.ID, "u1", ticket.SubmitAttemptReq{Answer: "5"})
 	if err != nil {
@@ -338,6 +352,55 @@ func TestService_SubmitAttempt_ExactWrong(t *testing.T) {
 	}
 	if attempt.IsCorrect == nil || *attempt.IsCorrect {
 		t.Error("expected IsCorrect = false")
+	}
+}
+
+func TestService_Update_CompletedFiresWebhook(t *testing.T) {
+	var called atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	base := newTestTicket(ticket.StatusInProgress)
+	base.CallbackURL = srv.URL
+	store := &mockStore{getTicket: base}
+	wh := &mockWebhook{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, wh)
+
+	completed := ticket.StatusCompleted
+	_, err := svc.Update(context.Background(), base.ID, ticket.UpdateTicketReq{Status: &completed})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// webhook fires asynchronously — give it a moment
+	time.Sleep(100 * time.Millisecond)
+	if wh.calls.Load() != 1 {
+		t.Errorf("expected 1 webhook call, got %d", wh.calls.Load())
+	}
+	if wh.url != srv.URL {
+		t.Errorf("webhook called wrong URL: %s", wh.url)
+	}
+}
+
+func TestService_Update_NoPendingCallbackOnNoURL(t *testing.T) {
+	base := newTestTicket(ticket.StatusInProgress)
+	// CallbackURL intentionally empty
+	store := &mockStore{getTicket: base}
+	wh := &mockWebhook{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, wh)
+
+	completed := ticket.StatusCompleted
+	_, err := svc.Update(context.Background(), base.ID, ticket.UpdateTicketReq{Status: &completed})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	if wh.calls.Load() != 0 {
+		t.Errorf("expected no webhook call when CallbackURL is empty, got %d", wh.calls.Load())
 	}
 }
 
