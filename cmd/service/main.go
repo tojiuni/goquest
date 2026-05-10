@@ -23,6 +23,7 @@ import (
 	"github.com/tojiuni/goquest/internal/macro"
 	"github.com/tojiuni/goquest/internal/magic"
 	"github.com/tojiuni/goquest/internal/notify"
+	"github.com/tojiuni/goquest/internal/pii"
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/integration"
 	"github.com/tojiuni/goquest/internal/migrate"
@@ -328,6 +329,25 @@ func main() {
 	go func() {
 		if err := slaWorker.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("sla worker exited: %v", err)
+		}
+	}()
+
+	// --- PII masking cron (Phase H7, daily) ---
+	piiMasker := pii.New(pool)
+	go func() {
+		// First run after 5 min (let the service finish booting), then every 24h.
+		t := time.NewTimer(5 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if _, err := piiMasker.Run(ctx); err != nil {
+					log.Printf("pii masker run: %v", err)
+				}
+				t.Reset(24 * time.Hour)
+			}
 		}
 	}()
 
