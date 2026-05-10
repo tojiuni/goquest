@@ -66,3 +66,13 @@ func (s *Service) GetUserXP(ctx context.Context, workspaceID, userID string) (*U
 func (s *Service) ListLevels(ctx context.Context) ([]*Level, error) {
 	return s.store.ListLevels(ctx)
 }
+
+// ListLeaderboard returns workspace members ordered by XP descending.
+func (s *Service) ListLeaderboard(ctx context.Context, workspaceID string, limit int) ([]*UserXP, error) {
+	return s.store.ListLeaderboard(ctx, workspaceID, limit)
+}
+
+// GetXPHistory returns the caller's XP gains from completed tickets.
+func (s *Service) GetXPHistory(ctx context.Context, workspaceID, userID string, limit int) ([]*XPEvent, error) {
+	return s.store.ListXPHistory(ctx, workspaceID, userID, limit)
+}
