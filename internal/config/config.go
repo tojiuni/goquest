@@ -22,6 +22,11 @@ type Config struct {
 
 	GoquestServiceURL  string
 	NuclexEventsStream string
+
+	// SpiceDB
+	SpiceDBEndpoint string
+	SpiceDBToken    string
+	SpiceDBInsecure bool
 }
 
 func Load() *Config {
@@ -42,6 +47,10 @@ func Load() *Config {
 
 		GoquestServiceURL:  os.Getenv("GOQUEST_SERVICE_URL"),
 		NuclexEventsStream: envOrDefault("NUCLEX_EVENTS_STREAM", "nuclex.events"),
+
+		SpiceDBEndpoint: envOrDefault("SPICEDB_ENDPOINT", "localhost:50051"),
+		SpiceDBToken:    os.Getenv("SPICEDB_TOKEN"),
+		SpiceDBInsecure: parseBool(os.Getenv("SPICEDB_INSECURE"), true),
 	}
 }
 

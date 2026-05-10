@@ -1,0 +1,54 @@
+/**
+ * goquest SpiceDB schema
+ *
+ * Hierarchy: user → workspace → project → ticket
+ * Visibility modes:
+ *   project    - all project members can view
+ *   restricted - only explicitly listed users can view
+ */
+
+definition user {}
+
+definition workspace {
+  relation owner:  user
+  relation admin:  user
+  relation member: user
+  relation viewer: user
+
+  permission can_view   = owner + admin + member + viewer
+  permission can_manage = owner + admin
+  permission can_admin  = owner
+}
+
+definition project {
+  relation workspace: workspace
+
+  // Direct project roles
+  relation admin:  user
+  relation member: user
+  relation viewer: user
+
+  // Inherited from workspace
+  permission can_view   = admin + member + viewer
+                        + workspace->can_view
+  permission can_manage = admin + workspace->can_manage
+  permission can_admin  = workspace->can_admin
+}
+
+definition ticket {
+  relation project:   project
+  relation requester: user
+  relation assignee:  user
+
+  // Explicit viewers for restricted visibility
+  relation restricted_viewer: user
+
+  // project visibility: all project members can view
+  permission can_view_project    = project->can_view + requester + assignee
+
+  // restricted visibility: only requester, assignee, and explicit viewers
+  permission can_view_restricted = requester + assignee + restricted_viewer
+
+  // Combined; the handler picks which to check based on ticket.visibility
+  permission can_manage = project->can_manage + requester
+}
