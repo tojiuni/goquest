@@ -23,4 +23,7 @@ type Store interface {
 	CreateAttempt(ctx context.Context, a *Attempt) error
 	ListAttempts(ctx context.Context, ticketID uuid.UUID) ([]*Attempt, error)
 	CountAttempts(ctx context.Context, ticketID uuid.UUID, userID string) (int, error)
+
+	// SLA
+	ListOverdue(ctx context.Context) ([]*Ticket, error)
 }
