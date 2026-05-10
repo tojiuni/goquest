@@ -147,3 +147,44 @@ export interface Attempt {
   ai_feedback?: string;
   attempted_at: string;
 }
+
+export interface APIKey {
+  id: string;
+  project_id: string;
+  name: string;
+  created_by: string;
+  last_used_at?: string;
+  created_at: string;
+}
+
+export interface Template {
+  id: string;
+  project_id: string;
+  name: string;
+  title?: string;
+  description?: string;
+  type?: string;
+  priority?: string;
+  domain?: string;
+  reward_xp: number;
+  completion_mode?: string;
+  completion_spec?: Record<string, unknown>;
+  assignee_type?: string;
+  assignee_id?: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface XPStatus {
+  workspace_id: string;
+  user_id: string;
+  xp: number;
+  level: number;
+  joined_at: string;
+}
+
+export interface XPLevel {
+  level: number;
+  xp_required: number;
+  title: string;
+}

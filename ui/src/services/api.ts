@@ -13,6 +13,10 @@ import type {
   Tag,
   Ticket,
   Attempt,
+  APIKey,
+  Template,
+  XPStatus,
+  XPLevel,
 } from "@/config";
 
 function makeClient(baseURL: string): AxiosInstance {
@@ -216,8 +220,83 @@ class TagService extends APIService {
   }
 }
 
+class XPService extends APIService {
+  constructor() {
+    super(API_BASE_URL);
+  }
+
+  getMyXP(workspaceId: string) {
+    return this.client.get<XPStatus>(`/workspaces/${workspaceId}/xp/me`);
+  }
+
+  listLevels() {
+    return this.client.get<{ levels: XPLevel[] }>("/xp/levels");
+  }
+}
+
+class APIKeyService extends APIService {
+  constructor() {
+    super(API_BASE_URL);
+  }
+
+  list(wid: string, pid: string) {
+    return this.client.get<{ api_keys: APIKey[] }>(
+      `/workspaces/${wid}/projects/${pid}/api-keys`
+    );
+  }
+
+  create(wid: string, pid: string, name: string) {
+    return this.client.post<APIKey & { key: string }>(
+      `/workspaces/${wid}/projects/${pid}/api-keys`,
+      { name }
+    );
+  }
+
+  delete(wid: string, pid: string, kid: string) {
+    return this.client.delete(`/workspaces/${wid}/projects/${pid}/api-keys/${kid}`);
+  }
+}
+
+class TemplateService extends APIService {
+  constructor() {
+    super(API_BASE_URL);
+  }
+
+  list(wid: string, pid: string) {
+    return this.client.get<{ templates: Template[] }>(
+      `/workspaces/${wid}/projects/${pid}/templates`
+    );
+  }
+
+  create(wid: string, pid: string, data: Partial<Template>) {
+    return this.client.post<Template>(
+      `/workspaces/${wid}/projects/${pid}/templates`,
+      data
+    );
+  }
+
+  delete(wid: string, pid: string, tid: string) {
+    return this.client.delete(`/workspaces/${wid}/projects/${pid}/templates/${tid}`);
+  }
+
+  instantiate(
+    wid: string,
+    pid: string,
+    tid: string,
+    overrides: Record<string, unknown>
+  ) {
+    return this.client.post<Ticket>(
+      `/workspaces/${wid}/projects/${pid}/templates/${tid}/instantiate`,
+      overrides
+    );
+  }
+}
+
 export const ticketService = new TicketService();
 export const workspaceService = new WorkspaceService();
 export const projectService = new ProjectService();
 export const tagService = new TagService();
+export const xpService = new XPService();
+export const apiKeyService = new APIKeyService();
+export const templateService = new TemplateService();
 export { APIService };

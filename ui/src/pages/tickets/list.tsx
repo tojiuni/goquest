@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { List, useTable, DateField } from "@refinedev/antd";
 import { useNavigation } from "@refinedev/core";
 import {
@@ -9,7 +9,9 @@ import {
   Typography,
   Tag,
   Badge,
+  message,
 } from "antd";
+import { useSSE } from "@/hooks/useSSE";
 import { PlusOutlined, EyeOutlined, EditOutlined, TrophyOutlined } from "@ant-design/icons";
 import { StatusTag } from "@/components/StatusTag";
 import { PriorityTag } from "@/components/PriorityTag";
@@ -23,11 +25,27 @@ export const TicketList = () => {
   const { currentWorkspace } = useWorkspace();
   const [projects, setProjects] = useState<Project[]>([]);
 
-  const { tableProps, setFilters } = useTable<Ticket>({
+  const { tableProps, setFilters, tableQueryResult } = useTable<Ticket>({
     resource: "tickets",
     syncWithLocation: true,
     pagination: { pageSize: 20 },
   });
+
+  const handleSSEEvent = useCallback(
+    (event: { stream: string; data: unknown }) => {
+      if (event.stream === "goquest.tickets.created") {
+        message.info("New ticket created");
+        tableQueryResult.refetch();
+      } else if (event.stream === "goquest.tickets.completed") {
+        message.success("Ticket completed ✓");
+        tableQueryResult.refetch();
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tableQueryResult.refetch]
+  );
+
+  useSSE(handleSSEEvent);
 
   useEffect(() => {
     if (!currentWorkspace?.id) return;

@@ -3,8 +3,8 @@ import { Create, useForm } from "@refinedev/antd";
 import { Form, Input, Select, Row, Col, InputNumber, DatePicker } from "antd";
 import { TICKET_TYPES, PRIORITIES, DOMAINS, COMPLETION_MODES } from "@/config";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
-import { projectService, tagService } from "@/services/api";
-import type { Project, Tag } from "@/config";
+import { projectService, tagService, templateService } from "@/services/api";
+import type { Project, Tag, Template } from "@/config";
 
 export const TicketCreate = () => {
   const { currentWorkspace } = useWorkspace();
@@ -12,6 +12,7 @@ export const TicketCreate = () => {
 
   const [projects, setProjects] = useState<Project[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
 
   const { formProps, saveButtonProps, form } = useForm({
     resource: "tickets",
@@ -21,12 +22,38 @@ export const TicketCreate = () => {
 
   const assigneeType = Form.useWatch("assignee_type", form);
   const completionMode = Form.useWatch("completion_mode", form);
+  const selectedProjectId = Form.useWatch("project_id", form);
 
   useEffect(() => {
     if (!wid) return;
     projectService.listProjects(wid).then(({ data }) => setProjects(data.projects ?? []));
     tagService.listTags(wid).then(({ data }) => setTags(data.tags ?? []));
   }, [wid]);
+
+  useEffect(() => {
+    if (!wid || !selectedProjectId) {
+      setTemplates([]);
+      return;
+    }
+    templateService
+      .list(wid, selectedProjectId)
+      .then(({ data }) => setTemplates(data.templates ?? []))
+      .catch(() => setTemplates([]));
+  }, [wid, selectedProjectId]);
+
+  const handleTemplateSelect = (templateId: string) => {
+    const tpl = templates.find((t) => t.id === templateId);
+    if (!tpl) return;
+    form.setFieldsValue({
+      title: tpl.title ?? undefined,
+      type: tpl.type ?? undefined,
+      priority: tpl.priority ?? undefined,
+      domain: tpl.domain ?? undefined,
+      reward_xp: tpl.reward_xp ?? 0,
+      completion_mode: tpl.completion_mode ?? undefined,
+      completion_spec: tpl.completion_spec ?? undefined,
+    });
+  };
 
   return (
     <Create saveButtonProps={saveButtonProps} title="New Ticket">
@@ -41,6 +68,32 @@ export const TicketCreate = () => {
           reward_xp: 0,
         }}
       >
+        {projects.length > 0 && (
+          <Row gutter={16}>
+            <Col xs={24} sm={12}>
+              <Form.Item name="project_id" label="Project (select to load templates)">
+                <Select
+                  allowClear
+                  placeholder="Select project (optional)"
+                  options={projects.map((p) => ({ label: p.name, value: p.id }))}
+                />
+              </Form.Item>
+            </Col>
+            {templates.length > 0 && (
+              <Col xs={24} sm={12}>
+                <Form.Item label="From Template (optional)">
+                  <Select
+                    allowClear
+                    placeholder="Auto-fill from template"
+                    options={templates.map((t) => ({ label: t.name, value: t.id }))}
+                    onChange={(v) => v && handleTemplateSelect(v)}
+                  />
+                </Form.Item>
+              </Col>
+            )}
+          </Row>
+        )}
+
         <Form.Item name="title" label="Title" rules={[{ required: true, message: "Title is required" }]}>
           <Input placeholder="Describe the task in one line" />
         </Form.Item>
@@ -154,19 +207,8 @@ export const TicketCreate = () => {
           </Row>
         )}
 
-        <Row gutter={16}>
-          {projects.length > 0 && (
-            <Col xs={24} sm={12}>
-              <Form.Item name="project_id" label="Project">
-                <Select
-                  allowClear
-                  placeholder="Select project (optional)"
-                  options={projects.map((p) => ({ label: p.name, value: p.id }))}
-                />
-              </Form.Item>
-            </Col>
-          )}
-          {tags.length > 0 && (
+        {tags.length > 0 && (
+          <Row gutter={16}>
             <Col xs={24} sm={12}>
               <Form.Item name="tag_ids" label="Tags">
                 <Select
@@ -177,8 +219,8 @@ export const TicketCreate = () => {
                 />
               </Form.Item>
             </Col>
-          )}
-        </Row>
+          </Row>
+        )}
       </Form>
     </Create>
   );
