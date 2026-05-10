@@ -29,33 +29,54 @@ func (s *pgStore) Create(ctx context.Context, t *Ticket) error {
 	if err != nil {
 		return fmt.Errorf("marshal metadata: %w", err)
 	}
+	specJSON, err := marshalNullableJSON(t.CompletionSpec)
+	if err != nil {
+		return fmt.Errorf("marshal completion_spec: %w", err)
+	}
+	if specJSON == nil {
+		specJSON = []byte("{}")
+	}
 
 	var domain *string
 	if t.Domain != "" {
 		d := string(t.Domain)
 		domain = &d
 	}
-
 	var sourceBot *string
 	if t.SourceBot != "" {
 		sb := t.SourceBot
 		sourceBot = &sb
 	}
+	visibility := t.Visibility
+	if visibility == "" {
+		visibility = VisibilityProject
+	}
+	mode := t.CompletionMode
+	if mode == "" {
+		mode = CompletionManual
+	}
+	var callbackURL *string
+	if t.CallbackURL != "" {
+		callbackURL = &t.CallbackURL
+	}
 
-	query := `
+	_, err = s.db.Exec(ctx, `
 		INSERT INTO tickets (
 			id, title, description, type, status, priority,
 			assignee_type, assignee_id, requester_id, source_bot,
 			domain, agent_context, vikunja_task_id, metadata,
+			project_id, parent_id, visibility, completion_mode,
+			completion_spec, reward_xp, due_at, callback_url,
 			created_at, updated_at
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16
-		)`
-
-	_, err = s.db.Exec(ctx, query,
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+			$15,$16,$17,$18,$19,$20,$21,$22,$23,$24
+		)`,
 		t.ID, t.Title, t.Description, string(t.Type), string(t.Status), string(t.Priority),
 		string(t.AssigneeType), t.AssigneeID, t.RequesterID, sourceBot,
 		domain, agentCtxJSON, t.VikunjaTaskID, metaJSON,
+		t.ProjectID, t.ParentID, string(visibility), string(mode),
+		specJSON, t.RewardXP, t.DueAt, callbackURL,
 		t.CreatedAt, t.UpdatedAt,
 	)
 	if err != nil {
@@ -65,13 +86,7 @@ func (s *pgStore) Create(ctx context.Context, t *Ticket) error {
 }
 
 func (s *pgStore) Get(ctx context.Context, id uuid.UUID) (*Ticket, error) {
-	row := s.db.QueryRow(ctx, `
-		SELECT id, title, description, type, status, priority,
-		       assignee_type, assignee_id, requester_id, source_bot,
-		       domain, agent_context, vikunja_task_id, metadata,
-		       created_at, updated_at, completed_at
-		FROM tickets WHERE id = $1`, id)
-
+	row := s.db.QueryRow(ctx, ticketSelectSQL+"WHERE t.id = $1", id)
 	t, err := scanTicket(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -82,6 +97,25 @@ func (s *pgStore) Get(ctx context.Context, id uuid.UUID) (*Ticket, error) {
 	return t, nil
 }
 
+// ticketSelectSQL is the base SELECT with a LEFT JOIN for tags.
+// Callers append a WHERE clause.
+const ticketSelectSQL = `
+	SELECT t.id, t.title, t.description, t.type, t.status, t.priority,
+	       t.assignee_type, t.assignee_id, t.requester_id, t.source_bot,
+	       t.domain, t.agent_context, t.vikunja_task_id, t.metadata,
+	       t.project_id, t.parent_id, t.visibility, t.completion_mode,
+	       t.completion_spec, t.reward_xp, t.due_at, t.callback_url,
+	       t.created_at, t.updated_at, t.completed_at,
+	       COALESCE(
+	         json_agg(json_build_object('id',tg.id,'name',tg.name,'color',tg.color))
+	         FILTER (WHERE tg.id IS NOT NULL),
+	         '[]'
+	       ) AS tags
+	FROM tickets t
+	LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
+	LEFT JOIN tags tg        ON tg.id = tt.tag_id
+`
+
 func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq) (*Ticket, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -89,12 +123,8 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 
-	row := tx.QueryRow(ctx, `
-		SELECT id, title, description, type, status, priority,
-		       assignee_type, assignee_id, requester_id, source_bot,
-		       domain, agent_context, vikunja_task_id, metadata,
-		       created_at, updated_at, completed_at
-		FROM tickets WHERE id = $1 FOR UPDATE`, id)
+	row := tx.QueryRow(ctx,
+		ticketSelectSQL+"WHERE t.id = $1 GROUP BY t.id FOR UPDATE OF t", id)
 
 	current, err := scanTicket(row)
 	if err != nil {
@@ -136,15 +166,51 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	if req.AgentContext != nil {
 		newAgentCtx = req.AgentContext
 	}
-
 	newVikunja := current.VikunjaTaskID
 	if req.VikunjaTaskID != nil {
 		newVikunja = req.VikunjaTaskID
 	}
 
+	newVisibility := current.Visibility
+	if req.Visibility != nil {
+		newVisibility = *req.Visibility
+	}
+	newMode := current.CompletionMode
+	if req.CompletionMode != nil {
+		newMode = *req.CompletionMode
+	}
+	newSpec := current.CompletionSpec
+	if req.CompletionSpec != nil {
+		newSpec = req.CompletionSpec
+	}
+	newRewardXP := current.RewardXP
+	if req.RewardXP != nil {
+		newRewardXP = *req.RewardXP
+	}
+	newDueAt := current.DueAt
+	if req.DueAt != nil {
+		newDueAt = req.DueAt
+	}
+	newCallbackURL := current.CallbackURL
+	if req.CallbackURL != nil {
+		newCallbackURL = *req.CallbackURL
+	}
+
 	agentCtxJSON, err := marshalNullableJSON(newAgentCtx)
 	if err != nil {
 		return nil, fmt.Errorf("marshal agent_context: %w", err)
+	}
+	specJSON, err := marshalNullableJSON(newSpec)
+	if err != nil {
+		return nil, fmt.Errorf("marshal completion_spec: %w", err)
+	}
+	if specJSON == nil {
+		specJSON = []byte("{}")
+	}
+
+	var callbackURL *string
+	if newCallbackURL != "" {
+		callbackURL = &newCallbackURL
 	}
 
 	now := time.Now().UTC()
@@ -160,10 +226,17 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	_, err = tx.Exec(ctx, `
 		UPDATE tickets SET
 			status=$2, assignee_id=$3, assignee_type=$4, domain=$5,
-			agent_context=$6, vikunja_task_id=$7, updated_at=$8, completed_at=$9
+			agent_context=$6, vikunja_task_id=$7,
+			visibility=$8, completion_mode=$9, completion_spec=$10,
+			reward_xp=$11, due_at=$12, callback_url=$13,
+			updated_at=$14, completed_at=$15
 		WHERE id=$1`,
-		id, string(newStatus), newAssigneeID, string(newAssigneeType), newDomain,
-		agentCtxJSON, newVikunja, now, completedAt,
+		id,
+		string(newStatus), newAssigneeID, string(newAssigneeType), newDomain,
+		agentCtxJSON, newVikunja,
+		string(newVisibility), string(newMode), specJSON,
+		newRewardXP, newDueAt, callbackURL,
+		now, completedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("update ticket: %w", err)
@@ -182,32 +255,42 @@ func (s *pgStore) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int
 	i := 1
 
 	if f.Status != nil {
-		where += fmt.Sprintf(" AND status=$%d", i)
+		where += fmt.Sprintf(" AND t.status=$%d", i)
 		args = append(args, string(*f.Status))
 		i++
 	}
 	if f.Domain != nil {
-		where += fmt.Sprintf(" AND domain=$%d", i)
+		where += fmt.Sprintf(" AND t.domain=$%d", i)
 		args = append(args, string(*f.Domain))
 		i++
 	}
 	if f.AssigneeType != nil {
-		where += fmt.Sprintf(" AND assignee_type=$%d", i)
+		where += fmt.Sprintf(" AND t.assignee_type=$%d", i)
 		args = append(args, string(*f.AssigneeType))
 		i++
 	}
 	if f.AssigneeID != nil {
-		where += fmt.Sprintf(" AND assignee_id=$%d", i)
+		where += fmt.Sprintf(" AND t.assignee_id=$%d", i)
 		args = append(args, *f.AssigneeID)
 		i++
 	}
 	if f.RequesterID != nil {
-		where += fmt.Sprintf(" AND requester_id=$%d", i)
+		where += fmt.Sprintf(" AND t.requester_id=$%d", i)
 		args = append(args, *f.RequesterID)
 		i++
 	}
+	if f.ProjectID != nil {
+		where += fmt.Sprintf(" AND t.project_id=$%d", i)
+		args = append(args, *f.ProjectID)
+		i++
+	}
+	if f.ParentID != nil {
+		where += fmt.Sprintf(" AND t.parent_id=$%d", i)
+		args = append(args, *f.ParentID)
+		i++
+	}
 
-	countQuery := "SELECT COUNT(*) FROM tickets " + where
+	countQuery := "SELECT COUNT(*) FROM tickets t " + where
 	var total int
 	if err := s.db.QueryRow(ctx, countQuery, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count tickets: %w", err)
@@ -223,13 +306,9 @@ func (s *pgStore) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int
 	}
 
 	listArgs := append(args, limit, offset)
-	rows, err := s.db.Query(ctx, `
-		SELECT id, title, description, type, status, priority,
-		       assignee_type, assignee_id, requester_id, source_bot,
-		       domain, agent_context, vikunja_task_id, metadata,
-		       created_at, updated_at, completed_at
-		FROM tickets `+where+
-		fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", i, i+1),
+	rows, err := s.db.Query(ctx,
+		ticketSelectSQL+where+
+			fmt.Sprintf(" GROUP BY t.id ORDER BY t.created_at DESC LIMIT $%d OFFSET $%d", i, i+1),
 		listArgs...,
 	)
 	if err != nil {
@@ -263,13 +342,19 @@ func scanTicket(s scanner) (*Ticket, error) {
 		domain        *string
 		agentCtxBytes []byte
 		metaBytes     []byte
+		specBytes     []byte
+		callbackURL   *string
+		tagsBytes     []byte
 	)
 
 	err := s.Scan(
 		&t.ID, &t.Title, &t.Description, &t.Type, &t.Status, &t.Priority,
 		&t.AssigneeType, &t.AssigneeID, &t.RequesterID, &sourceBot,
 		&domain, &agentCtxBytes, &t.VikunjaTaskID, &metaBytes,
+		&t.ProjectID, &t.ParentID, &t.Visibility, &t.CompletionMode,
+		&specBytes, &t.RewardXP, &t.DueAt, &callbackURL,
 		&t.CreatedAt, &t.UpdatedAt, &t.CompletedAt,
+		&tagsBytes,
 	)
 	if err != nil {
 		return nil, err
@@ -281,6 +366,9 @@ func scanTicket(s scanner) (*Ticket, error) {
 	if domain != nil {
 		t.Domain = Domain(*domain)
 	}
+	if callbackURL != nil {
+		t.CallbackURL = *callbackURL
+	}
 	if len(agentCtxBytes) > 0 {
 		if err := json.Unmarshal(agentCtxBytes, &t.AgentContext); err != nil {
 			return nil, fmt.Errorf("unmarshal agent_context: %w", err)
@@ -289,6 +377,16 @@ func scanTicket(s scanner) (*Ticket, error) {
 	if len(metaBytes) > 0 {
 		if err := json.Unmarshal(metaBytes, &t.Metadata); err != nil {
 			return nil, fmt.Errorf("unmarshal metadata: %w", err)
+		}
+	}
+	if len(specBytes) > 0 {
+		if err := json.Unmarshal(specBytes, &t.CompletionSpec); err != nil {
+			return nil, fmt.Errorf("unmarshal completion_spec: %w", err)
+		}
+	}
+	if len(tagsBytes) > 0 && string(tagsBytes) != "[]" {
+		if err := json.Unmarshal(tagsBytes, &t.Tags); err != nil {
+			return nil, fmt.Errorf("unmarshal tags: %w", err)
 		}
 	}
 
