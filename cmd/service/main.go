@@ -20,6 +20,7 @@ import (
 	"github.com/tojiuni/goquest/internal/migrate"
 	"github.com/tojiuni/goquest/internal/project"
 	"github.com/tojiuni/goquest/internal/queue"
+	"github.com/tojiuni/goquest/internal/spicedb"
 	"github.com/tojiuni/goquest/internal/tag"
 	"github.com/tojiuni/goquest/internal/ticket"
 	"github.com/tojiuni/goquest/internal/workspace"
@@ -73,7 +74,23 @@ func main() {
 	tagStore := tag.NewPGStore(pool)
 	tagSvc := tag.NewService(tagStore)
 
-	ticketH := handler.NewTicketHandler(svc)
+	// SpiceDB — optional; falls back to noop when endpoint is unavailable.
+	var (
+		sdbChecker spicedb.PermissionChecker = &spicedb.NoopChecker{}
+		sdbWriter  spicedb.RelationshipWriter = &spicedb.NoopWriter{}
+	)
+	if cfg.SpiceDBEndpoint != "" {
+		sdbClient, sdbErr := spicedb.NewClient(cfg.SpiceDBEndpoint, cfg.SpiceDBToken, cfg.SpiceDBInsecure)
+		if sdbErr != nil {
+			log.Printf("warn: spicedb unavailable (%v) — running without fine-grained authz", sdbErr)
+		} else {
+			sdbChecker = sdbClient.Checker()
+			sdbWriter = sdbClient.Writer()
+			log.Printf("spicedb connected: %s", cfg.SpiceDBEndpoint)
+		}
+	}
+
+	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter)
 	healthH := handler.NewHealthHandler(pool, rdb)
 	wsH := handler.NewWorkspaceHandler(wsSvc)
 	pjH := handler.NewProjectHandler(pjSvc)

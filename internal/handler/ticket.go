@@ -9,15 +9,18 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/tojiuni/goquest/internal/auth"
+	"github.com/tojiuni/goquest/internal/spicedb"
 	"github.com/tojiuni/goquest/internal/ticket"
 )
 
 type TicketHandler struct {
-	svc *ticket.Service
+	svc     *ticket.Service
+	checker spicedb.PermissionChecker
+	writer  spicedb.RelationshipWriter
 }
 
-func NewTicketHandler(svc *ticket.Service) *TicketHandler {
-	return &TicketHandler{svc: svc}
+func NewTicketHandler(svc *ticket.Service, checker spicedb.PermissionChecker, writer spicedb.RelationshipWriter) *TicketHandler {
+	return &TicketHandler{svc: svc, checker: checker, writer: writer}
 }
 
 func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -32,6 +35,15 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// Write SpiceDB relationships asynchronously (best-effort).
+	if t.ProjectID != nil {
+		go func() {
+			if wErr := h.writer.WriteTicket(r.Context(), t.ID, *t.ProjectID, t.RequesterID, t.AssigneeID); wErr != nil {
+				_ = wErr // log in production
+			}
+		}()
 	}
 
 	writeJSON(w, http.StatusCreated, t)
@@ -92,6 +104,19 @@ func (h *TicketHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	// SpiceDB visibility check (skip if no project, e.g. legacy tickets).
+	if t.ProjectID != nil {
+		userID := auth.RequesterID(r)
+		ok, checkErr := h.checker.CanViewTicket(r.Context(), t.ID, userID, spicedb.VisibilityMode(t.Visibility))
+		if checkErr != nil {
+			// Log but don't block on SpiceDB errors — fail open in degraded mode.
+			_ = checkErr
+		} else if !ok {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, t)
