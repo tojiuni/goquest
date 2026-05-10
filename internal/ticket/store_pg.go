@@ -266,6 +266,16 @@ func (s *pgStore) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int
 		args = append(args, string(*f.Status))
 		i++
 	}
+	if f.Type != nil {
+		where += fmt.Sprintf(" AND t.type=$%d", i)
+		args = append(args, string(*f.Type))
+		i++
+	}
+	if f.Priority != nil {
+		where += fmt.Sprintf(" AND t.priority=$%d", i)
+		args = append(args, string(*f.Priority))
+		i++
+	}
 	if f.Domain != nil {
 		where += fmt.Sprintf(" AND t.domain=$%d", i)
 		args = append(args, string(*f.Domain))

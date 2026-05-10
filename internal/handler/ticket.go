@@ -60,6 +60,14 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 		st := ticket.Status(s)
 		f.Status = &st
 	}
+	if t := q.Get("type"); t != "" {
+		tt := ticket.TicketType(t)
+		f.Type = &tt
+	}
+	if p := q.Get("priority"); p != "" {
+		pr := ticket.Priority(p)
+		f.Priority = &pr
+	}
 	if d := q.Get("domain"); d != "" {
 		dom := ticket.Domain(d)
 		f.Domain = &dom
@@ -73,6 +81,11 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	if req := q.Get("requester_id"); req != "" {
 		f.RequesterID = &req
+	}
+	if pid := q.Get("project_id"); pid != "" {
+		if u, err := uuid.Parse(pid); err == nil {
+			f.ProjectID = &u
+		}
 	}
 
 	tickets, total, err := h.svc.List(r.Context(), f)

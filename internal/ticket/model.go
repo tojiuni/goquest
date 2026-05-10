@@ -162,6 +162,8 @@ type UpdateTicketReq struct {
 
 type ListTicketsFilter struct {
 	Status       *Status
+	Type         *TicketType
+	Priority     *Priority
 	Domain       *Domain
 	AssigneeType *AssigneeType
 	AssigneeID   *string
