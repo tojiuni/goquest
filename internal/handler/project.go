@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -10,11 +11,24 @@ import (
 	"github.com/tojiuni/goquest/internal/project"
 )
 
-type ProjectHandler struct {
-	svc *project.Service
+type ProjectSvc interface {
+	Create(ctx context.Context, workspaceID uuid.UUID, creatorID string, req project.CreateReq) (*project.Project, error)
+	Get(ctx context.Context, id uuid.UUID) (*project.Project, error)
+	Update(ctx context.Context, id uuid.UUID, req project.UpdateReq) (*project.Project, error)
+	Delete(ctx context.Context, id uuid.UUID) error
+	ListByWorkspace(ctx context.Context, workspaceID uuid.UUID) ([]*project.Project, error)
+	GetMember(ctx context.Context, projectID uuid.UUID, userID string) (*project.Member, error)
+	ListMembers(ctx context.Context, projectID uuid.UUID) ([]*project.Member, error)
+	AddMember(ctx context.Context, projectID uuid.UUID, req project.SetRoleReq, targetUserID string) error
+	SetMemberRole(ctx context.Context, projectID uuid.UUID, targetUserID string, req project.SetRoleReq) error
+	RemoveMember(ctx context.Context, projectID uuid.UUID, targetUserID string) error
 }
 
-func NewProjectHandler(svc *project.Service) *ProjectHandler {
+type ProjectHandler struct {
+	svc ProjectSvc
+}
+
+func NewProjectHandler(svc ProjectSvc) *ProjectHandler {
 	return &ProjectHandler{svc: svc}
 }
 

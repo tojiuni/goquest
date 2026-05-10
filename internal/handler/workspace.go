@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -10,11 +11,28 @@ import (
 	"github.com/tojiuni/goquest/internal/workspace"
 )
 
-type WorkspaceHandler struct {
-	svc *workspace.Service
+type WorkspaceSvc interface {
+	EnsurePersonalWorkspace(ctx context.Context, userID, displayName string) (*workspace.Workspace, error)
+	Create(ctx context.Context, ownerID string, req workspace.CreateReq) (*workspace.Workspace, error)
+	Get(ctx context.Context, id uuid.UUID) (*workspace.Workspace, error)
+	Update(ctx context.Context, id uuid.UUID, req workspace.UpdateReq) (*workspace.Workspace, error)
+	Delete(ctx context.Context, id uuid.UUID) error
+	ListByUser(ctx context.Context, userID string) ([]*workspace.Workspace, error)
+	GetMember(ctx context.Context, workspaceID uuid.UUID, userID string) (*workspace.Member, error)
+	ListMembers(ctx context.Context, workspaceID uuid.UUID) ([]*workspace.Member, error)
+	SetMemberRole(ctx context.Context, workspaceID uuid.UUID, targetUserID string, req workspace.SetRoleReq, callerRole workspace.Role) error
+	RemoveMember(ctx context.Context, workspaceID uuid.UUID, targetUserID string, callerRole workspace.Role) error
+	CreateInvitation(ctx context.Context, workspaceID uuid.UUID, inviterID string, req workspace.InviteReq) (*workspace.Invitation, error)
+	ListInvitations(ctx context.Context, workspaceID uuid.UUID) ([]*workspace.Invitation, error)
+	DeleteInvitation(ctx context.Context, invID uuid.UUID) error
+	AcceptInvitation(ctx context.Context, token, userID string) (*workspace.Workspace, error)
 }
 
-func NewWorkspaceHandler(svc *workspace.Service) *WorkspaceHandler {
+type WorkspaceHandler struct {
+	svc WorkspaceSvc
+}
+
+func NewWorkspaceHandler(svc WorkspaceSvc) *WorkspaceHandler {
 	return &WorkspaceHandler{svc: svc}
 }
 
