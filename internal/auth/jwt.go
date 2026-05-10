@@ -37,6 +37,12 @@ func Middleware(jwksURL string, skip bool) func(http.Handler) http.Handler {
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Already authenticated upstream (e.g. by APIKeyMiddleware).
+			if RequesterID(r) != "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			raw := bearerToken(r)
 			if raw == "" {
 				http.Error(w, "missing authorization header", http.StatusUnauthorized)
