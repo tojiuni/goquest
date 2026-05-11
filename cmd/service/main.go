@@ -20,6 +20,7 @@ import (
 	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/comment"
 	"github.com/tojiuni/goquest/internal/config"
+	"github.com/tojiuni/goquest/internal/device"
 	"github.com/tojiuni/goquest/internal/macro"
 	"github.com/tojiuni/goquest/internal/magic"
 	"github.com/tojiuni/goquest/internal/notify"
@@ -153,6 +154,10 @@ func main() {
 	auditH := handler.NewAuditHandler(auditLogger)
 	kpiH := handler.NewHelpdeskKPIHandler(pool)
 
+	deviceStore := device.NewPGStore(pool)
+	deviceSvc := device.NewService(deviceStore)
+	deviceH := handler.NewDeviceHandler(deviceSvc)
+
 	// Adapter: apikey.Service implements VerifyAPIKey (string) but VerifyAPIKeyMeta
 	// returns *apikey.MetaInfo. Wrap it so the auth middleware can take a
 	// RichKeyVerifier returning *auth.APIKeyMeta without an apikey↔auth import cycle.
@@ -203,6 +208,11 @@ func main() {
 			r.Use(authMiddleware)
 			r.Use(auth.EnforceKeyOrigin())
 			r.Use(auth.EnforceKeyRateLimit(rdb))
+
+			// ── Devices (mobile push, Phase 7) ────────────────────
+			r.Post("/devices/register", deviceH.Register)
+			r.Get("/devices", deviceH.List)
+			r.Delete("/devices/{id}", deviceH.Delete)
 
 			// ── Legacy ticket routes (no project context) ──────────
 			r.Post("/tickets", ticketH.Create)
