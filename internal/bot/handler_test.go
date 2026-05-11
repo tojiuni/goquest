@@ -157,6 +157,99 @@ func TestExecute_AssignTicket_DomainToAssigneeID(t *testing.T) {
 	if body["assignee_id"] != "hermes-infra" {
 		t.Errorf("expected assignee_id=hermes-infra, got %v", body["assignee_id"])
 	}
+	if body["status"] != "assigned" {
+		t.Errorf("expected status=assigned (per SOUL.md state machine), got %v", body["status"])
+	}
+	if body["domain"] != "infra" {
+		t.Errorf("expected domain=infra in PATCH body, got %v", body["domain"])
+	}
+}
+
+// Repro: when the caller omits "domain" but supplies an explicit assignee_id,
+// the bot previously sent domain="" which goquest-service rejected as an
+// invalid ticket_domain enum (SQL 22P02 → 500).
+func TestExecute_AssignTicket_OmitsDomainWhenEmpty(t *testing.T) {
+	var capturedBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"some-uuid"}`))
+	}))
+	defer srv.Close()
+
+	h := NewHandler(srv.URL, "", "", &http.Client{})
+	resp := callExecute(t, h, ExecuteRequest{
+		Capability: "ticket.assign",
+		Payload: map[string]any{
+			"id":          "aaaaaaaa-0000-0000-0000-000000000000",
+			"assignee_id": "hermes-code",
+		},
+	})
+	if !resp.OK {
+		t.Fatalf("expected OK=true, got: %s", resp.Error)
+	}
+	var body map[string]any
+	_ = json.Unmarshal(capturedBody, &body)
+	if _, present := body["domain"]; present {
+		t.Errorf("domain must be omitted when caller did not provide it, got body[domain]=%v", body["domain"])
+	}
+	if body["status"] != "assigned" {
+		t.Errorf("expected status=assigned, got %v", body["status"])
+	}
+}
+
+// Repro: ticket.complete previously replaced agent_context with the result
+// payload, losing pre-existing keys. Per SOUL.md §10 it must MERGE.
+func TestExecute_CompleteTicket_MergesAgentContext(t *testing.T) {
+	var patched map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "aaaaaaaa-0000-0000-0000-000000000000",
+				"agent_context": map[string]any{
+					"platform": "iOS",
+					"version":  "18.2",
+				},
+			})
+		case http.MethodPatch:
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &patched)
+			_, _ = w.Write([]byte(`{"id":"some-uuid"}`))
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer srv.Close()
+
+	h := NewHandler(srv.URL, "", "", &http.Client{})
+	resp := callExecute(t, h, ExecuteRequest{
+		Capability: "ticket.complete",
+		Payload: map[string]any{
+			"id": "aaaaaaaa-0000-0000-0000-000000000000",
+			"result": map[string]any{
+				"fix_commit": "abc1234",
+				"rollout":    "staged",
+			},
+		},
+	})
+	if !resp.OK {
+		t.Fatalf("expected OK=true, got: %s", resp.Error)
+	}
+	ctx, ok := patched["agent_context"].(map[string]any)
+	if !ok {
+		t.Fatalf("patched agent_context missing or wrong shape: %v", patched["agent_context"])
+	}
+	for _, k := range []string{"platform", "version", "fix_commit", "rollout"} {
+		if _, ok := ctx[k]; !ok {
+			t.Errorf("merged agent_context missing key %q (got %v)", k, ctx)
+		}
+	}
+	if ctx["platform"] != "iOS" || ctx["fix_commit"] != "abc1234" {
+		t.Errorf("merge values wrong: %v", ctx)
+	}
 }
 
 func TestExecute_InvalidJSON(t *testing.T) {
