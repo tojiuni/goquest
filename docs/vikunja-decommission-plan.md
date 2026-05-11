@@ -14,7 +14,7 @@
 | 데이터 마이그레이션 | ❌ 안 함. mock data만 있으므로 vikunja DB는 삭제 |
 | 마이그레이션 방식 | Big bang (한 번에 폐기) |
 | 일정 | 이번 주 (2026-W19) 완료 |
-| Vikunja history 보존 | 코드 삭제 commit + 이 plan 문서로만 남김. DB backup 없음 |
+| Vikunja history 보존 | 코드/배포/DB 모두 제거하되 **이 plan 문서 + `geneso/.../vikunja-decommission-2026-05.md` 한 장**으로 "왜·언제 폐기했는지" 기록만 영구 보존. DB backup 없음 |
 | Goquest 대체 기능 | Project 구조, due_date, 캘린더 sync (iOS EventKit), Comments, Tags, Priority — **모두 이미 동작** |
 | 반복 작업 (recurring) | 폐기 후 필요시 별도 phase로 추가 |
 
@@ -112,8 +112,18 @@ PR: `chore(vikunja): decommission vikunja deployment + IaC`
 
 작업:
 1. `CLAUDE.md` global instructions에서 vikunja 항목 제거
-2. `geneso/universitas/operations/` 또는 적절한 위치에 `vikunja-decommission-2026-05.md` 추가 — 폐기 기록
+2. `geneso/universitas/operations/vikunja-decommission-2026-05.md` 추가 — 폐기 기록
 3. Gopedia 인제스트로 새 문서 반영
+
+> **기록 보존 전략 (History retention)**
+>
+> Phase V1~V3가 끝나면 vikunja 관련 **코드, K8s 배포, ArgoCD 앱, ZITADEL OIDC 앱, Vault secret, DB**가 모두 영구 삭제됩니다. 따라서 "왜·언제·무엇이 폐기됐는지"를 추적할 수 있는 유일한 흔적은 다음 세 가지뿐입니다:
+>
+> 1. 이 plan 문서 (`goquest/docs/vikunja-decommission-plan.md`) — 폐기 의사결정 + 단계 기록
+> 2. 각 phase의 git commit message (`chore(vikunja): …`)
+> 3. **`geneso/.../vikunja-decommission-2026-05.md`** — 운영팀이 검색 가능한 위치(Gopedia 인제스트 대상)에 남기는 한 장의 회고/공지
+>
+> 위 셋이 사라지면 "이 시스템에 vikunja가 있었다"는 사실 자체를 복원할 수 없습니다. V4에서 geneso 문서를 빠뜨리지 말 것.
 
 ---
 
