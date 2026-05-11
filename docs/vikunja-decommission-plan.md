@@ -7,6 +7,51 @@
 
 ---
 
+## ⚡ 새 세션에서 시작하기 (Quick-start)
+
+이 plan을 새 Claude Code 세션에서 이어 실행하려면:
+
+### 1. 환경 확인
+```bash
+# 다음 3개 repo는 모두 main 브랜치에 있어야 함, worktree 없어야 함
+cd ~/Documents/dev/goquest && git status && git branch
+cd ~/Documents/dev/neunexus && git status && git branch
+cd ~/Documents/dev/geneso && git status && git branch  # V4에서 사용
+
+# K8s 접근
+KUBECONFIG=~/Documents/dev/neunexus/secret/kubeconfig-tunnel kubectl get pods -A | grep vikunja
+
+# ZITADEL admin token (V3에서 사용)
+KUBECONFIG=~/Documents/dev/neunexus/secret/kubeconfig-tunnel \
+  kubectl get secret -n lymphhub lymphhub -o jsonpath='{.data.ZITADEL_TOKEN}' | base64 -d
+```
+
+### 2. 작업 워크플로우 (`~/.claude/CLAUDE.md` 글로벌 지침 준수)
+- **각 Phase = 1 PR**. worktree로 격리해서 작업:
+  ```bash
+  cd ~/Documents/dev/goquest && git worktree add ../goquest-vikunja-cleanup -b chore/vikunja-cleanup main
+  ```
+- 변경 → 빌드/테스트 (`go test ./...`) → push → PR merge → worktree 제거
+- 마이그레이션 commit 후에는 클러스터에 idempotent SQL 직접 적용 (`kubectl exec ... psql`)
+- Backend는 Woodpecker CI가 자동 빌드 + ArgoCD Image Updater가 자동 배포 (15분 내)
+
+### 3. 진행 상태 추적
+- 현재까지 완료: plan 문서만 (`c1bdc17`)
+- 다음: §2 Phase V1부터 순서대로
+- §4 완료 기준 체크리스트로 진행 추적
+
+### 4. 막힐 때 참고
+- `~/.claude/CLAUDE.md` — bot 위임 / gopedia 검색 / geneso 업데이트 워크플로우
+- `docs/helpdesk-backend-todo.md` 등 기존 phase 문서 — 마이그레이션·PR 패턴
+- `docs/runbooks/` (neunexus) — kubectl 명령 모음
+
+### 5. 충돌 가능 시나리오
+- **다른 작업자가 동시에 진행 중**일 때: V1 시작 전 `git pull` 후 backend 변경사항 확인
+- **ArgoCD Image Updater가 너무 오래 걸릴 때**: ArgoCD UI에서 수동 sync
+- **ZITADEL Terraform이 vikunja 리소스를 다시 만들려 할 때**: V2에서 `sso-apps.tf` 변경이 누락된 것 — diff 확인
+
+---
+
 ## 0. 결정사항 요약
 
 | 항목 | 결정 |
