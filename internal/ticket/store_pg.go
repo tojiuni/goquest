@@ -297,6 +297,12 @@ func (s *pgStore) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int
 		args = append(args, *f.ProjectID)
 		i++
 	}
+	if f.WorkspaceID != nil {
+		// tickets has no workspace_id column — derive via projects.
+		where += fmt.Sprintf(" AND t.project_id IN (SELECT id FROM projects WHERE workspace_id=$%d)", i)
+		args = append(args, *f.WorkspaceID)
+		i++
+	}
 	if f.ParentID != nil {
 		where += fmt.Sprintf(" AND t.parent_id=$%d", i)
 		args = append(args, *f.ParentID)
