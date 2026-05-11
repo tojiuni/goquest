@@ -116,6 +116,115 @@ func TestExecute_ListTickets_CallsService(t *testing.T) {
 	}
 }
 
+// ticket.create routing:
+//   - explicit project_id wins, env default is ignored
+//   - workspace_id without project_id → bot fetches workspace projects, picks earliest by created_at
+//   - if neither given, env default fills in
+//   - workspace_id key never leaks into the outbound CreateTicketReq (service rejects unknown fields)
+func TestExecute_CreateTicket_ProjectResolution(t *testing.T) {
+	pjEarly := "11111111-1111-1111-1111-111111111111"
+	pjLate := "22222222-2222-2222-2222-222222222222"
+	pjExplicit := "33333333-3333-3333-3333-333333333333"
+	pjEnvDefault := "44444444-4444-4444-4444-444444444444"
+	wsID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+	cases := []struct {
+		name      string
+		payload   map[string]any
+		envDflt   string
+		wantPID   string
+		wantPaths []string // expected HTTP paths hit on the fake service, in order
+	}{
+		{
+			name:      "explicit project_id wins over env default",
+			payload:   map[string]any{"title": "t", "project_id": pjExplicit},
+			envDflt:   pjEnvDefault,
+			wantPID:   pjExplicit,
+			wantPaths: []string{"POST /api/v1/tickets"},
+		},
+		{
+			name:      "workspace_id → earliest project by created_at",
+			payload:   map[string]any{"title": "t", "workspace_id": wsID},
+			envDflt:   pjEnvDefault,
+			wantPID:   pjEarly,
+			wantPaths: []string{"GET /api/v1/workspaces/" + wsID + "/projects", "POST /api/v1/tickets"},
+		},
+		{
+			name:      "no project_id, no workspace_id → env default",
+			payload:   map[string]any{"title": "t"},
+			envDflt:   pjEnvDefault,
+			wantPID:   pjEnvDefault,
+			wantPaths: []string{"POST /api/v1/tickets"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var hits []string
+			var postBody map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits = append(hits, r.Method+" "+r.URL.Path)
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/api/v1/workspaces/"+wsID+"/projects":
+					w.Header().Set("Content-Type", "application/json")
+					_ = json.NewEncoder(w).Encode(map[string]any{
+						"projects": []map[string]any{
+							{"id": pjLate, "created_at": "2026-05-10T00:00:00Z"},  // newest first (mimics service DESC)
+							{"id": pjEarly, "created_at": "2026-01-01T00:00:00Z"},
+						},
+					})
+				case r.Method == http.MethodPost && r.URL.Path == "/api/v1/tickets":
+					b, _ := io.ReadAll(r.Body)
+					_ = json.Unmarshal(b, &postBody)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"id":"ok"}`))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+
+			h := NewHandler(srv.URL, "", tc.envDflt, &http.Client{})
+			resp := callExecute(t, h, ExecuteRequest{Capability: "ticket.create", Payload: tc.payload})
+			if !resp.OK {
+				t.Fatalf("expected OK=true, got: %s", resp.Error)
+			}
+			if len(hits) != len(tc.wantPaths) {
+				t.Fatalf("path hits = %v, want %v", hits, tc.wantPaths)
+			}
+			for i, p := range tc.wantPaths {
+				if hits[i] != p {
+					t.Errorf("hit[%d] = %q, want %q", i, hits[i], p)
+				}
+			}
+			if got := postBody["project_id"]; got != tc.wantPID {
+				t.Errorf("POST body project_id = %v, want %v", got, tc.wantPID)
+			}
+			if _, leaked := postBody["workspace_id"]; leaked {
+				t.Error("workspace_id leaked into outbound CreateTicketReq (service has no such field)")
+			}
+		})
+	}
+}
+
+func TestExecute_CreateTicket_WorkspaceWithNoProjects(t *testing.T) {
+	wsID := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"projects": []any{}})
+	}))
+	defer srv.Close()
+	h := NewHandler(srv.URL, "", "", &http.Client{})
+	resp := callExecute(t, h, ExecuteRequest{
+		Capability: "ticket.create",
+		Payload:    map[string]any{"title": "t", "workspace_id": wsID},
+	})
+	if resp.OK {
+		t.Fatalf("expected OK=false for empty-workspace lookup, got OK with: %v", resp.Result)
+	}
+}
+
 func TestExecute_CreateTicket_ServiceError(t *testing.T) {
 	srv := newFakeService(http.StatusBadRequest, map[string]string{"error": "title required"})
 	defer srv.Close()
