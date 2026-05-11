@@ -166,6 +166,7 @@ type ListTicketsFilter struct {
 	AssigneeID   *string
 	RequesterID  *string
 	ProjectID    *uuid.UUID
+	WorkspaceID  *uuid.UUID
 	ParentID     *uuid.UUID
 	TagIDs       []uuid.UUID
 	Limit        int

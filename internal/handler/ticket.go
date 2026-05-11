@@ -87,6 +87,11 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 			f.ProjectID = &u
 		}
 	}
+	if wid := q.Get("workspace_id"); wid != "" {
+		if u, err := uuid.Parse(wid); err == nil {
+			f.WorkspaceID = &u
+		}
+	}
 
 	tickets, total, err := h.svc.List(r.Context(), f)
 	if err != nil {
