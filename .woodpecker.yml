@@ -12,6 +12,9 @@
 # Woodpecker secrets 필요:
 #   REGISTRY_TOKEN — artifacts.toji.homes woodpecker-ci 계정 토큰
 
+labels:
+  platform: linux/amd64
+
 when:
   - event: push
     branch: main
