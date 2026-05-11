@@ -158,11 +158,30 @@ func (h *Handler) completeTicket(r *http.Request, req ExecuteRequest) (any, erro
 	status := ticket.StatusCompleted
 	updateReq := ticket.UpdateTicketReq{Status: &status}
 	if result, ok := req.Payload["result"]; ok {
+		var resultMap map[string]any
 		if m, ok := result.(map[string]any); ok {
-			updateReq.AgentContext = m
+			resultMap = m
 		} else {
-			updateReq.AgentContext = map[string]any{"result": result}
+			resultMap = map[string]any{"result": result}
 		}
+		// Merge result into the current agent_context per SOUL.md §10.
+		// Service-side Update replaces agent_context wholesale, so the bot
+		// is responsible for fetching the current value and overlaying.
+		merged := resultMap
+		if cur, err := h.callService(r, "GET", "/api/v1/tickets/"+id, nil); err == nil {
+			if curMap, ok := cur.(map[string]any); ok {
+				if existing, ok := curMap["agent_context"].(map[string]any); ok && len(existing) > 0 {
+					merged = make(map[string]any, len(existing)+len(resultMap))
+					for k, v := range existing {
+						merged[k] = v
+					}
+					for k, v := range resultMap {
+						merged[k] = v
+					}
+				}
+			}
+		}
+		updateReq.AgentContext = merged
 	}
 	return h.callService(r, "PATCH", "/api/v1/tickets/"+id, updateReq)
 }
@@ -178,12 +197,19 @@ func (h *Handler) assignTicket(r *http.Request, req ExecuteRequest) (any, error)
 		assigneeID = "hermes-" + domain
 	}
 
+	// Per SOUL.md §14, assigning transitions pending → assigned.
+	// Only set Domain when the caller supplied a non-empty value — sending
+	// an empty enum string to goquest-service triggers a 500 SQL error.
 	agentType := ticket.AssigneeAgent
-	dom := ticket.Domain(domain)
+	assigned := ticket.StatusAssigned
 	updateReq := ticket.UpdateTicketReq{
+		Status:       &assigned,
 		AssigneeType: &agentType,
 		AssigneeID:   &assigneeID,
-		Domain:       &dom,
+	}
+	if domain != "" {
+		dom := ticket.Domain(domain)
+		updateReq.Domain = &dom
 	}
 	return h.callService(r, "PATCH", "/api/v1/tickets/"+id, updateReq)
 }
