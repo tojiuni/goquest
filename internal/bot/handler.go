@@ -101,14 +101,77 @@ func (h *Handler) createTicket(r *http.Request, req ExecuteRequest) (any, error)
 	if err := remapPayload(req.Payload, &createReq); err != nil {
 		return nil, fmt.Errorf("invalid payload: %w", err)
 	}
-	// inject default project_id when not provided by the caller
-	if createReq.ProjectID == nil && h.defaultProjectID != "" {
-		pid, err := uuid.Parse(h.defaultProjectID)
-		if err == nil {
+	// Project resolution precedence:
+	//   1. payload.project_id (already populated by remapPayload above)
+	//   2. payload.workspace_id → first project by created_at (ASC) in that workspace
+	//   3. env GOQUEST_DEFAULT_PROJECT_ID
+	if createReq.ProjectID == nil {
+		if wsRaw, ok := req.Payload["workspace_id"].(string); ok && wsRaw != "" {
+			pid, err := h.resolveDefaultProjectForWorkspace(r, wsRaw)
+			if err != nil {
+				return nil, fmt.Errorf("resolve project for workspace %s: %w", wsRaw, err)
+			}
 			createReq.ProjectID = &pid
+		} else if h.defaultProjectID != "" {
+			pid, err := uuid.Parse(h.defaultProjectID)
+			if err == nil {
+				createReq.ProjectID = &pid
+			}
 		}
 	}
 	return h.callService(r, "POST", "/api/v1/tickets", createReq)
+}
+
+// resolveDefaultProjectForWorkspace asks goquest-service for the workspace's
+// projects and returns the earliest-created one. Used by ticket.create when
+// the caller supplies workspace_id but not project_id.
+func (h *Handler) resolveDefaultProjectForWorkspace(r *http.Request, workspaceID string) (uuid.UUID, error) {
+	if _, err := uuid.Parse(workspaceID); err != nil {
+		return uuid.Nil, fmt.Errorf("invalid workspace_id: %w", err)
+	}
+	resp, err := h.callService(r, "GET", "/api/v1/workspaces/"+workspaceID+"/projects", nil)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	envelope, ok := resp.(map[string]any)
+	if !ok {
+		return uuid.Nil, fmt.Errorf("unexpected projects response shape")
+	}
+	rawList, _ := envelope["projects"].([]any)
+	if len(rawList) == 0 {
+		return uuid.Nil, fmt.Errorf("workspace has no projects")
+	}
+	// Pick the earliest-created project. The service returns DESC by created_at,
+	// so scan for the row with the smallest created_at timestamp.
+	var (
+		bestID  uuid.UUID
+		bestTS  string
+		bestSet bool
+	)
+	for _, item := range rawList {
+		obj, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		idStr, _ := obj["id"].(string)
+		createdStr, _ := obj["created_at"].(string)
+		if idStr == "" {
+			continue
+		}
+		pid, err := uuid.Parse(idStr)
+		if err != nil {
+			continue
+		}
+		if !bestSet || createdStr < bestTS {
+			bestID = pid
+			bestTS = createdStr
+			bestSet = true
+		}
+	}
+	if !bestSet {
+		return uuid.Nil, fmt.Errorf("no usable project in workspace")
+	}
+	return bestID, nil
 }
 
 func (h *Handler) getTicket(r *http.Request, req ExecuteRequest) (any, error) {
