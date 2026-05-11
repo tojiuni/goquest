@@ -40,9 +40,6 @@ func (e *NuclexEmitter) emit(ctx context.Context, t *ticket.Ticket, eventType, s
 		"title":     t.Title,
 		"domain":    string(t.Domain),
 	}
-	if t.VikunjaTaskID != nil {
-		ctx2["vikunja_task_id"] = *t.VikunjaTaskID
-	}
 
 	ev := NuclexEvent{
 		SourceBot:       "goquest",

@@ -86,7 +86,6 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 		SourceBot:      req.SourceBot,
 		Domain:         req.Domain,
 		AgentContext:   req.AgentContext,
-		VikunjaTaskID:  req.VikunjaTaskID,
 		Metadata:       req.Metadata,
 		ProjectID:      req.ProjectID,
 		ParentID:       req.ParentID,

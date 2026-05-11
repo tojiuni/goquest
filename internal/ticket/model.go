@@ -97,7 +97,6 @@ type Ticket struct {
 	SourceBot      string         `json:"source_bot,omitempty"`
 	Domain         Domain         `json:"domain,omitempty"`
 	AgentContext   map[string]any `json:"agent_context,omitempty"`
-	VikunjaTaskID  *int64         `json:"vikunja_task_id,omitempty"`
 	Metadata       map[string]any `json:"metadata,omitempty"`
 	// Phase 0: multi-tenancy + game quest fields
 	ProjectID      *uuid.UUID     `json:"project_id,omitempty"`
@@ -131,7 +130,6 @@ type CreateTicketReq struct {
 	Domain         Domain         `json:"domain,omitempty"`
 	AgentContext   map[string]any `json:"agent_context,omitempty"`
 	SourceBot      string         `json:"source_bot,omitempty"`
-	VikunjaTaskID  *int64         `json:"vikunja_task_id,omitempty"`
 	Metadata       map[string]any `json:"metadata,omitempty"`
 	ProjectID      *uuid.UUID     `json:"project_id,omitempty"`
 	ParentID       *uuid.UUID     `json:"parent_id,omitempty"`
@@ -150,7 +148,6 @@ type UpdateTicketReq struct {
 	AssigneeType   *AssigneeType  `json:"assignee_type,omitempty"`
 	Domain         *Domain        `json:"domain,omitempty"`
 	AgentContext   map[string]any `json:"agent_context,omitempty"`
-	VikunjaTaskID  *int64         `json:"vikunja_task_id,omitempty"`
 	Visibility     *Visibility    `json:"visibility,omitempty"`
 	CompletionMode *CompletionMode `json:"completion_mode,omitempty"`
 	CompletionSpec CompletionSpec  `json:"completion_spec,omitempty"`

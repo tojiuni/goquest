@@ -64,17 +64,17 @@ func (s *pgStore) Create(ctx context.Context, t *Ticket) error {
 		INSERT INTO tickets (
 			id, title, description, type, status, priority,
 			assignee_type, assignee_id, requester_id, source_bot,
-			domain, agent_context, vikunja_task_id, metadata,
+			domain, agent_context, metadata,
 			project_id, parent_id, visibility, completion_mode,
 			completion_spec, reward_xp, due_at, callback_url,
 			created_at, updated_at
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-			$15,$16,$17,$18,$19,$20,$21,$22,$23,$24
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+			$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
 		)`,
 		t.ID, t.Title, t.Description, string(t.Type), string(t.Status), string(t.Priority),
 		string(t.AssigneeType), t.AssigneeID, t.RequesterID, sourceBot,
-		domain, agentCtxJSON, t.VikunjaTaskID, metaJSON,
+		domain, agentCtxJSON, metaJSON,
 		t.ProjectID, t.ParentID, string(visibility), string(mode),
 		specJSON, t.RewardXP, t.DueAt, callbackURL,
 		t.CreatedAt, t.UpdatedAt,
@@ -102,7 +102,7 @@ func (s *pgStore) Get(ctx context.Context, id uuid.UUID) (*Ticket, error) {
 const ticketSelectSQL = `
 	SELECT t.id, t.title, t.description, t.type, t.status, t.priority,
 	       t.assignee_type, t.assignee_id, t.requester_id, t.source_bot,
-	       t.domain, t.agent_context, t.vikunja_task_id, t.metadata,
+	       t.domain, t.agent_context, t.metadata,
 	       t.project_id, t.parent_id, t.visibility, t.completion_mode,
 	       t.completion_spec, t.reward_xp, t.due_at, t.callback_url,
 	       t.created_at, t.updated_at, t.completed_at,
@@ -173,10 +173,6 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	if req.AgentContext != nil {
 		newAgentCtx = req.AgentContext
 	}
-	newVikunja := current.VikunjaTaskID
-	if req.VikunjaTaskID != nil {
-		newVikunja = req.VikunjaTaskID
-	}
 
 	newVisibility := current.Visibility
 	if req.Visibility != nil {
@@ -233,14 +229,14 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	_, err = tx.Exec(ctx, `
 		UPDATE tickets SET
 			status=$2, assignee_id=$3, assignee_type=$4, domain=$5,
-			agent_context=$6, vikunja_task_id=$7,
-			visibility=$8, completion_mode=$9, completion_spec=$10,
-			reward_xp=$11, due_at=$12, callback_url=$13,
-			updated_at=$14, completed_at=$15
+			agent_context=$6,
+			visibility=$7, completion_mode=$8, completion_spec=$9,
+			reward_xp=$10, due_at=$11, callback_url=$12,
+			updated_at=$13, completed_at=$14
 		WHERE id=$1`,
 		id,
 		string(newStatus), newAssigneeID, string(newAssigneeType), newDomain,
-		agentCtxJSON, newVikunja,
+		agentCtxJSON,
 		string(newVisibility), string(newMode), specJSON,
 		newRewardXP, newDueAt, callbackURL,
 		now, completedAt,
@@ -367,7 +363,7 @@ func scanTicket(s scanner) (*Ticket, error) {
 	err := s.Scan(
 		&t.ID, &t.Title, &t.Description, &t.Type, &t.Status, &t.Priority,
 		&t.AssigneeType, &t.AssigneeID, &t.RequesterID, &sourceBot,
-		&domain, &agentCtxBytes, &t.VikunjaTaskID, &metaBytes,
+		&domain, &agentCtxBytes, &metaBytes,
 		&t.ProjectID, &t.ParentID, &t.Visibility, &t.CompletionMode,
 		&specBytes, &t.RewardXP, &t.DueAt, &callbackURL,
 		&t.CreatedAt, &t.UpdatedAt, &t.CompletedAt,
