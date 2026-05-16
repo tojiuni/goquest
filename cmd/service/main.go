@@ -78,11 +78,14 @@ func main() {
 	xpStore := xp.NewPGStore(pool)
 	xpSvc := xp.NewService(xpStore)
 
+	magicStore := magic.NewPGStore(pool)
+	magicSvc := magic.NewService(magicStore)
+
 	store := ticket.NewPGStore(pool)
 	pub := queue.NewPublisher(rdb)
 	nuclexEmitter := integration.NewNuclexEmitter(rdb, cfg.NuclexEventsStream)
 	webhookDeliverer := webhook.New()
-	svc := ticket.NewService(store, pub, nuclexEmitter, xpSvc, webhookDeliverer)
+	svc := ticket.NewService(store, pub, nuclexEmitter, xpSvc, webhookDeliverer, magicSvc)
 
 	wsStore := workspace.NewPGStore(pool)
 	wsSvc := workspace.NewService(wsStore)
@@ -135,8 +138,6 @@ func main() {
 	macroSvc := macro.NewService(macroStore)
 	macroH := handler.NewMacroHandler(macroSvc)
 
-	magicStore := magic.NewPGStore(pool)
-	magicSvc := magic.NewService(magicStore)
 	publicURL := cfg.PublicURL
 	if publicURL == "" {
 		publicURL = "https://goquest.toji.homes"
