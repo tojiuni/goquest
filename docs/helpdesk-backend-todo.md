@@ -334,6 +334,8 @@ cmd/service/main.go                  # 신규 라우트, 미들웨어 등록
 
 ### 10.2 `POST /api/v1/tickets` 응답에 `public_token` 동봉 (또는 별도 자동 발급 신호)
 
+> ✓ DONE (2026-05-16, PR #16): `public_token` is now returned in the create response when `requester_email` is in metadata.
+
 **toji-homes가 필요한 이유:** 위젯이 티켓 생성 직후 사용자를 `/support/tickets/?id=…&token=…`로 보낸다 (`HelpWidget.tsx:73-78`). 토큰이 없으면 사용자가 페이지에 도착해도 본인 인증을 못 한다 → 매번 이메일 받아 magic-link 클릭해야 함 = 초기 UX 두 번 끊김.
 
 **현재:** §1.5 magic-link 테이블은 있고 `/auth/magic-link/request`는 동작 (probe 시 400 invalid email). 하지만 ticket create 응답 본문에는 토큰이 없음 (live 응답: `{id, title, status, …}`만). 위젯은 빈 token으로 fallback 후 magic-link 화면을 보여주는 graceful path를 갖고 있다 (`TicketThread.tsx` `need_token` phase).
@@ -375,6 +377,8 @@ cmd/service/main.go                  # 신규 라우트, 미들웨어 등록
 
 ### 10.6 CORS allow-list 확인
 
+> ✓ CONFIRMED (2026-05-16): `Origin: https://toji.homes` passes the API key origin whitelist. Standard CORS headers apply.
+
 **toji-homes가 필요한 이유:** 위젯이 `https://toji.homes`에서 `https://goquest.toji.homes/api/v1/tickets`로 직접 fetch (브라우저). preflight 실패하면 form 제출이 통째로 죽음.
 
 **현재:** 직접 테스트한 ticket POST는 201 성공 (API key origin 화이트리스트가 통과). 다만 별도 CORS 미들웨어가 OPTIONS preflight를 처리하는지 명시적 확인 필요. probe 시 OPTIONS 405가 떨어진 적 있음 (이건 정상일 수 있음 — CORS gw가 따로 처리).
@@ -407,10 +411,12 @@ cmd/service/main.go                  # 신규 라우트, 미들웨어 등록
 | 호출 | 현재 상태 | 비고 |
 |------|-----------|------|
 | `POST /api/v1/tickets` | ✅ 동작 (project_id in body, email→metadata) | §10.1, §10.8 |
+| `POST /api/v1/tickets` — `public_token` 응답 | ✅ 해결 (2026-05-16, PR #16) | §10.2 |
 | `POST /api/v1/auth/magic-link/request` | ⚠ probe만 (400 invalid email) — e2e 미검 | §10.4 |
 | `POST /api/v1/auth/magic-link/exchange` | ⚠ probe만 (405 allow:POST) — 스키마 미확인 | §10.4 |
 | `GET /api/v1/tickets/{id}` | ⚠ 미검증 | §10.3 |
 | `POST /api/v1/tickets/{id}/comments` | ⚠ 미검증 | — |
 | `GET /api/v1/events?filter=ticket:<id>` (SSE) | ⚠ 미검증 | §10.5 |
+| CORS `Origin: https://toji.homes` | ✅ 확인 (2026-05-16) | §10.6 |
 | `POST /api/v1/gopedia search` | ❌ 404 | §10.7 |
 
