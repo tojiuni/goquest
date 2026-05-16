@@ -108,6 +108,9 @@ type Ticket struct {
 	DueAt          *time.Time     `json:"due_at,omitempty"`
 	CallbackURL    string         `json:"callback_url,omitempty"`
 	Tags           []Tag          `json:"tags,omitempty"`
+	// PublicToken is a one-time magic-link token included only in the CreateTicket response.
+	// It is not persisted in the tickets table; the underlying token lives in magic_tokens.
+	PublicToken    string         `json:"public_token,omitempty"`
 	CreatedAt      time.Time      `json:"created_at"`
 	UpdatedAt      time.Time      `json:"updated_at"`
 	CompletedAt    *time.Time     `json:"completed_at,omitempty"`

@@ -33,16 +33,23 @@ type WebhookSender interface {
 	Send(ctx context.Context, url string, payload any) error
 }
 
+// MagicTokener issues one-time magic-link tokens (satisfied by *magic.Service).
+// When nil, public_token generation is skipped.
+type MagicTokener interface {
+	Request(ctx context.Context, email string, ticketID *uuid.UUID) (string, error)
+}
+
 type Service struct {
 	store   Store
 	pub     Publisher
 	nuclex  NuclexEmitter
 	xp      XPAwarder
 	webhook WebhookSender
+	magic   MagicTokener
 }
 
-func NewService(store Store, pub Publisher, nuclex NuclexEmitter, xp XPAwarder, wh WebhookSender) *Service {
-	return &Service{store: store, pub: pub, nuclex: nuclex, xp: xp, webhook: wh}
+func NewService(store Store, pub Publisher, nuclex NuclexEmitter, xp XPAwarder, wh WebhookSender, magic MagicTokener) *Service {
+	return &Service{store: store, pub: pub, nuclex: nuclex, xp: xp, webhook: wh, magic: magic}
 }
 
 // Create creates a new ticket. requesterID is pre-extracted from the JWT by the HTTP handler.
@@ -101,6 +108,18 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 
 	if err := s.store.Create(ctx, t); err != nil {
 		return nil, fmt.Errorf("store.Create: %w", err)
+	}
+
+	// Generate a one-time public_token for requester-facing ticket status access.
+	// Reads requester_email from metadata (top-level field addition tracked in BUG-3).
+	if s.magic != nil {
+		if email, ok := metadataString(req.Metadata, "requester_email"); ok {
+			if plain, err := s.magic.Request(ctx, email, &t.ID); err != nil {
+				log.Printf("warn: public_token generation failed for ticket %s: %v", t.ID, err)
+			} else {
+				t.PublicToken = plain
+			}
+		}
 	}
 
 	if len(req.TagIDs) > 0 {
@@ -272,4 +291,17 @@ func validateDomain(d Domain) error {
 		return fmt.Errorf("invalid domain: %s", d)
 	}
 	return nil
+}
+
+// metadataString extracts a non-empty string value from a metadata map.
+func metadataString(m map[string]any, key string) (string, bool) {
+	if m == nil {
+		return "", false
+	}
+	v, ok := m[key]
+	if !ok {
+		return "", false
+	}
+	s, ok := v.(string)
+	return s, ok && s != ""
 }
