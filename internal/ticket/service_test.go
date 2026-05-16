@@ -426,3 +426,117 @@ func TestService_IsTerminal(t *testing.T) {
 		}
 	}
 }
+
+// --- mockMagicTokener for public_token tests ---
+
+type mockMagicTokener struct {
+	returnToken string
+	returnErr   error
+	callCount   int
+	lastEmail   string
+	lastTicket  *uuid.UUID
+}
+
+func (m *mockMagicTokener) Request(_ context.Context, email string, ticketID *uuid.UUID) (string, error) {
+	m.callCount++
+	m.lastEmail = email
+	m.lastTicket = ticketID
+	return m.returnToken, m.returnErr
+}
+
+// TestService_Create_PublicToken_WhenRequesterEmailPresent verifies that
+// public_token is set on the returned ticket when metadata.requester_email is
+// present and magic is non-nil.
+func TestService_Create_PublicToken_WhenRequesterEmailPresent(t *testing.T) {
+	store := &mockStore{}
+	magic := &mockMagicTokener{returnToken: "ml_abc123"}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, magic)
+
+	req := ticket.CreateTicketReq{
+		Title:    "helpdesk ticket",
+		Metadata: map[string]any{"requester_email": "alice@example.com"},
+	}
+	created, err := svc.Create(context.Background(), req, "user1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if created.PublicToken != "ml_abc123" {
+		t.Errorf("public_token = %q, want %q", created.PublicToken, "ml_abc123")
+	}
+	if magic.callCount != 1 {
+		t.Errorf("magic.Request called %d times, want 1", magic.callCount)
+	}
+	if magic.lastEmail != "alice@example.com" {
+		t.Errorf("magic.Request email = %q, want %q", magic.lastEmail, "alice@example.com")
+	}
+	if magic.lastTicket == nil || *magic.lastTicket != created.ID {
+		t.Errorf("magic.Request ticketID mismatch")
+	}
+}
+
+// TestService_Create_PublicToken_AbsentWhenNoEmail verifies that public_token
+// is empty (and magic is not called) when requester_email is absent.
+func TestService_Create_PublicToken_AbsentWhenNoEmail(t *testing.T) {
+	store := &mockStore{}
+	magic := &mockMagicTokener{returnToken: "ml_shouldnotappear"}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, magic)
+
+	req := ticket.CreateTicketReq{
+		Title:    "no-email ticket",
+		Metadata: map[string]any{"other_key": "value"},
+	}
+	created, err := svc.Create(context.Background(), req, "user1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if created.PublicToken != "" {
+		t.Errorf("expected empty public_token when requester_email absent, got %q", created.PublicToken)
+	}
+	if magic.callCount != 0 {
+		t.Errorf("magic.Request should not be called when email absent, got %d calls", magic.callCount)
+	}
+}
+
+// TestService_Create_PublicToken_AbsentWhenMagicNil verifies that when the
+// service is constructed with magic=nil, no public_token is set even if
+// requester_email is in metadata.
+func TestService_Create_PublicToken_AbsentWhenMagicNil(t *testing.T) {
+	store := &mockStore{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	req := ticket.CreateTicketReq{
+		Title:    "no-magic ticket",
+		Metadata: map[string]any{"requester_email": "bob@example.com"},
+	}
+	created, err := svc.Create(context.Background(), req, "user1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if created.PublicToken != "" {
+		t.Errorf("expected empty public_token when magic is nil, got %q", created.PublicToken)
+	}
+}
+
+// TestService_Create_PublicToken_NonFatalOnError verifies that a failure from
+// magic.Request does not cause Create to return an error — ticket creation
+// succeeds and public_token is simply empty.
+func TestService_Create_PublicToken_NonFatalOnError(t *testing.T) {
+	store := &mockStore{}
+	magic := &mockMagicTokener{returnErr: errors.New("db down")}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, magic)
+
+	req := ticket.CreateTicketReq{
+		Title:    "error ticket",
+		Metadata: map[string]any{"requester_email": "carol@example.com"},
+	}
+	created, err := svc.Create(context.Background(), req, "user1")
+	if err != nil {
+		t.Fatalf("Create should succeed even when magic.Request fails, got: %v", err)
+	}
+	if created.PublicToken != "" {
+		t.Errorf("public_token should be empty on magic error, got %q", created.PublicToken)
+	}
+	if magic.callCount != 1 {
+		t.Errorf("magic.Request should be called once, got %d", magic.callCount)
+	}
+}
