@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -37,6 +38,9 @@ type Config struct {
 	SpiceDBEndpoint string
 	SpiceDBToken    string
 	SpiceDBInsecure bool
+
+	// CORS
+	CORSOrigins []string
 }
 
 func Load() *Config {
@@ -70,6 +74,8 @@ func Load() *Config {
 		SpiceDBEndpoint: envOrDefault("SPICEDB_ENDPOINT", "localhost:50051"),
 		SpiceDBToken:    os.Getenv("SPICEDB_TOKEN"),
 		SpiceDBInsecure: parseBool(os.Getenv("SPICEDB_INSECURE"), true),
+
+		CORSOrigins: parseStringSlice(os.Getenv("CORS_ALLOWED_ORIGINS"), []string{"https://toji.homes", "https://www.toji.homes"}),
 	}
 }
 
@@ -94,6 +100,22 @@ func parseInt(s string, def int) int {
 		return def
 	}
 	return v
+}
+
+func parseStringSlice(s string, def []string) []string {
+	if s == "" {
+		return def
+	}
+	var out []string
+	for _, v := range strings.Split(s, ",") {
+		if t := strings.TrimSpace(v); t != "" {
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return def
+	}
+	return out
 }
 
 func parseBool(s string, def bool) bool {
