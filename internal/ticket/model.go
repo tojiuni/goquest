@@ -10,12 +10,14 @@ import (
 type Status string
 
 const (
-	StatusPending    Status = "pending"
-	StatusAssigned   Status = "assigned"
-	StatusInProgress Status = "in_progress"
-	StatusCompleted  Status = "completed"
-	StatusFailed     Status = "failed"
-	StatusCancelled  Status = "cancelled"
+	StatusPending          Status = "pending"
+	StatusAssigned         Status = "assigned"
+	StatusInProgress       Status = "in_progress"
+	StatusCompleted        Status = "completed"
+	StatusFailed           Status = "failed"
+	StatusCancelled        Status = "cancelled"
+	StatusPendingApproval  Status = "pending_approval"
+	StatusPendingRevision  Status = "pending_revision"
 )
 
 type TicketType string
@@ -151,6 +153,7 @@ type UpdateTicketReq struct {
 	AssigneeType   *AssigneeType  `json:"assignee_type,omitempty"`
 	Domain         *Domain        `json:"domain,omitempty"`
 	AgentContext   map[string]any `json:"agent_context,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
 	Visibility     *Visibility    `json:"visibility,omitempty"`
 	CompletionMode *CompletionMode `json:"completion_mode,omitempty"`
 	CompletionSpec CompletionSpec  `json:"completion_spec,omitempty"`
@@ -205,4 +208,18 @@ type AnswerSpec struct {
 // IsTerminal returns true for statuses that allow no further transitions.
 func (s Status) IsTerminal() bool {
 	return s == StatusCompleted || s == StatusCancelled || s == StatusFailed
+}
+
+type ApproveDecision string
+
+const (
+	ApproveDecisionApproved  ApproveDecision = "approved"
+	ApproveDecisionRejected  ApproveDecision = "rejected"
+	ApproveDecisionRevision  ApproveDecision = "revision"
+)
+
+type ApproveTicketReq struct {
+	Decision     ApproveDecision `json:"decision"`
+	RevisionNote string          `json:"revision_note,omitempty"`
+	OperatorID   string          `json:"operator_id"`
 }
