@@ -230,6 +230,7 @@ func main() {
 				r.Get("/", ticketH.Get)
 				r.Patch("/", ticketH.Update)
 				r.Delete("/", ticketH.Cancel)
+				r.Post("/approve", ticketH.Approve)
 				r.Get("/subtasks", ticketH.ListSubtasks)
 				r.Post("/attempts", ticketH.SubmitAttempt)
 				r.Get("/attempts", ticketH.ListAttempts)

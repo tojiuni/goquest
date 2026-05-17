@@ -123,8 +123,9 @@ func (m *mockWebhook) Send(_ context.Context, url string, _ any) error {
 }
 
 type mockNuclex struct {
-	completedCalls int
-	failedCalls    int
+	completedCalls        int
+	failedCalls           int
+	pendingApprovalCalls  int
 }
 
 func (m *mockNuclex) EmitCompleted(_ context.Context, _ *ticket.Ticket) error {
@@ -133,6 +134,10 @@ func (m *mockNuclex) EmitCompleted(_ context.Context, _ *ticket.Ticket) error {
 }
 func (m *mockNuclex) EmitFailed(_ context.Context, _ *ticket.Ticket) error {
 	m.failedCalls++
+	return nil
+}
+func (m *mockNuclex) EmitPendingApproval(_ context.Context, _ *ticket.Ticket) error {
+	m.pendingApprovalCalls++
 	return nil
 }
 
@@ -514,6 +519,82 @@ func TestService_Create_PublicToken_AbsentWhenMagicNil(t *testing.T) {
 	}
 	if created.PublicToken != "" {
 		t.Errorf("expected empty public_token when magic is nil, got %q", created.PublicToken)
+	}
+}
+
+func TestApprove_Approved(t *testing.T) {
+	pending := &ticket.Ticket{
+		ID:     uuid.New(),
+		Status: ticket.StatusPendingApproval,
+		Domain: ticket.DomainKnowledge,
+	}
+	store := &mockStore{getTicket: pending}
+	pub := &mockPublisher{}
+	nuclex := &mockNuclex{}
+	svc := ticket.NewService(store, pub, nuclex, nil, nil, nil)
+
+	got, err := svc.Approve(context.Background(), pending.ID, ticket.ApproveTicketReq{
+		Decision:   ticket.ApproveDecisionApproved,
+		OperatorID: "telegram_123",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Status != ticket.StatusAssigned {
+		t.Errorf("expected assigned, got %s", got.Status)
+	}
+	if pub.assigned != 1 {
+		t.Errorf("expected PublishAssigned to be called once, got %d", pub.assigned)
+	}
+}
+
+func TestApprove_Rejected(t *testing.T) {
+	pending := &ticket.Ticket{ID: uuid.New(), Status: ticket.StatusPendingApproval}
+	store := &mockStore{getTicket: pending}
+	pub := &mockPublisher{}
+	svc := ticket.NewService(store, pub, nil, nil, nil, nil)
+
+	got, err := svc.Approve(context.Background(), pending.ID, ticket.ApproveTicketReq{
+		Decision:   ticket.ApproveDecisionRejected,
+		OperatorID: "telegram_123",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Status != ticket.StatusCancelled {
+		t.Errorf("expected cancelled, got %s", got.Status)
+	}
+}
+
+func TestApprove_Revision(t *testing.T) {
+	pending := &ticket.Ticket{ID: uuid.New(), Status: ticket.StatusPendingApproval}
+	store := &mockStore{getTicket: pending}
+	pub := &mockPublisher{}
+	svc := ticket.NewService(store, pub, nil, nil, nil, nil)
+
+	got, err := svc.Approve(context.Background(), pending.ID, ticket.ApproveTicketReq{
+		Decision:     ticket.ApproveDecisionRevision,
+		RevisionNote: "add more detail",
+		OperatorID:   "telegram_123",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Status != ticket.StatusPendingRevision {
+		t.Errorf("expected pending_revision, got %s", got.Status)
+	}
+}
+
+func TestApprove_WrongStatus(t *testing.T) {
+	inProgress := &ticket.Ticket{ID: uuid.New(), Status: ticket.StatusInProgress}
+	store := &mockStore{getTicket: inProgress}
+	svc := ticket.NewService(store, &mockPublisher{}, nil, nil, nil, nil)
+
+	_, err := svc.Approve(context.Background(), inProgress.ID, ticket.ApproveTicketReq{
+		Decision: ticket.ApproveDecisionApproved,
+	})
+	if err == nil {
+		t.Error("expected error for non-pending_approval ticket")
 	}
 }
 

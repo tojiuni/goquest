@@ -194,6 +194,48 @@ func (h *TicketHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
+func (h *TicketHandler) Approve(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUID(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid ticket id")
+		return
+	}
+
+	var req ticket.ApproveTicketReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if req.OperatorID == "" {
+		req.OperatorID = auth.RequesterID(r)
+	}
+	if req.OperatorID == "" {
+		writeError(w, http.StatusUnauthorized, "operator identity required")
+		return
+	}
+
+	if req.Decision == "" {
+		writeError(w, http.StatusBadRequest, "decision is required")
+		return
+	}
+
+	t, err := h.svc.Approve(r.Context(), id, req)
+	if err != nil {
+		if errors.Is(err, ticket.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "ticket not found")
+			return
+		}
+		if errors.Is(err, ticket.ErrInvalidTransition) {
+			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, t)
+}
+
 func (h *TicketHandler) ListSubtasks(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(chi.URLParam(r, "id"))
 	if err != nil {
