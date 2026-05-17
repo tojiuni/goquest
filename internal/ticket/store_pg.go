@@ -430,7 +430,7 @@ var transitions = map[Status][]Status{
 	StatusFailed:          {StatusPending},
 	StatusCancelled:       {},
 	StatusPendingApproval: {StatusAssigned, StatusCancelled, StatusPendingRevision},
-	StatusPendingRevision: {StatusInProgress, StatusCancelled},
+	StatusPendingRevision: {StatusInProgress, StatusCancelled, StatusPendingApproval},
 }
 
 func validateTransition(from, to Status) error {
