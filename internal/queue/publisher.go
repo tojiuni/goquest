@@ -35,6 +35,7 @@ type TicketEvent struct {
 	AgentContext string `json:"agent_context"`
 	SourceBot    string `json:"source_bot"`
 	RequesterID  string `json:"requester_id"`
+	ParentID     string `json:"parent_id,omitempty"`
 	EventTime    string `json:"event_time"`
 }
 
@@ -74,6 +75,10 @@ func (p *Publisher) publish(ctx context.Context, stream string, t *ticket.Ticket
 		SourceBot:    t.SourceBot,
 		RequesterID:  t.RequesterID,
 		EventTime:    time.Now().UTC().Format(time.RFC3339),
+	}
+
+	if t.ParentID != nil {
+		ev.ParentID = t.ParentID.String()
 	}
 
 	b, err := json.Marshal(ev)
