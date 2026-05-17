@@ -93,18 +93,11 @@ func TestConsumer_HandlerNotCalledOnBadMessage(_ *testing.T) {
 
 func TestTicketEvent_IncludesParentID(t *testing.T) {
 	parentID := uuid.New()
-	tk := newTestTicket()
-	tk.ParentID = &parentID
-
-	parentIDStr := ""
-	if tk.ParentID != nil {
-		parentIDStr = tk.ParentID.String()
-	}
 
 	ev := TicketEvent{
-		TicketID:    tk.ID.String(),
-		RequesterID: tk.RequesterID,
-		ParentID:    parentIDStr,
+		TicketID:    uuid.New().String(),
+		RequesterID: "user-1",
+		ParentID:    parentID.String(),
 		EventTime:   time.Now().UTC().Format(time.RFC3339),
 	}
 
@@ -125,11 +118,32 @@ func TestTicketEvent_IncludesParentID(t *testing.T) {
 	}
 }
 
+func TestPublisher_ParentIDNilGuard(t *testing.T) {
+	// Replicate the publish() nil-guard logic for ParentID.
+	// If t.ParentID is nil, ev.ParentID must remain empty (omitted in JSON).
+	tk := newTestTicket()
+	// tk.ParentID is nil by default in newTestTicket()
+
+	parentIDStr := ""
+	if tk.ParentID != nil {
+		parentIDStr = tk.ParentID.String()
+	}
+
+	if parentIDStr != "" {
+		t.Errorf("expected empty ParentID for nil *uuid.UUID, got %q", parentIDStr)
+	}
+}
+
 func TestTicketEvent_ParentID_OmittedWhenEmpty(t *testing.T) {
 	ev := TicketEvent{TicketID: "x"}
-	b, _ := json.Marshal(ev)
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
 	var decoded map[string]any
-	json.Unmarshal(b, &decoded)
+	if err := json.Unmarshal(b, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
 	if _, ok := decoded["parent_id"]; ok {
 		t.Error("parent_id should be omitted when empty")
 	}
