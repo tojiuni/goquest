@@ -572,7 +572,7 @@ func (s *pgStore) ListOverdue(ctx context.Context) ([]*Ticket, error) {
 		ticketSelectSQL+
 			`WHERE t.due_at IS NOT NULL
 			   AND t.due_at < NOW()
-			   AND t.status NOT IN ('completed', 'cancelled', 'failed')
+			   AND t.status NOT IN ('completed', 'cancelled', 'failed', 'pending_approval', 'pending_revision')
 			 GROUP BY t.id`)
 	if err != nil {
 		return nil, fmt.Errorf("list overdue: %w", err)

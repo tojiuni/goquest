@@ -213,6 +213,8 @@ func (s *Service) Approve(ctx context.Context, id uuid.UUID, req ApproveTicketRe
 	if err != nil {
 		return nil, err
 	}
+	// Pre-check for user-friendly error; transition validator in store.Update
+	// provides atomic protection against concurrent approvals.
 	if t.Status != StatusPendingApproval {
 		return nil, fmt.Errorf("%w: only pending_approval tickets can be approved (current: %s)", ErrInvalidTransition, t.Status)
 	}
@@ -232,8 +234,19 @@ func (s *Service) Approve(ctx context.Context, id uuid.UUID, req ApproveTicketRe
 		return nil, fmt.Errorf("unknown decision: %s", req.Decision)
 	}
 
+	meta := t.Metadata
+	if meta == nil {
+		meta = map[string]any{}
+	}
+	meta["approval_decision"] = string(req.Decision)
+	meta["approval_operator_id"] = req.OperatorID
+	if req.RevisionNote != "" {
+		meta["approval_revision_note"] = req.RevisionNote
+	}
+
 	updated, err := s.store.Update(ctx, id, UpdateTicketReq{
-		Status: &newStatus,
+		Status:   &newStatus,
+		Metadata: meta,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("store.Update: %w", err)
@@ -281,6 +294,9 @@ func (s *Service) SubmitAttempt(ctx context.Context, ticketID uuid.UUID, userID 
 	}
 	if t.Status.IsTerminal() {
 		return nil, fmt.Errorf("ticket is already closed")
+	}
+	if t.Status == StatusPendingApproval || t.Status == StatusPendingRevision {
+		return nil, fmt.Errorf("ticket is awaiting approval and cannot receive new submissions")
 	}
 
 	var spec AnswerSpec
