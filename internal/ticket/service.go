@@ -202,6 +202,55 @@ func (s *Service) Cancel(ctx context.Context, id uuid.UUID) (*Ticket, error) {
 	return s.Update(ctx, id, UpdateTicketReq{Status: &cancelled})
 }
 
+func (s *Service) Approve(ctx context.Context, id uuid.UUID, req ApproveTicketReq) (*Ticket, error) {
+	t, err := s.store.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if t.Status != StatusPendingApproval {
+		return nil, fmt.Errorf("%w: only pending_approval tickets can be approved (current: %s)", ErrInvalidTransition, t.Status)
+	}
+	if req.Decision == "" {
+		return nil, fmt.Errorf("decision is required")
+	}
+
+	var newStatus Status
+	switch req.Decision {
+	case ApproveDecisionApproved:
+		newStatus = StatusAssigned
+	case ApproveDecisionRejected:
+		newStatus = StatusCancelled
+	case ApproveDecisionRevision:
+		newStatus = StatusPendingRevision
+	default:
+		return nil, fmt.Errorf("unknown decision: %s", req.Decision)
+	}
+
+	updated, err := s.store.Update(ctx, id, UpdateTicketReq{
+		Status: &newStatus,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("store.Update: %w", err)
+	}
+
+	if err := s.pub.PublishUpdated(ctx, updated); err != nil {
+		log.Printf("warn: publish updated (approve): %v", err)
+	}
+
+	if newStatus == StatusAssigned {
+		if err := s.pub.PublishAssigned(ctx, updated); err != nil {
+			log.Printf("warn: publish assigned (approve): %v", err)
+		}
+	}
+	if newStatus == StatusCancelled && s.nuclex != nil {
+		if err := s.nuclex.EmitFailed(ctx, updated); err != nil {
+			log.Printf("warn: nuclex emit failed (approve rejected): %v", err)
+		}
+	}
+
+	return updated, nil
+}
+
 func (s *Service) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int, error) {
 	return s.store.List(ctx, f)
 }
