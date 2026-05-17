@@ -123,8 +123,9 @@ func (m *mockWebhook) Send(_ context.Context, url string, _ any) error {
 }
 
 type mockNuclex struct {
-	completedCalls int
-	failedCalls    int
+	completedCalls        int
+	failedCalls           int
+	pendingApprovalCalls  int
 }
 
 func (m *mockNuclex) EmitCompleted(_ context.Context, _ *ticket.Ticket) error {
@@ -133,6 +134,10 @@ func (m *mockNuclex) EmitCompleted(_ context.Context, _ *ticket.Ticket) error {
 }
 func (m *mockNuclex) EmitFailed(_ context.Context, _ *ticket.Ticket) error {
 	m.failedCalls++
+	return nil
+}
+func (m *mockNuclex) EmitPendingApproval(_ context.Context, _ *ticket.Ticket) error {
+	m.pendingApprovalCalls++
 	return nil
 }
 

@@ -21,6 +21,7 @@ type Publisher interface {
 type NuclexEmitter interface {
 	EmitCompleted(ctx context.Context, t *Ticket) error
 	EmitFailed(ctx context.Context, t *Ticket) error
+	EmitPendingApproval(ctx context.Context, t *Ticket) error
 }
 
 // XPAwarder is called when a ticket is completed to grant XP.

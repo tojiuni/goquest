@@ -34,11 +34,24 @@ func (e *NuclexEmitter) EmitFailed(ctx context.Context, t *ticket.Ticket) error 
 	return e.emit(ctx, t, "ticket.failed", "warning", "notify_only")
 }
 
+func (e *NuclexEmitter) EmitPendingApproval(ctx context.Context, t *ticket.Ticket) error {
+	return e.emit(ctx, t, "ticket.pending_approval", "warning", "notify_only")
+}
+
 func (e *NuclexEmitter) emit(ctx context.Context, t *ticket.Ticket, eventType, severity, suggestedAction string) error {
 	ctx2 := map[string]any{
 		"ticket_id": t.ID.String(),
 		"title":     t.Title,
 		"domain":    string(t.Domain),
+	}
+
+	if t.Metadata != nil {
+		if vid, ok := t.Metadata["vikunja_task_id"]; ok {
+			ctx2["vikunja_task_id"] = vid
+		}
+		if rs, ok := t.Metadata["result_summary"]; ok {
+			ctx2["result_summary"] = rs
+		}
 	}
 
 	ev := NuclexEvent{
