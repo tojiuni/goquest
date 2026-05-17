@@ -174,6 +174,11 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 		newAgentCtx = req.AgentContext
 	}
 
+	newMetadata := current.Metadata
+	if req.Metadata != nil {
+		newMetadata = req.Metadata
+	}
+
 	newVisibility := current.Visibility
 	if req.Visibility != nil {
 		newVisibility = *req.Visibility
@@ -203,6 +208,10 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	if err != nil {
 		return nil, fmt.Errorf("marshal agent_context: %w", err)
 	}
+	metaJSON, err := marshalNullableJSON(newMetadata)
+	if err != nil {
+		return nil, fmt.Errorf("marshal metadata: %w", err)
+	}
 	specJSON, err := marshalNullableJSON(newSpec)
 	if err != nil {
 		return nil, fmt.Errorf("marshal completion_spec: %w", err)
@@ -229,14 +238,14 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	_, err = tx.Exec(ctx, `
 		UPDATE tickets SET
 			status=$2, assignee_id=$3, assignee_type=$4, domain=$5,
-			agent_context=$6,
-			visibility=$7, completion_mode=$8, completion_spec=$9,
-			reward_xp=$10, due_at=$11, callback_url=$12,
-			updated_at=$13, completed_at=$14
+			agent_context=$6, metadata=$7,
+			visibility=$8, completion_mode=$9, completion_spec=$10,
+			reward_xp=$11, due_at=$12, callback_url=$13,
+			updated_at=$14, completed_at=$15
 		WHERE id=$1`,
 		id,
 		string(newStatus), newAssigneeID, string(newAssigneeType), newDomain,
-		agentCtxJSON,
+		agentCtxJSON, metaJSON,
 		string(newVisibility), string(newMode), specJSON,
 		newRewardXP, newDueAt, callbackURL,
 		now, completedAt,
@@ -414,12 +423,14 @@ func scanTicket(s scanner) (*Ticket, error) {
 
 // valid transitions; terminal states have no outgoing edges
 var transitions = map[Status][]Status{
-	StatusPending:    {StatusAssigned, StatusCancelled},
-	StatusAssigned:   {StatusInProgress, StatusPending, StatusCancelled},
-	StatusInProgress: {StatusCompleted, StatusFailed, StatusPending},
-	StatusCompleted:  {},
-	StatusFailed:     {StatusPending},
-	StatusCancelled:  {},
+	StatusPending:         {StatusAssigned, StatusCancelled, StatusPendingApproval},
+	StatusAssigned:        {StatusInProgress, StatusPending, StatusCancelled, StatusPendingApproval},
+	StatusInProgress:      {StatusCompleted, StatusFailed, StatusPending, StatusPendingApproval},
+	StatusCompleted:       {},
+	StatusFailed:          {StatusPending},
+	StatusCancelled:       {},
+	StatusPendingApproval: {StatusAssigned, StatusCancelled, StatusPendingRevision},
+	StatusPendingRevision: {StatusInProgress, StatusCancelled},
 }
 
 func validateTransition(from, to Status) error {
