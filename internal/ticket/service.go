@@ -194,6 +194,12 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 		}
 	}
 
+	if t.Status == StatusPendingApproval && s.nuclex != nil {
+		if err := s.nuclex.EmitPendingApproval(ctx, t); err != nil {
+			log.Printf("warn: nuclex emit pending_approval: %v", err)
+		}
+	}
+
 	return t, nil
 }
 
