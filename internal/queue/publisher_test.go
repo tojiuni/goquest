@@ -90,3 +90,45 @@ func TestConsumer_HandlerNotCalledOnBadMessage(_ *testing.T) {
 	// If the signature changes, this test will fail to compile.
 	var _ MessageHandler = func(_ context.Context, _ string) error { return nil }
 }
+
+func TestTicketEvent_IncludesParentID(t *testing.T) {
+	parentID := uuid.New()
+
+	ev := TicketEvent{
+		TicketID:    uuid.New().String(),
+		RequesterID: "user-1",
+		ParentID:    parentID.String(),
+		EventTime:   time.Now().UTC().Format(time.RFC3339),
+	}
+
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(b, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	got, ok := decoded["parent_id"]
+	if !ok {
+		t.Fatal("parent_id field missing from TicketEvent JSON")
+	}
+	if got != parentID.String() {
+		t.Errorf("parent_id mismatch: got %q, want %q", got, parentID.String())
+	}
+}
+
+func TestTicketEvent_ParentID_OmittedWhenEmpty(t *testing.T) {
+	ev := TicketEvent{TicketID: "x"}
+	b, err := json.Marshal(ev)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(b, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := decoded["parent_id"]; ok {
+		t.Error("parent_id should be omitted when empty")
+	}
+}
