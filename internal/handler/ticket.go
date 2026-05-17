@@ -209,6 +209,15 @@ func (h *TicketHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	if req.OperatorID == "" {
 		req.OperatorID = auth.RequesterID(r)
 	}
+	if req.OperatorID == "" {
+		writeError(w, http.StatusUnauthorized, "operator identity required")
+		return
+	}
+
+	if req.Decision == "" {
+		writeError(w, http.StatusBadRequest, "decision is required")
+		return
+	}
 
 	t, err := h.svc.Approve(r.Context(), id, req)
 	if err != nil {
