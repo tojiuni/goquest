@@ -106,8 +106,8 @@ func (s *pgStore) Get(ctx context.Context, id uuid.UUID) (*Ticket, error) {
 	return t, nil
 }
 
-// ticketSelectSQL is the base SELECT with a LEFT JOIN for tags.
-// Callers append a WHERE clause.
+// ticketSelectSQL is the base SELECT with LEFT JOINs for tags, project, workspace.
+// Callers append a WHERE clause and GROUP BY t.id.
 const ticketSelectSQL = `
 	SELECT t.id, t.title_name, t.title, t.description, t.type, t.status, t.priority,
 	       t.assignee_type, t.assignee_id, t.requester_id, t.source_bot,
@@ -119,10 +119,14 @@ const ticketSelectSQL = `
 	         json_agg(json_build_object('id',tg.id,'name',tg.name,'color',tg.color))
 	         FILTER (WHERE tg.id IS NOT NULL),
 	         '[]'
-	       ) AS tags
+	       ) AS tags,
+	       COALESCE(p.name, '') AS project_name,
+	       COALESCE(w.name, '') AS workspace_name
 	FROM tickets t
 	LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
 	LEFT JOIN tags tg        ON tg.id = tt.tag_id
+	LEFT JOIN projects p     ON p.id = t.project_id
+	LEFT JOIN workspaces w   ON w.id = p.workspace_id
 `
 
 func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq) (*Ticket, error) {
@@ -414,6 +418,7 @@ func scanTicket(s scanner) (*Ticket, error) {
 		&specBytes, &t.RewardXP, &t.DueAt, &callbackURL,
 		&t.CreatedAt, &t.UpdatedAt, &t.CompletedAt,
 		&tagsBytes,
+		&t.ProjectName, &t.WorkspaceName,
 	)
 	if err != nil {
 		return nil, err
