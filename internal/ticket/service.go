@@ -150,6 +150,11 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	if req.Title != nil && strings.TrimSpace(*req.Title) == "" {
 		return nil, fmt.Errorf("title cannot be empty")
 	}
+	if req.Domain != nil {
+		if err := validateDomain(*req.Domain); err != nil {
+			return nil, err
+		}
+	}
 	t, err := s.store.Update(ctx, id, req)
 	if err != nil {
 		return nil, err
