@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 	"github.com/tojiuni/goquest/internal/ticket"
 )
 
@@ -146,5 +148,110 @@ func TestTicketEvent_ParentID_OmittedWhenEmpty(t *testing.T) {
 	}
 	if _, ok := decoded["parent_id"]; ok {
 		t.Error("parent_id should be omitted when empty")
+	}
+}
+
+// TestPublishCreated_WorkspaceProjectFields verifies that PublishCreated correctly
+// populates workspace_name, project_name, and title_name in the XAdd stream payload.
+func TestPublishCreated_WorkspaceProjectFields(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("start miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	p := NewPublisher(rdb)
+	ctx := context.Background()
+
+	tk := newTestTicket()
+	tk.WorkspaceName = "test-workspace"
+	tk.ProjectName = "test-project"
+	tk.TitleName = "goq-test-ticket"
+
+	if err := p.PublishCreated(ctx, tk); err != nil {
+		t.Fatalf("PublishCreated: %v", err)
+	}
+
+	msgs, err := rdb.XRange(ctx, StreamCreated, "-", "+").Result()
+	if err != nil {
+		t.Fatalf("XRange: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message in stream, got %d", len(msgs))
+	}
+
+	raw, ok := msgs[0].Values["data"].(string)
+	if !ok {
+		t.Fatal("data field missing or not a string")
+	}
+
+	var ev TicketEvent
+	if err := json.Unmarshal([]byte(raw), &ev); err != nil {
+		t.Fatalf("unmarshal TicketEvent: %v", err)
+	}
+
+	if ev.WorkspaceName != "test-workspace" {
+		t.Errorf("workspace_name: got %q, want %q", ev.WorkspaceName, "test-workspace")
+	}
+	if ev.ProjectName != "test-project" {
+		t.Errorf("project_name: got %q, want %q", ev.ProjectName, "test-project")
+	}
+	if ev.TitleName != "goq-test-ticket" {
+		t.Errorf("title_name: got %q, want %q", ev.TitleName, "goq-test-ticket")
+	}
+}
+
+// TestPublishCreated_ZeroProjectFields verifies that workspace_name and project_name
+// are absent from the JSON payload when a ticket has no project association
+// (fields are empty strings, omitempty drops them).
+func TestPublishCreated_ZeroProjectFields(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("start miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	p := NewPublisher(rdb)
+	ctx := context.Background()
+
+	tk := newTestTicket()
+	// ProjectID is nil; WorkspaceName and ProjectName remain empty strings.
+	tk.ProjectID = nil
+	tk.WorkspaceName = ""
+	tk.ProjectName = ""
+
+	if err := p.PublishCreated(ctx, tk); err != nil {
+		t.Fatalf("PublishCreated: %v", err)
+	}
+
+	msgs, err := rdb.XRange(ctx, StreamCreated, "-", "+").Result()
+	if err != nil {
+		t.Fatalf("XRange: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message in stream, got %d", len(msgs))
+	}
+
+	raw, ok := msgs[0].Values["data"].(string)
+	if !ok {
+		t.Fatal("data field missing or not a string")
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if _, ok := decoded["workspace_name"]; ok {
+		t.Error("workspace_name should be omitted when empty")
+	}
+	if _, ok := decoded["project_name"]; ok {
+		t.Error("project_name should be omitted when empty")
 	}
 }
