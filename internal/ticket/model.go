@@ -88,6 +88,7 @@ func (c CompletionSpec) MarshalJSON() ([]byte, error) {
 
 type Ticket struct {
 	ID             uuid.UUID      `json:"id"`
+	TitleName      string         `json:"title_name,omitempty"`
 	Title          string         `json:"title"`
 	Description    string         `json:"description"`
 	Type           TicketType     `json:"type"`
@@ -126,6 +127,7 @@ type Tag struct {
 }
 
 type CreateTicketReq struct {
+	TitleName      string         `json:"title_name,omitempty"`
 	Title          string         `json:"title"`
 	Description    string         `json:"description"`
 	Type           TicketType     `json:"type"`
@@ -148,6 +150,7 @@ type CreateTicketReq struct {
 }
 
 type UpdateTicketReq struct {
+	TitleName      *string         `json:"title_name,omitempty"`
 	Title          *string         `json:"title,omitempty"`
 	Description    *string         `json:"description,omitempty"`
 	Status         *Status         `json:"status,omitempty"`

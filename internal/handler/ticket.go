@@ -33,6 +33,10 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 	requesterID := auth.RequesterID(r)
 	t, err := h.svc.Create(r.Context(), req, requesterID)
 	if err != nil {
+		if errors.Is(err, ticket.ErrDuplicateTitleName) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -161,6 +165,10 @@ func (h *TicketHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, ticket.ErrInvalidTransition) {
 			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		if errors.Is(err, ticket.ErrDuplicateTitleName) {
+			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())

@@ -5,11 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// titleNameRe validates the format: <ABBR>-<keyword1>[-<keyword2>] (lowercase, hyphens only).
+var titleNameRe = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)+$`)
 
 type Publisher interface {
 	PublishCreated(ctx context.Context, t *Ticket) error
@@ -58,6 +62,11 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 	if req.Title == "" {
 		return nil, fmt.Errorf("title is required")
 	}
+	if req.TitleName != "" {
+		if !titleNameRe.MatchString(req.TitleName) {
+			return nil, fmt.Errorf("title_name must be lowercase hyphen-separated (e.g. goq-vault-portforward)")
+		}
+	}
 	if req.Type == "" {
 		req.Type = TypeTask
 	}
@@ -83,6 +92,7 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 	now := time.Now().UTC()
 	t := &Ticket{
 		ID:             uuid.New(),
+		TitleName:      req.TitleName,
 		Title:          req.Title,
 		Description:    req.Description,
 		Type:           req.Type,
@@ -149,6 +159,11 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (*Ticket, error) {
 func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq) (*Ticket, error) {
 	if req.Title != nil && strings.TrimSpace(*req.Title) == "" {
 		return nil, fmt.Errorf("title cannot be empty")
+	}
+	if req.TitleName != nil {
+		if *req.TitleName != "" && !titleNameRe.MatchString(*req.TitleName) {
+			return nil, fmt.Errorf("title_name must be lowercase hyphen-separated (e.g. goq-vault-portforward)")
+		}
 	}
 	if req.Domain != nil {
 		if err := validateDomain(*req.Domain); err != nil {

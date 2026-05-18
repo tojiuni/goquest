@@ -658,3 +658,100 @@ func TestService_Update_EmptyTitleRejected(t *testing.T) {
 		t.Fatal("expected error for empty title")
 	}
 }
+
+func TestService_Create_TitleName(t *testing.T) {
+	store := &mockStore{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	created, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title:     "vault issue",
+		TitleName: "goq-vault-portforward",
+	}, "user1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if created.TitleName != "goq-vault-portforward" {
+		t.Errorf("expected TitleName='goq-vault-portforward', got %q", created.TitleName)
+	}
+}
+
+func TestService_Create_InvalidTitleNameFormat(t *testing.T) {
+	store := &mockStore{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	cases := []string{
+		"NoHyphen",
+		"UPPER-case",
+		"-leading-hyphen",
+		"trailing-hyphen-",
+		"double--hyphen",
+	}
+	for _, name := range cases {
+		_, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+			Title:     "test",
+			TitleName: name,
+		}, "user1")
+		if err == nil {
+			t.Errorf("expected error for invalid title_name %q, got nil", name)
+		}
+	}
+}
+
+func TestService_Create_TitleNameOptional(t *testing.T) {
+	store := &mockStore{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	created, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title: "no title_name ticket",
+	}, "user1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if created.TitleName != "" {
+		t.Errorf("expected empty TitleName, got %q", created.TitleName)
+	}
+}
+
+func TestService_Update_TitleName(t *testing.T) {
+	existing := newTestTicket(ticket.StatusPending)
+	store := &mockStore{getTicket: existing}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	name := "goq-oom-restart"
+	_, err := svc.Update(context.Background(), existing.ID, ticket.UpdateTicketReq{
+		TitleName: &name,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.updated == nil || store.updated.TitleName == nil || *store.updated.TitleName != "goq-oom-restart" {
+		t.Errorf("expected TitleName='goq-oom-restart' in store call, got %v", store.updated)
+	}
+}
+
+func TestService_Update_InvalidTitleNameFormat(t *testing.T) {
+	existing := newTestTicket(ticket.StatusPending)
+	store := &mockStore{getTicket: existing}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	bad := "BadFormat"
+	_, err := svc.Update(context.Background(), existing.ID, ticket.UpdateTicketReq{
+		TitleName: &bad,
+	})
+	if err == nil {
+		t.Fatal("expected error for invalid title_name format")
+	}
+}
+
+func TestService_Create_DuplicateTitleName(t *testing.T) {
+	store := &mockStore{createErr: ticket.ErrDuplicateTitleName}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	_, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title:     "vault issue",
+		TitleName: "goq-vault-portforward",
+	}, "user1")
+	if !errors.Is(err, ticket.ErrDuplicateTitleName) {
+		t.Fatalf("expected ErrDuplicateTitleName, got %v", err)
+	}
+}
