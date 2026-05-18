@@ -95,7 +95,7 @@ func (s *pgStore) Create(ctx context.Context, t *Ticket) error {
 }
 
 func (s *pgStore) Get(ctx context.Context, id uuid.UUID) (*Ticket, error) {
-	row := s.db.QueryRow(ctx, ticketSelectSQL+"WHERE t.id = $1 GROUP BY t.id", id)
+	row := s.db.QueryRow(ctx, ticketSelectSQL+"WHERE t.id = $1 GROUP BY t.id, p.name, w.name", id)
 	t, err := scanTicket(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -145,7 +145,7 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 		return nil, fmt.Errorf("lock ticket for update: %w", err)
 	}
 
-	row := tx.QueryRow(ctx, ticketSelectSQL+"WHERE t.id = $1 GROUP BY t.id", id)
+	row := tx.QueryRow(ctx, ticketSelectSQL+"WHERE t.id = $1 GROUP BY t.id, p.name, w.name", id)
 	current, err := scanTicket(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -370,7 +370,7 @@ func (s *pgStore) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int
 	listArgs := append(args, limit, offset)
 	rows, err := s.db.Query(ctx,
 		ticketSelectSQL+where+
-			fmt.Sprintf(" GROUP BY t.id ORDER BY t.created_at DESC LIMIT $%d OFFSET $%d", i, i+1),
+			fmt.Sprintf(" GROUP BY t.id, p.name, w.name ORDER BY t.created_at DESC LIMIT $%d OFFSET $%d", i, i+1),
 		listArgs...,
 	)
 	if err != nil {
@@ -514,7 +514,7 @@ func (s *pgStore) ListSubtasks(ctx context.Context, parentID uuid.UUID) ([]*Tick
 		)
 		` + ticketSelectSQL + `
 		JOIN subtree st ON t.id = st.id
-		GROUP BY t.id
+		GROUP BY t.id, p.name, w.name
 		ORDER BY t.created_at ASC`
 
 	rows, err := s.db.Query(ctx, q, parentID)
@@ -620,7 +620,7 @@ func (s *pgStore) ListOverdue(ctx context.Context) ([]*Ticket, error) {
 			`WHERE t.due_at IS NOT NULL
 			   AND t.due_at < NOW()
 			   AND t.status NOT IN ('completed', 'cancelled', 'failed', 'pending_approval', 'pending_revision')
-			 GROUP BY t.id`)
+			 GROUP BY t.id, p.name, w.name`)
 	if err != nil {
 		return nil, fmt.Errorf("list overdue: %w", err)
 	}
