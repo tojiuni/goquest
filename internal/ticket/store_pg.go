@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -60,19 +61,24 @@ func (s *pgStore) Create(ctx context.Context, t *Ticket) error {
 		callbackURL = &t.CallbackURL
 	}
 
+	var titleName *string
+	if t.TitleName != "" {
+		titleName = &t.TitleName
+	}
+
 	_, err = s.db.Exec(ctx, `
 		INSERT INTO tickets (
-			id, title, description, type, status, priority,
+			id, title_name, title, description, type, status, priority,
 			assignee_type, assignee_id, requester_id, source_bot,
 			domain, agent_context, metadata,
 			project_id, parent_id, visibility, completion_mode,
 			completion_spec, reward_xp, due_at, callback_url,
 			created_at, updated_at
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-			$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+			$15,$16,$17,$18,$19,$20,$21,$22,$23,$24
 		)`,
-		t.ID, t.Title, t.Description, string(t.Type), string(t.Status), string(t.Priority),
+		t.ID, titleName, t.Title, t.Description, string(t.Type), string(t.Status), string(t.Priority),
 		string(t.AssigneeType), t.AssigneeID, t.RequesterID, sourceBot,
 		domain, agentCtxJSON, metaJSON,
 		t.ProjectID, t.ParentID, string(visibility), string(mode),
@@ -80,6 +86,9 @@ func (s *pgStore) Create(ctx context.Context, t *Ticket) error {
 		t.CreatedAt, t.UpdatedAt,
 	)
 	if err != nil {
+		if isUniqueViolation(err, "tickets_project_title_name_key") {
+			return ErrDuplicateTitleName
+		}
 		return fmt.Errorf("insert ticket: %w", err)
 	}
 	return nil
@@ -100,7 +109,7 @@ func (s *pgStore) Get(ctx context.Context, id uuid.UUID) (*Ticket, error) {
 // ticketSelectSQL is the base SELECT with a LEFT JOIN for tags.
 // Callers append a WHERE clause.
 const ticketSelectSQL = `
-	SELECT t.id, t.title, t.description, t.type, t.status, t.priority,
+	SELECT t.id, t.title_name, t.title, t.description, t.type, t.status, t.priority,
 	       t.assignee_type, t.assignee_id, t.requester_id, t.source_bot,
 	       t.domain, t.agent_context, t.metadata,
 	       t.project_id, t.parent_id, t.visibility, t.completion_mode,
@@ -211,6 +220,14 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	if req.Description != nil {
 		newDescription = *req.Description
 	}
+	newTitleName := current.TitleName
+	if req.TitleName != nil {
+		newTitleName = *req.TitleName
+	}
+	var titleNamePtr *string
+	if newTitleName != "" {
+		titleNamePtr = &newTitleName
+	}
 
 	agentCtxJSON, err := marshalNullableJSON(newAgentCtx)
 	if err != nil {
@@ -245,15 +262,15 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 
 	_, err = tx.Exec(ctx, `
 		UPDATE tickets SET
-			title=$2, description=$3,
-			status=$4, assignee_id=$5, assignee_type=$6, domain=$7,
-			agent_context=$8, metadata=$9,
-			visibility=$10, completion_mode=$11, completion_spec=$12,
-			reward_xp=$13, due_at=$14, callback_url=$15,
-			updated_at=$16, completed_at=$17
+			title_name=$2, title=$3, description=$4,
+			status=$5, assignee_id=$6, assignee_type=$7, domain=$8,
+			agent_context=$9, metadata=$10,
+			visibility=$11, completion_mode=$12, completion_spec=$13,
+			reward_xp=$14, due_at=$15, callback_url=$16,
+			updated_at=$17, completed_at=$18
 		WHERE id=$1`,
 		id,
-		newTitle, newDescription,
+		titleNamePtr, newTitle, newDescription,
 		string(newStatus), newAssigneeID, string(newAssigneeType), newDomain,
 		agentCtxJSON, metaJSON,
 		string(newVisibility), string(newMode), specJSON,
@@ -261,6 +278,9 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 		now, completedAt,
 	)
 	if err != nil {
+		if isUniqueViolation(err, "tickets_project_title_name_key") {
+			return nil, ErrDuplicateTitleName
+		}
 		return nil, fmt.Errorf("update ticket: %w", err)
 	}
 
@@ -376,6 +396,7 @@ type scanner interface {
 func scanTicket(s scanner) (*Ticket, error) {
 	t := &Ticket{}
 	var (
+		titleName     *string
 		sourceBot     *string
 		domain        *string
 		agentCtxBytes []byte
@@ -386,7 +407,7 @@ func scanTicket(s scanner) (*Ticket, error) {
 	)
 
 	err := s.Scan(
-		&t.ID, &t.Title, &t.Description, &t.Type, &t.Status, &t.Priority,
+		&t.ID, &titleName, &t.Title, &t.Description, &t.Type, &t.Status, &t.Priority,
 		&t.AssigneeType, &t.AssigneeID, &t.RequesterID, &sourceBot,
 		&domain, &agentCtxBytes, &metaBytes,
 		&t.ProjectID, &t.ParentID, &t.Visibility, &t.CompletionMode,
@@ -398,6 +419,9 @@ func scanTicket(s scanner) (*Ticket, error) {
 		return nil, err
 	}
 
+	if titleName != nil {
+		t.TitleName = *titleName
+	}
 	if sourceBot != nil {
 		t.SourceBot = *sourceBot
 	}
@@ -463,9 +487,17 @@ func marshalNullableJSON(v any) ([]byte, error) {
 	return json.Marshal(v)
 }
 
+// isUniqueViolation returns true when err is a PostgreSQL unique_violation (23505)
+// on the named constraint.
+func isUniqueViolation(err error, constraintName string) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == constraintName
+}
+
 var (
-	ErrNotFound          = errors.New("ticket not found")
-	ErrInvalidTransition = errors.New("invalid status transition")
+	ErrNotFound            = errors.New("ticket not found")
+	ErrInvalidTransition   = errors.New("invalid status transition")
+	ErrDuplicateTitleName  = errors.New("title_name already exists in this project")
 )
 
 func (s *pgStore) ListSubtasks(ctx context.Context, parentID uuid.UUID) ([]*Ticket, error) {
