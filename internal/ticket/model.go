@@ -148,19 +148,21 @@ type CreateTicketReq struct {
 }
 
 type UpdateTicketReq struct {
-	Status         *Status        `json:"status,omitempty"`
-	AssigneeID     *string        `json:"assignee_id,omitempty"`
-	AssigneeType   *AssigneeType  `json:"assignee_type,omitempty"`
-	Domain         *Domain        `json:"domain,omitempty"`
-	AgentContext   map[string]any `json:"agent_context,omitempty"`
-	Metadata       map[string]any `json:"metadata,omitempty"`
-	Visibility     *Visibility    `json:"visibility,omitempty"`
+	Title          *string         `json:"title,omitempty"`
+	Description    *string         `json:"description,omitempty"`
+	Status         *Status         `json:"status,omitempty"`
+	AssigneeID     *string         `json:"assignee_id,omitempty"`
+	AssigneeType   *AssigneeType   `json:"assignee_type,omitempty"`
+	Domain         *Domain         `json:"domain,omitempty"`
+	AgentContext   map[string]any  `json:"agent_context,omitempty"`
+	Metadata       map[string]any  `json:"metadata,omitempty"`
+	Visibility     *Visibility     `json:"visibility,omitempty"`
 	CompletionMode *CompletionMode `json:"completion_mode,omitempty"`
 	CompletionSpec CompletionSpec  `json:"completion_spec,omitempty"`
-	RewardXP       *int           `json:"reward_xp,omitempty"`
-	DueAt          *time.Time     `json:"due_at,omitempty"`
-	CallbackURL    *string        `json:"callback_url,omitempty"`
-	TagIDs         []uuid.UUID    `json:"tag_ids,omitempty"`
+	RewardXP       *int            `json:"reward_xp,omitempty"`
+	DueAt          *time.Time      `json:"due_at,omitempty"`
+	CallbackURL    *string         `json:"callback_url,omitempty"`
+	TagIDs         []uuid.UUID     `json:"tag_ids,omitempty"`
 }
 
 type ListTicketsFilter struct {

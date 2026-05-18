@@ -29,6 +29,19 @@ func TestValidateTransition(t *testing.T) {
 		{StatusPending, StatusCompleted, true},
 		{StatusPending, StatusFailed, true},
 		{StatusAssigned, StatusCompleted, true},
+		// new pending_approval / pending_revision transitions
+		{StatusPending, StatusPendingApproval, false},
+		{StatusAssigned, StatusPendingApproval, false},
+		{StatusInProgress, StatusPendingApproval, false},
+		{StatusPendingApproval, StatusAssigned, false},
+		{StatusPendingApproval, StatusCancelled, false},
+		{StatusPendingApproval, StatusPendingRevision, false},
+		{StatusPendingRevision, StatusInProgress, false},
+		{StatusPendingRevision, StatusCancelled, false},
+		{StatusPendingRevision, StatusPendingApproval, false},
+		// invalid from pending_approval (use Approve endpoint, not PATCH)
+		{StatusPendingApproval, StatusPending, true},
+		{StatusPendingApproval, StatusCompleted, true},
 	}
 
 	for _, tc := range cases {
