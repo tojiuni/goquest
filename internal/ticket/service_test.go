@@ -621,3 +621,40 @@ func TestService_Create_PublicToken_NonFatalOnError(t *testing.T) {
 		t.Errorf("magic.Request should be called once, got %d", magic.callCount)
 	}
 }
+
+func TestService_Update_TitleChange(t *testing.T) {
+	existing := newTestTicket(ticket.StatusPending)
+	existing.Title = "old title"
+	store := &mockStore{getTicket: existing}
+	pub := &mockPublisher{}
+	svc := ticket.NewService(store, pub, &mockNuclex{}, nil, nil, nil)
+
+	newTitle := "new title"
+	_, err := svc.Update(context.Background(), existing.ID, ticket.UpdateTicketReq{
+		Title: &newTitle,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.updated == nil {
+		t.Fatal("expected store.Update to be called")
+	}
+	if store.updated.Title == nil || *store.updated.Title != "new title" {
+		t.Errorf("expected Title='new title', got %v", store.updated.Title)
+	}
+}
+
+func TestService_Update_EmptyTitleRejected(t *testing.T) {
+	existing := newTestTicket(ticket.StatusPending)
+	store := &mockStore{getTicket: existing}
+	pub := &mockPublisher{}
+	svc := ticket.NewService(store, pub, &mockNuclex{}, nil, nil, nil)
+
+	empty := ""
+	_, err := svc.Update(context.Background(), existing.ID, ticket.UpdateTicketReq{
+		Title: &empty,
+	})
+	if err == nil {
+		t.Fatal("expected error for empty title")
+	}
+}

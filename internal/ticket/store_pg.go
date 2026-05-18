@@ -203,6 +203,14 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	if req.CallbackURL != nil {
 		newCallbackURL = *req.CallbackURL
 	}
+	newTitle := current.Title
+	if req.Title != nil {
+		newTitle = *req.Title
+	}
+	newDescription := current.Description
+	if req.Description != nil {
+		newDescription = *req.Description
+	}
 
 	agentCtxJSON, err := marshalNullableJSON(newAgentCtx)
 	if err != nil {
@@ -237,13 +245,15 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 
 	_, err = tx.Exec(ctx, `
 		UPDATE tickets SET
-			status=$2, assignee_id=$3, assignee_type=$4, domain=$5,
-			agent_context=$6, metadata=$7,
-			visibility=$8, completion_mode=$9, completion_spec=$10,
-			reward_xp=$11, due_at=$12, callback_url=$13,
-			updated_at=$14, completed_at=$15
+			title=$2, description=$3,
+			status=$4, assignee_id=$5, assignee_type=$6, domain=$7,
+			agent_context=$8, metadata=$9,
+			visibility=$10, completion_mode=$11, completion_spec=$12,
+			reward_xp=$13, due_at=$14, callback_url=$15,
+			updated_at=$16, completed_at=$17
 		WHERE id=$1`,
 		id,
+		newTitle, newDescription,
 		string(newStatus), newAssigneeID, string(newAssigneeType), newDomain,
 		agentCtxJSON, metaJSON,
 		string(newVisibility), string(newMode), specJSON,
