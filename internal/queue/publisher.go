@@ -26,17 +26,20 @@ func NewPublisher(rdb *redis.Client) *Publisher {
 }
 
 type TicketEvent struct {
-	TicketID     string `json:"ticket_id"`
-	Title        string `json:"title"`
-	Domain       string `json:"domain"`
-	AssigneeID   string `json:"assignee_id"`
-	Status       string `json:"status"`
-	Priority     string `json:"priority"`
-	AgentContext string `json:"agent_context"`
-	SourceBot    string `json:"source_bot"`
-	RequesterID  string `json:"requester_id"`
-	ParentID     string `json:"parent_id,omitempty"`
-	EventTime    string `json:"event_time"`
+	TicketID      string `json:"ticket_id"`
+	TitleName     string `json:"title_name,omitempty"`
+	Title         string `json:"title"`
+	Domain        string `json:"domain"`
+	AssigneeID    string `json:"assignee_id"`
+	Status        string `json:"status"`
+	Priority      string `json:"priority"`
+	AgentContext  string `json:"agent_context"`
+	SourceBot     string `json:"source_bot"`
+	RequesterID   string `json:"requester_id"`
+	ParentID      string `json:"parent_id,omitempty"`
+	WorkspaceName string `json:"workspace_name,omitempty"`
+	ProjectName   string `json:"project_name,omitempty"`
+	EventTime     string `json:"event_time"`
 }
 
 func (p *Publisher) PublishCreated(ctx context.Context, t *ticket.Ticket) error {
@@ -65,16 +68,19 @@ func (p *Publisher) publish(ctx context.Context, stream string, t *ticket.Ticket
 	}
 
 	ev := TicketEvent{
-		TicketID:     t.ID.String(),
-		Title:        t.Title,
-		Domain:       string(t.Domain),
-		AssigneeID:   t.AssigneeID,
-		Status:       string(t.Status),
-		Priority:     string(t.Priority),
-		AgentContext: agentCtxStr,
-		SourceBot:    t.SourceBot,
-		RequesterID:  t.RequesterID,
-		EventTime:    time.Now().UTC().Format(time.RFC3339),
+		TicketID:      t.ID.String(),
+		TitleName:     t.TitleName,
+		Title:         t.Title,
+		Domain:        string(t.Domain),
+		AssigneeID:    t.AssigneeID,
+		Status:        string(t.Status),
+		Priority:      string(t.Priority),
+		AgentContext:  agentCtxStr,
+		SourceBot:     t.SourceBot,
+		RequesterID:   t.RequesterID,
+		WorkspaceName: t.WorkspaceName,
+		ProjectName:   t.ProjectName,
+		EventTime:     time.Now().UTC().Format(time.RFC3339),
 	}
 
 	if t.ParentID != nil {

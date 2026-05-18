@@ -111,6 +111,9 @@ type Ticket struct {
 	DueAt          *time.Time     `json:"due_at,omitempty"`
 	CallbackURL    string         `json:"callback_url,omitempty"`
 	Tags           []Tag          `json:"tags,omitempty"`
+	// Denormalized read-only fields populated via JOIN in store queries.
+	WorkspaceName  string         `json:"workspace_name,omitempty"`
+	ProjectName    string         `json:"project_name,omitempty"`
 	// PublicToken is a one-time magic-link token included only in the CreateTicket response.
 	// It is not persisted in the tickets table; the underlying token lives in magic_tokens.
 	PublicToken    string         `json:"public_token,omitempty"`
