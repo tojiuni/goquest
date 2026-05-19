@@ -102,6 +102,15 @@ func (m *mockStore) RemoveMember(_ context.Context, pid uuid.UUID, uid string) e
 	return nil
 }
 
+func (m *mockStore) GetByName(_ context.Context, workspaceName, projectName string) (*project.Project, error) {
+	for _, p := range m.projects {
+		if p.Name == projectName {
+			return p, nil
+		}
+	}
+	return nil, project.ErrNotFound
+}
+
 // ── HasRole tests ─────────────────────────────────────────────────
 
 func TestHasRole_Ordering(t *testing.T) {

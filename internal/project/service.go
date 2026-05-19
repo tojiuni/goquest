@@ -93,6 +93,14 @@ func (svc *Service) RemoveMember(ctx context.Context, projectID uuid.UUID, targe
 	return svc.store.RemoveMember(ctx, projectID, targetUserID)
 }
 
+func (svc *Service) GetProjectIDByName(ctx context.Context, workspaceName, projectName string) (*uuid.UUID, error) {
+	p, err := svc.store.GetByName(ctx, workspaceName, projectName)
+	if err != nil {
+		return nil, err
+	}
+	return &p.ID, nil
+}
+
 // HasRole checks if callerRole satisfies the required minimum role.
 func HasRole(callerRole, required Role) bool {
 	order := map[Role]int{

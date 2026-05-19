@@ -47,6 +47,17 @@ func (s *pgStore) Get(ctx context.Context, id uuid.UUID) (*Project, error) {
 	return scanProject(row)
 }
 
+func (s *pgStore) GetByName(ctx context.Context, workspaceName, projectName string) (*Project, error) {
+	row := s.db.QueryRow(ctx, `
+		SELECT p.id, p.workspace_id, p.name, p.description, p.status, p.difficulty, p.reward_xp,
+		       p.created_by, p.created_at, p.updated_at
+		FROM projects p
+		JOIN workspaces w ON w.id = p.workspace_id
+		WHERE LOWER(w.name) = LOWER($1) AND LOWER(p.name) = LOWER($2)
+		LIMIT 1`, workspaceName, projectName)
+	return scanProject(row)
+}
+
 func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateReq) (*Project, error) {
 	now := time.Now().UTC()
 	var diff *string

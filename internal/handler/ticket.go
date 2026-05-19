@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -13,14 +14,20 @@ import (
 	"github.com/tojiuni/goquest/internal/ticket"
 )
 
-type TicketHandler struct {
-	svc     *ticket.Service
-	checker spicedb.PermissionChecker
-	writer  spicedb.RelationshipWriter
+// ProjectResolver resolves workspace/project names to a project UUID.
+type ProjectResolver interface {
+	GetProjectIDByName(ctx context.Context, workspaceName, projectName string) (*uuid.UUID, error)
 }
 
-func NewTicketHandler(svc *ticket.Service, checker spicedb.PermissionChecker, writer spicedb.RelationshipWriter) *TicketHandler {
-	return &TicketHandler{svc: svc, checker: checker, writer: writer}
+type TicketHandler struct {
+	svc      *ticket.Service
+	checker  spicedb.PermissionChecker
+	writer   spicedb.RelationshipWriter
+	projects ProjectResolver
+}
+
+func NewTicketHandler(svc *ticket.Service, checker spicedb.PermissionChecker, writer spicedb.RelationshipWriter, projects ProjectResolver) *TicketHandler {
+	return &TicketHandler{svc: svc, checker: checker, writer: writer, projects: projects}
 }
 
 func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -28,6 +35,15 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
+	}
+
+	if req.ProjectID == nil && req.ProjectName != "" && h.projects != nil {
+		pid, resolveErr := h.projects.GetProjectIDByName(r.Context(), req.WorkspaceName, req.ProjectName)
+		if resolveErr != nil {
+			writeError(w, http.StatusBadRequest, "project not found: "+resolveErr.Error())
+			return
+		}
+		req.ProjectID = pid
 	}
 
 	requesterID := auth.RequesterID(r)

@@ -121,7 +121,7 @@ func main() {
 	tmplSvc := template.NewService(tmplStore)
 	tmplH := handler.NewTemplateHandler(tmplSvc, svc)
 
-	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter)
+	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter, pjSvc)
 	healthH := handler.NewHealthHandler(pool, rdb)
 	wsH := handler.NewWorkspaceHandler(wsSvc)
 	pjH := handler.NewProjectHandler(pjSvc)

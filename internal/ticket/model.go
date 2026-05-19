@@ -142,6 +142,8 @@ type CreateTicketReq struct {
 	SourceBot      string         `json:"source_bot,omitempty"`
 	Metadata       map[string]any `json:"metadata,omitempty"`
 	ProjectID      *uuid.UUID     `json:"project_id,omitempty"`
+	WorkspaceName  string         `json:"workspace_name,omitempty"`
+	ProjectName    string         `json:"project_name,omitempty"`
 	ParentID       *uuid.UUID     `json:"parent_id,omitempty"`
 	Visibility     Visibility     `json:"visibility,omitempty"`
 	CompletionMode CompletionMode `json:"completion_mode,omitempty"`
