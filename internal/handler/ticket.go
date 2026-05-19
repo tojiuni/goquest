@@ -37,7 +37,7 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.ProjectID == nil && req.ProjectName != "" && h.projects != nil {
+	if req.ProjectID == nil && req.WorkspaceName != "" && req.ProjectName != "" && h.projects != nil {
 		pid, resolveErr := h.projects.GetProjectIDByName(r.Context(), req.WorkspaceName, req.ProjectName)
 		if resolveErr != nil {
 			writeError(w, http.StatusBadRequest, "project not found: "+resolveErr.Error())
