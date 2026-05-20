@@ -39,6 +39,8 @@ type TicketEvent struct {
 	ParentID      string `json:"parent_id,omitempty"`
 	WorkspaceName string `json:"workspace_name,omitempty"`
 	ProjectName   string `json:"project_name,omitempty"`
+	DueAt         string `json:"due_at,omitempty"`
+	CreatedAt     string `json:"created_at,omitempty"`
 	EventTime     string `json:"event_time"`
 }
 
@@ -85,6 +87,11 @@ func (p *Publisher) publish(ctx context.Context, stream string, t *ticket.Ticket
 
 	if t.ParentID != nil {
 		ev.ParentID = t.ParentID.String()
+	}
+
+	ev.CreatedAt = t.CreatedAt.UTC().Format(time.RFC3339)
+	if t.DueAt != nil {
+		ev.DueAt = t.DueAt.UTC().Format(time.RFC3339)
 	}
 
 	b, err := json.Marshal(ev)
