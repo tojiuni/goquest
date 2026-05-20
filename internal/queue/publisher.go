@@ -40,7 +40,7 @@ type TicketEvent struct {
 	WorkspaceName string `json:"workspace_name,omitempty"`
 	ProjectName   string `json:"project_name,omitempty"`
 	DueAt         string `json:"due_at,omitempty"`
-	CreatedAt     string `json:"created_at,omitempty"`
+	CreatedAt     string `json:"created_at"`
 	EventTime     string `json:"event_time"`
 }
 

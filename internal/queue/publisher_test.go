@@ -297,6 +297,13 @@ func TestPublishCreated_DueAtOmittedWhenNil(t *testing.T) {
 	if _, ok := decoded["due_at"]; ok {
 		t.Error("due_at should be omitted when DueAt is nil")
 	}
+
+	createdAt, ok := decoded["created_at"]
+	if !ok {
+		t.Error("created_at should be present even when DueAt is nil")
+	} else if createdAt == "" {
+		t.Error("created_at should be non-empty")
+	}
 }
 
 // TestPublishCreated_ZeroProjectFields verifies that workspace_name and project_name
