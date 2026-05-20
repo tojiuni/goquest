@@ -356,6 +356,9 @@ func (s *pgStore) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int
 		args = append(args, *f.ParentID)
 		i++
 	}
+	if f.TopLevelOnly {
+		where += " AND t.parent_id IS NULL"
+	}
 
 	countQuery := "SELECT COUNT(*) FROM tickets t " + where
 	var total int
