@@ -204,6 +204,108 @@ func TestPublishCreated_WorkspaceProjectFields(t *testing.T) {
 	}
 }
 
+// TestPublishCreated_DueAtCreatedAt verifies that due_at and created_at are
+// included in the XAdd stream payload when the ticket has DueAt and CreatedAt set.
+func TestPublishCreated_DueAtCreatedAt(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("start miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	p := NewPublisher(rdb)
+	ctx := context.Background()
+
+	tk := newTestTicket()
+	dueAt := time.Date(2026, 5, 25, 9, 0, 0, 0, time.UTC)
+	tk.DueAt = &dueAt
+	tk.CreatedAt = time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
+
+	if err := p.PublishCreated(ctx, tk); err != nil {
+		t.Fatalf("PublishCreated: %v", err)
+	}
+
+	msgs, err := rdb.XRange(ctx, StreamCreated, "-", "+").Result()
+	if err != nil {
+		t.Fatalf("XRange: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message in stream, got %d", len(msgs))
+	}
+
+	raw, ok := msgs[0].Values["data"].(string)
+	if !ok {
+		t.Fatal("data field missing or not a string")
+	}
+
+	var ev TicketEvent
+	if err := json.Unmarshal([]byte(raw), &ev); err != nil {
+		t.Fatalf("unmarshal TicketEvent: %v", err)
+	}
+
+	if ev.DueAt != "2026-05-25T09:00:00Z" {
+		t.Errorf("due_at: got %q, want %q", ev.DueAt, "2026-05-25T09:00:00Z")
+	}
+	if ev.CreatedAt != "2026-05-20T12:00:00Z" {
+		t.Errorf("created_at: got %q, want %q", ev.CreatedAt, "2026-05-20T12:00:00Z")
+	}
+}
+
+// TestPublishCreated_DueAtOmittedWhenNil verifies that due_at is absent from the
+// JSON payload when the ticket has no DueAt set (nil pointer, omitempty drops it).
+func TestPublishCreated_DueAtOmittedWhenNil(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("start miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	p := NewPublisher(rdb)
+	ctx := context.Background()
+
+	tk := newTestTicket()
+	tk.DueAt = nil // explicitly nil
+
+	if err := p.PublishCreated(ctx, tk); err != nil {
+		t.Fatalf("PublishCreated: %v", err)
+	}
+
+	msgs, err := rdb.XRange(ctx, StreamCreated, "-", "+").Result()
+	if err != nil {
+		t.Fatalf("XRange: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message in stream, got %d", len(msgs))
+	}
+
+	raw, ok := msgs[0].Values["data"].(string)
+	if !ok {
+		t.Fatal("data field missing or not a string")
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if _, ok := decoded["due_at"]; ok {
+		t.Error("due_at should be omitted when DueAt is nil")
+	}
+
+	createdAt, ok := decoded["created_at"]
+	if !ok {
+		t.Error("created_at should be present even when DueAt is nil")
+	} else if createdAt == "" {
+		t.Error("created_at should be non-empty")
+	}
+}
+
 // TestPublishCreated_ZeroProjectFields verifies that workspace_name and project_name
 // are absent from the JSON payload when a ticket has no project association
 // (fields are empty strings, omitempty drops them).
