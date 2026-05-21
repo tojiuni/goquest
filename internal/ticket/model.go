@@ -182,6 +182,7 @@ type ListTicketsFilter struct {
 	ProjectID    *uuid.UUID
 	WorkspaceID  *uuid.UUID
 	ParentID     *uuid.UUID
+	TopLevelOnly bool
 	TagIDs       []uuid.UUID
 	Limit        int
 	Offset       int

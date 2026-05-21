@@ -96,6 +96,9 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 			f.WorkspaceID = &u
 		}
 	}
+	if q.Get("top_level_only") == "true" {
+		f.TopLevelOnly = true
+	}
 
 	tickets, total, err := h.svc.List(r.Context(), f)
 	if err != nil {
