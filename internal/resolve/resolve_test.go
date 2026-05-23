@@ -108,3 +108,11 @@ func TestResolve_ProjectNotFound(t *testing.T) {
 		t.Fatalf("err = %v, want ErrProjectNotFound", err)
 	}
 }
+
+func TestResolve_TrimsWhitespace(t *testing.T) {
+	r, _, pid := newResolver()
+	got, err := r.ResolveProjectID(context.Background(), resolve.Ref{WorkspaceName: "  Team  ", ProjectName: "  Alpha  "})
+	if err != nil || got == nil || *got != pid {
+		t.Fatalf("padded input should resolve: got %v err %v, want %v", got, err, pid)
+	}
+}

@@ -69,9 +69,9 @@ func (r *Resolver) ResolveProjectID(ctx context.Context, ref Ref) (*uuid.UUID, e
 		err error
 	)
 	if strings.TrimSpace(ref.WorkspaceSlug) != "" {
-		ws, err = r.ws.GetBySlug(ctx, ref.WorkspaceSlug)
+		ws, err = r.ws.GetBySlug(ctx, strings.TrimSpace(ref.WorkspaceSlug))
 	} else {
-		ws, err = r.ws.GetByName(ctx, ref.WorkspaceName)
+		ws, err = r.ws.GetByName(ctx, strings.TrimSpace(ref.WorkspaceName))
 	}
 	if err != nil {
 		if errors.Is(err, workspace.ErrNotFound) {
@@ -80,7 +80,7 @@ func (r *Resolver) ResolveProjectID(ctx context.Context, ref Ref) (*uuid.UUID, e
 		return nil, err
 	}
 
-	p, err := r.pj.GetByWorkspaceAndName(ctx, ws.ID, ref.ProjectName)
+	p, err := r.pj.GetByWorkspaceAndName(ctx, ws.ID, strings.TrimSpace(ref.ProjectName))
 	if err != nil {
 		if errors.Is(err, project.ErrNotFound) {
 			return nil, ErrProjectNotFound
