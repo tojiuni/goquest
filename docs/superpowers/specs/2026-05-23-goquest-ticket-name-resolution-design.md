@@ -139,9 +139,16 @@ POST /tickets {workspace_slug|workspace_name, project_name, ...}
 ## 마이그레이션 / 배포 순서
 
 1. 코드 + 마이그레이션 머지.
-2. 배포 전: 클러스터 DB `LOWER(name)` 중복 사전 점검.
-3. 마이그레이션 적용(유니크 인덱스). 실패 시 중복 해소 후 재적용.
-4. 신규 API 필드는 옵션 → 하위호환(기존 `project_id` 호출 무영향).
+2. **배포 전 필수: 클러스터 DB 중복 사전 점검** (workspaces·projects 둘 다):
+   - `SELECT LOWER(name), COUNT(*) FROM workspaces GROUP BY 1 HAVING COUNT(*)>1;`
+   - `SELECT workspace_id, LOWER(name), COUNT(*) FROM projects GROUP BY 1,2 HAVING COUNT(*)>1;`
+   중복이 있으면 rename으로 해소 후 배포.
+3. 마이그레이션 적용(유니크 인덱스).
+4. **배포 후 필수 확인:** `internal/migrate`의 러너는 마이그레이션 에러를 **로그만 남기고 계속 진행**한다(버전 테이블 없음). 따라서 중복 데이터로 인덱스 생성이 실패해도 부팅은 성공하고 유일성 불변식이 *조용히* 미적용된다. 배포 후 반드시 인덱스 존재를 확인한다:
+   - `\d workspaces` → `workspaces_lower_name_key` 있는지
+   - `\d projects` → `projects_workspace_lower_name_key` 있는지
+   없으면 2번 중복 해소 후 재적용.
+5. 신규 API 필드는 옵션 → 하위호환(기존 `project_id` 호출 무영향).
 
 ## 미해결/추후
 
