@@ -3,6 +3,7 @@ package workspace_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,6 +52,15 @@ func (m *mockStore) Get(_ context.Context, id uuid.UUID) (*workspace.Workspace, 
 func (m *mockStore) GetBySlug(_ context.Context, slug string) (*workspace.Workspace, error) {
 	for _, ws := range m.workspaces {
 		if ws.Slug == slug {
+			return ws, nil
+		}
+	}
+	return nil, workspace.ErrNotFound
+}
+
+func (m *mockStore) GetByName(_ context.Context, name string) (*workspace.Workspace, error) {
+	for _, ws := range m.workspaces {
+		if strings.EqualFold(ws.Name, name) {
 			return ws, nil
 		}
 	}

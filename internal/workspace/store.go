@@ -10,6 +10,7 @@ type Store interface {
 	Create(ctx context.Context, ws *Workspace) error
 	Get(ctx context.Context, id uuid.UUID) (*Workspace, error)
 	GetBySlug(ctx context.Context, slug string) (*Workspace, error)
+	GetByName(ctx context.Context, name string) (*Workspace, error)
 	Update(ctx context.Context, id uuid.UUID, req UpdateReq) (*Workspace, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	ListByUser(ctx context.Context, userID string) ([]*Workspace, error)

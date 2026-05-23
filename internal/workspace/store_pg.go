@@ -48,6 +48,13 @@ func (s *pgStore) GetBySlug(ctx context.Context, slug string) (*Workspace, error
 	return scanWorkspace(row)
 }
 
+func (s *pgStore) GetByName(ctx context.Context, name string) (*Workspace, error) {
+	row := s.db.QueryRow(ctx, `
+		SELECT id, name, slug, description, type, owner_id, created_at, updated_at
+		FROM workspaces WHERE LOWER(name) = LOWER($1)`, name)
+	return scanWorkspace(row)
+}
+
 func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateReq) (*Workspace, error) {
 	now := time.Now().UTC()
 	_, err := s.db.Exec(ctx, `
