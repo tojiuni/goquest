@@ -12,26 +12,26 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/tojiuni/goquest/internal/apikey"
-	"github.com/google/uuid"
 
 	"github.com/tojiuni/goquest/internal/audit"
 	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/comment"
 	"github.com/tojiuni/goquest/internal/config"
 	"github.com/tojiuni/goquest/internal/device"
-	"github.com/tojiuni/goquest/internal/macro"
-	"github.com/tojiuni/goquest/internal/magic"
-	"github.com/tojiuni/goquest/internal/notify"
-	"github.com/tojiuni/goquest/internal/pii"
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/integration"
+	"github.com/tojiuni/goquest/internal/macro"
+	"github.com/tojiuni/goquest/internal/magic"
 	"github.com/tojiuni/goquest/internal/migrate"
+	"github.com/tojiuni/goquest/internal/notify"
+	"github.com/tojiuni/goquest/internal/pii"
 	"github.com/tojiuni/goquest/internal/project"
-	"github.com/tojiuni/goquest/internal/resolve"
 	"github.com/tojiuni/goquest/internal/queue"
+	"github.com/tojiuni/goquest/internal/resolve"
 	"github.com/tojiuni/goquest/internal/sla"
 	"github.com/tojiuni/goquest/internal/spicedb"
 	"github.com/tojiuni/goquest/internal/sse"
@@ -100,7 +100,7 @@ func main() {
 
 	// SpiceDB — optional; falls back to noop when endpoint is unavailable.
 	var (
-		sdbChecker spicedb.PermissionChecker = &spicedb.NoopChecker{}
+		sdbChecker spicedb.PermissionChecker  = &spicedb.NoopChecker{}
 		sdbWriter  spicedb.RelationshipWriter = &spicedb.NoopWriter{}
 	)
 	if cfg.SpiceDBEndpoint != "" {

@@ -110,6 +110,7 @@ func (svc *Service) uniqueSlug(ctx context.Context, base string, id uuid.UUID) (
 		}
 		candidate = fmt.Sprintf("%s-%d", base, i)
 	}
+	// Exhausted base-2..base-N: fall back to a guaranteed-unique id-based handle.
 	return "ws-" + id.String()[:8], nil
 }
 
