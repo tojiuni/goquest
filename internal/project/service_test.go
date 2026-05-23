@@ -2,6 +2,7 @@ package project_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,6 +37,15 @@ func (m *mockStore) Get(_ context.Context, id uuid.UUID) (*project.Project, erro
 		return nil, project.ErrNotFound
 	}
 	return p, nil
+}
+
+func (m *mockStore) GetByWorkspaceAndName(_ context.Context, wid uuid.UUID, name string) (*project.Project, error) {
+	for _, p := range m.projects {
+		if p.WorkspaceID == wid && strings.EqualFold(p.Name, name) {
+			return p, nil
+		}
+	}
+	return nil, project.ErrNotFound
 }
 
 func (m *mockStore) Update(_ context.Context, id uuid.UUID, req project.UpdateReq) (*project.Project, error) {

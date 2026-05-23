@@ -26,6 +26,7 @@ type stubWSSvc struct {
 	listErr    error
 	getErr     error
 	acceptErr  error
+	updateErr  error
 }
 
 func (s *stubWSSvc) Create(_ context.Context, _ string, req workspace.CreateReq) (*workspace.Workspace, error) {
@@ -53,6 +54,9 @@ func (s *stubWSSvc) Get(_ context.Context, id uuid.UUID) (*workspace.Workspace, 
 }
 
 func (s *stubWSSvc) Update(_ context.Context, _ uuid.UUID, _ workspace.UpdateReq) (*workspace.Workspace, error) {
+	if s.updateErr != nil {
+		return nil, s.updateErr
+	}
 	return s.got, nil
 }
 
@@ -195,6 +199,48 @@ func TestWorkspaceHandler_List_Empty(t *testing.T) {
 
 	if rr.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200", rr.Code)
+	}
+}
+
+// ── WorkspaceHandler.AcceptInvitation ────────────────────────────
+
+// ── WorkspaceHandler.Update ───────────────────────────────────────
+
+func TestWorkspaceCreate_DuplicateName409(t *testing.T) {
+	stub := &stubWSSvc{createErr: workspace.ErrDuplicateName}
+	h := handler.NewWorkspaceHandler(stub)
+
+	body, _ := json.Marshal(workspace.CreateReq{Name: "taken", Type: workspace.TypeShared})
+	r := newRouter()
+	r.Post("/workspaces", h.Create)
+
+	req := httptest.NewRequest(http.MethodPost, "/workspaces", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Errorf("status = %d, want 409; body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestWorkspaceUpdate_DuplicateName409(t *testing.T) {
+	stub := &stubWSSvc{updateErr: workspace.ErrDuplicateName}
+	h := handler.NewWorkspaceHandler(stub)
+
+	body, _ := json.Marshal(map[string]string{"name": "taken"})
+	id := uuid.New()
+
+	r := newRouter()
+	r.Patch("/workspaces/{wid}", h.Update)
+
+	req := httptest.NewRequest(http.MethodPatch, "/workspaces/"+id.String(), bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusConflict {
+		t.Errorf("status = %d, want 409; body: %s", rr.Code, rr.Body.String())
 	}
 }
 

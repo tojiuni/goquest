@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -29,6 +30,10 @@ func (s *pgStore) Create(ctx context.Context, ws *Workspace) error {
 		ws.CreatedAt, ws.UpdatedAt,
 	)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "workspaces_lower_name_key" {
+			return ErrDuplicateName
+		}
 		return fmt.Errorf("create workspace: %w", err)
 	}
 	return nil
@@ -48,6 +53,13 @@ func (s *pgStore) GetBySlug(ctx context.Context, slug string) (*Workspace, error
 	return scanWorkspace(row)
 }
 
+func (s *pgStore) GetByName(ctx context.Context, name string) (*Workspace, error) {
+	row := s.db.QueryRow(ctx, `
+		SELECT id, name, slug, description, type, owner_id, created_at, updated_at
+		FROM workspaces WHERE LOWER(name) = LOWER($1)`, name)
+	return scanWorkspace(row)
+}
+
 func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateReq) (*Workspace, error) {
 	now := time.Now().UTC()
 	_, err := s.db.Exec(ctx, `
@@ -59,6 +71,10 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateReq) (*Wor
 		id, req.Name, req.Description, now,
 	)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, ErrDuplicateName
+		}
 		return nil, fmt.Errorf("update workspace: %w", err)
 	}
 	return s.Get(ctx, id)
@@ -291,3 +307,5 @@ func scanInvitation(s rowScanner) (*Invitation, error) {
 }
 
 var ErrNotFound = errors.New("workspace: not found")
+
+var ErrDuplicateName = errors.New("workspace: name already in use")
