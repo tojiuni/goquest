@@ -9,6 +9,7 @@ import (
 type Store interface {
 	Create(ctx context.Context, p *Project) error
 	Get(ctx context.Context, id uuid.UUID) (*Project, error)
+	GetByWorkspaceAndName(ctx context.Context, workspaceID uuid.UUID, name string) (*Project, error)
 	Update(ctx context.Context, id uuid.UUID, req UpdateReq) (*Project, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	ListByWorkspace(ctx context.Context, workspaceID uuid.UUID) ([]*Project, error)
