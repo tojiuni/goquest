@@ -47,7 +47,14 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 		if !ref.Empty() {
 			pid, rerr := h.resolver.ResolveProjectID(r.Context(), ref)
 			if rerr != nil {
-				writeError(w, http.StatusBadRequest, rerr.Error())
+				switch {
+				case errors.Is(rerr, resolve.ErrIncompleteRef),
+					errors.Is(rerr, resolve.ErrWorkspaceNotFound),
+					errors.Is(rerr, resolve.ErrProjectNotFound):
+					writeError(w, http.StatusBadRequest, rerr.Error())
+				default:
+					writeError(w, http.StatusInternalServerError, "resolve project: "+rerr.Error())
+				}
 				return
 			}
 			req.ProjectID = pid
