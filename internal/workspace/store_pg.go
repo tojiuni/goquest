@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -66,6 +67,10 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateReq) (*Wor
 		id, req.Name, req.Description, now,
 	)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, ErrDuplicateName
+		}
 		return nil, fmt.Errorf("update workspace: %w", err)
 	}
 	return s.Get(ctx, id)
@@ -298,3 +303,5 @@ func scanInvitation(s rowScanner) (*Invitation, error) {
 }
 
 var ErrNotFound = errors.New("workspace: not found")
+
+var ErrDuplicateName = errors.New("workspace: name already in use")
