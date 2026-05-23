@@ -14,8 +14,8 @@
 
 - `workspaces.name`은 **UNIQUE가 아니다** (UNIQUE는 `slug`만, `002_workspace.sql`).
 - `projects`는 `UNIQUE (workspace_id, name)` — 워크스페이스가 정해지면 프로젝트명은 유일.
-- `slug = toSlug(name)`은 생성 시 1회 파생되며 **충돌 suffix가 없다.** slug가 UNIQUE이므로, 같은 이름(정확히는 같은 정규화 결과)의 워크스페이스는 **현재도 slug 충돌로 생성이 막혀** 사실상 이름이 유일하다. 단 이는 *우연한* 보장이다.
-- `toSlug`는 소문자화 후 `[a-z0-9-]` 외 문자를 `-`로 치환 → **한글 등 비ASCII 이름은 빈/degenerate slug**가 된다 (한국어 컨텍스트에서 실질적 URL-safe 구멍).
+- `slug = toSlug(name)`은 생성 시 1회 파생되며 **끝에 랜덤 hex suffix**(`randomHex(3)` → 6자)를 붙인다 (예: `my-workspace-a3f9c1`). 즉 slug는 name의 결정적 함수가 **아니다.** → 같은 이름의 워크스페이스도 slug가 서로 달라 **현재 중복 생성이 가능하다** (workspace name은 사실상 유일하지 않음). 또 랜덤 suffix는 사람이 읽기 어려운 핸들을 만든다.
+- `toSlug`는 소문자화 후 `[a-z0-9-]` 외 문자를 `-`로 치환하고 `Trim("-")` → **한글 등 비ASCII 이름은 정규화 결과가 빈 문자열**이 되어 slug가 `-a3f9c1`(앞 `-`만 남은 degenerate) 형태가 된다 (한국어 컨텍스트에서 실질적 URL-safe 구멍).
 - `workspace.Update`는 `name`/`description`만 갱신하고 **slug는 건드리지 않는다** → rename에도 slug 불변(안정 핸들 속성이 우연히 존재).
 - `GetBySlug`는 store 인터페이스에 정의돼 있으나 핸들러/라우트 호출자가 없다 (응답 JSON의 `slug` 필드로만 노출).
 - 티켓 `Create` 핸들러는 insert 전 프로젝트 단위 authz를 하지 않는다 (SpiceDB 관계는 생성 후 async best-effort). → 이름 해석을 추가해도 신규 authz 구멍은 없다.
@@ -90,7 +90,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS workspaces_lower_name_key
   ON workspaces (LOWER(name));
 ```
 
-- **사전 점검(런북/수동):** 적용 전 클러스터 DB에서 `SELECT LOWER(name), COUNT(*) FROM workspaces GROUP BY 1 HAVING COUNT(*) > 1;` 으로 중복 확인. slug 제약상 거의 없을 것이나, 있으면 rename으로 해소 후 적용. 인덱스 생성이 실패하면 마이그레이션이 명확히 중단된다(loud fail).
+- **사전 점검(런북/수동) — 중요:** 현재 slug에 랜덤 suffix가 붙어 **중복 name이 실제로 존재할 수 있다.** 적용 전 클러스터 DB에서 `SELECT LOWER(name), COUNT(*) FROM workspaces GROUP BY 1 HAVING COUNT(*) > 1;` 으로 반드시 중복 확인하고, 있으면 rename으로 해소 후 적용. 인덱스 생성이 실패하면 마이그레이션이 명확히 중단된다(loud fail).
 - `workspace.Update`: name 변경이 이 인덱스를 위반하면 → 서비스/핸들러에서 **409 Conflict**로 변환 (`ErrDuplicateName` sentinel). pg unique violation(SQLSTATE 23505) 감지.
 
 ### 4. slug 핸들 강화
@@ -104,8 +104,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS workspaces_lower_name_key
 
 **(b) 빈/degenerate fallback** — `create()`에서 정규화 slug가 비면 `ws-<짧은id>` 사용 (예: 워크스페이스 UUID 앞 8자). 한글 전용 이름이 안정적·유일 핸들을 갖는다.
 
-**(c) 충돌 suffix** — `create()`에서 후보 slug가 이미 존재하면(`GetBySlug`로 확인) `-2`, `-3`… 을 붙여 빈 자리를 찾는다. slug 유일성을 name 유일성과 독립적으로 보장.
-- 동시성: 드문 경합은 slug UNIQUE 제약이 최종 방어. 충돌 에러 시 재시도(소수 회) 후 fallback 핸들로.
+**(c) 충돌 suffix — 기존 랜덤 hex 대체** — 현재 `toSlug`는 끝에 `randomHex(3)`를 붙여 `my-workspace-a3f9c1` 같은 읽기 어려운 slug를 만든다. 이를 제거하고, `create()`에서 후보 slug가 이미 존재하면(`GetBySlug`로 확인) `-2`, `-3`… 을 붙여 빈 자리를 찾는 **결정적 suffix**로 대체한다 (첫 후보는 suffix 없이 깨끗하게). slug 유일성을 name 유일성과 독립적으로 보장하면서 사람이 읽기 좋게 만든다.
+- 동시성: 드문 경합은 slug UNIQUE 제약이 최종 방어. 생성 시 23505 충돌이면 재시도(최대 3회) 후에도 실패하면 `ws-<id8>` fallback 핸들로.
 
 **(d) 안정 핸들 명시화** — `Update`가 slug를 재생성하지 않음을 코드 주석 + 테스트로 못박는다. rename 후에도 slug 불변.
 
