@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/google/uuid"
 )
@@ -51,7 +50,11 @@ func (svc *Service) create(ctx context.Context, ownerID string, req CreateReq) (
 	if strings.TrimSpace(req.Name) == "" {
 		return nil, errors.New("workspace name is required")
 	}
-	slug := toSlug(req.Name)
+	id := uuid.New()
+	slug, err := svc.uniqueSlug(ctx, normalizeSlug(req.Name), id)
+	if err != nil {
+		return nil, err
+	}
 	wsType := req.Type
 	if wsType == "" {
 		wsType = TypeShared
@@ -59,7 +62,7 @@ func (svc *Service) create(ctx context.Context, ownerID string, req CreateReq) (
 
 	now := time.Now().UTC()
 	ws := &Workspace{
-		ID:          uuid.New(),
+		ID:          id,
 		Name:        req.Name,
 		Slug:        slug,
 		Description: req.Description,
@@ -86,6 +89,28 @@ func (svc *Service) create(ctx context.Context, ownerID string, req CreateReq) (
 	}
 
 	return ws, nil
+}
+
+const maxSlugAttempts = 50
+
+// uniqueSlug picks a free slug: base, then base-2, base-3...; if base is empty
+// (degenerate name) or no free suffix found, falls back to a stable id-based handle.
+func (svc *Service) uniqueSlug(ctx context.Context, base string, id uuid.UUID) (string, error) {
+	if base == "" {
+		return "ws-" + id.String()[:8], nil
+	}
+	candidate := base
+	for i := 2; i <= maxSlugAttempts; i++ {
+		_, err := svc.store.GetBySlug(ctx, candidate)
+		if errors.Is(err, ErrNotFound) {
+			return candidate, nil
+		}
+		if err != nil {
+			return "", err
+		}
+		candidate = fmt.Sprintf("%s-%d", base, i)
+	}
+	return "ws-" + id.String()[:8], nil
 }
 
 func (svc *Service) Get(ctx context.Context, id uuid.UUID) (*Workspace, error) {
@@ -207,19 +232,18 @@ func HasRole(memberRole, required Role) bool {
 	return order[memberRole] >= order[required]
 }
 
-func toSlug(name string) string {
+// normalizeSlug returns a URL-safe base slug for name, or "" if name has no
+// slug-able characters (e.g. all-Hangul). Collision/empty handling is done by create().
+func normalizeSlug(name string) string {
 	s := strings.ToLower(name)
 	s = strings.Map(func(r rune) rune {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
 			return r
 		}
 		return '-'
 	}, s)
 	s = slugRe.ReplaceAllString(s, "-")
-	s = strings.Trim(s, "-")
-	// append random suffix to avoid collision
-	suffix, _ := randomHex(3)
-	return s + "-" + suffix
+	return strings.Trim(s, "-")
 }
 
 func randomHex(n int) (string, error) {

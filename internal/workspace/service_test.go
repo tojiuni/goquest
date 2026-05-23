@@ -448,3 +448,42 @@ func TestService_RemoveMember_AdminCanRemove(t *testing.T) {
 
 // ensure errors sentinel is exported
 var _ = errors.Is(workspace.ErrNotFound, workspace.ErrNotFound)
+
+// ── Slug generation tests ─────────────────────────────────────────
+
+func TestCreate_SlugCleanNoRandomSuffix(t *testing.T) {
+	svc := workspace.NewService(newMockStore())
+	ws, err := svc.Create(context.Background(), "owner-1", workspace.CreateReq{Name: "My Workspace"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if ws.Slug != "my-workspace" {
+		t.Errorf("slug = %q, want %q (no random suffix)", ws.Slug, "my-workspace")
+	}
+}
+
+func TestCreate_SlugCollisionDeterministicSuffix(t *testing.T) {
+	store := newMockStore()
+	svc := workspace.NewService(store)
+	ctx := context.Background()
+	a, _ := svc.Create(ctx, "o1", workspace.CreateReq{Name: "Dup"})
+	b, _ := svc.Create(ctx, "o2", workspace.CreateReq{Name: "Dup"})
+	if a.Slug != "dup" {
+		t.Errorf("first slug = %q, want dup", a.Slug)
+	}
+	if b.Slug != "dup-2" {
+		t.Errorf("second slug = %q, want dup-2", b.Slug)
+	}
+}
+
+func TestCreate_SlugDegenerateFallbackToID(t *testing.T) {
+	svc := workspace.NewService(newMockStore())
+	ws, err := svc.Create(context.Background(), "o1", workspace.CreateReq{Name: "내 워크스페이스"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	want := "ws-" + ws.ID.String()[:8]
+	if ws.Slug != want {
+		t.Errorf("slug = %q, want %q (degenerate name → id fallback)", ws.Slug, want)
+	}
+}
