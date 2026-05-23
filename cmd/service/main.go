@@ -30,6 +30,7 @@ import (
 	"github.com/tojiuni/goquest/internal/integration"
 	"github.com/tojiuni/goquest/internal/migrate"
 	"github.com/tojiuni/goquest/internal/project"
+	"github.com/tojiuni/goquest/internal/resolve"
 	"github.com/tojiuni/goquest/internal/queue"
 	"github.com/tojiuni/goquest/internal/sla"
 	"github.com/tojiuni/goquest/internal/spicedb"
@@ -121,7 +122,8 @@ func main() {
 	tmplSvc := template.NewService(tmplStore)
 	tmplH := handler.NewTemplateHandler(tmplSvc, svc)
 
-	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter)
+	projectResolver := resolve.New(wsStore, pjStore)
+	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter, projectResolver)
 	healthH := handler.NewHealthHandler(pool, rdb)
 	wsH := handler.NewWorkspaceHandler(wsSvc)
 	pjH := handler.NewProjectHandler(pjSvc)

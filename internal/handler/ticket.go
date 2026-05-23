@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -9,18 +10,25 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/tojiuni/goquest/internal/auth"
+	"github.com/tojiuni/goquest/internal/resolve"
 	"github.com/tojiuni/goquest/internal/spicedb"
 	"github.com/tojiuni/goquest/internal/ticket"
 )
 
-type TicketHandler struct {
-	svc     *ticket.Service
-	checker spicedb.PermissionChecker
-	writer  spicedb.RelationshipWriter
+// ProjectResolver resolves a name-based project reference to a project UUID.
+type ProjectResolver interface {
+	ResolveProjectID(ctx context.Context, ref resolve.Ref) (*uuid.UUID, error)
 }
 
-func NewTicketHandler(svc *ticket.Service, checker spicedb.PermissionChecker, writer spicedb.RelationshipWriter) *TicketHandler {
-	return &TicketHandler{svc: svc, checker: checker, writer: writer}
+type TicketHandler struct {
+	svc      *ticket.Service
+	checker  spicedb.PermissionChecker
+	writer   spicedb.RelationshipWriter
+	resolver ProjectResolver
+}
+
+func NewTicketHandler(svc *ticket.Service, checker spicedb.PermissionChecker, writer spicedb.RelationshipWriter, resolver ProjectResolver) *TicketHandler {
+	return &TicketHandler{svc: svc, checker: checker, writer: writer, resolver: resolver}
 }
 
 func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -28,6 +36,22 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
+	}
+
+	if req.ProjectID == nil {
+		ref := resolve.Ref{
+			WorkspaceSlug: req.WorkspaceSlug,
+			WorkspaceName: req.WorkspaceName,
+			ProjectName:   req.ProjectName,
+		}
+		if !ref.Empty() {
+			pid, rerr := h.resolver.ResolveProjectID(r.Context(), ref)
+			if rerr != nil {
+				writeError(w, http.StatusBadRequest, rerr.Error())
+				return
+			}
+			req.ProjectID = pid
+		}
 	}
 
 	requesterID := auth.RequesterID(r)
