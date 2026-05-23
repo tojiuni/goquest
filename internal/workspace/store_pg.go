@@ -30,6 +30,10 @@ func (s *pgStore) Create(ctx context.Context, ws *Workspace) error {
 		ws.CreatedAt, ws.UpdatedAt,
 	)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "workspaces_lower_name_key" {
+			return ErrDuplicateName
+		}
 		return fmt.Errorf("create workspace: %w", err)
 	}
 	return nil

@@ -47,6 +47,10 @@ func (h *WorkspaceHandler) Create(w http.ResponseWriter, r *http.Request) {
 	ownerID := auth.RequesterID(r)
 	ws, err := h.svc.Create(r.Context(), ownerID, req)
 	if err != nil {
+		if errors.Is(err, workspace.ErrDuplicateName) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
