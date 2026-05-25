@@ -16,7 +16,7 @@ func TestIsBenign(t *testing.T) {
 	}{
 		{"duplicate_table", "42P07", true},   // CREATE TABLE / INDEX already exists on re-run
 		{"duplicate_column", "42701", true},  // ADD COLUMN already exists on re-run
-		{"duplicate_object", "42710", true},  // constraint already exists
+		{"duplicate_object", "42710", true},  // migration 001's CREATE TYPE ENUM on re-run (load-bearing; do not drop)
 		{"unique_violation", "23505", false}, // CREATE UNIQUE INDEX over duplicate data — must fail closed
 		{"undefined_table", "42P01", false},  // genuine error
 	}

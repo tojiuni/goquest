@@ -27,7 +27,7 @@ var migrationsFS embed.FS
 var benignCodes = map[string]bool{
 	"42P07": true, // duplicate_table (also covers an already-existing index/sequence)
 	"42701": true, // duplicate_column
-	"42710": true, // duplicate_object (constraint, etc.)
+	"42710": true, // duplicate_object — load-bearing: migration 001's bare `CREATE TYPE ... ENUM` re-raises this on every re-run
 	"42P06": true, // duplicate_schema
 	"42723": true, // duplicate_function
 }
