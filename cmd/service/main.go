@@ -90,7 +90,6 @@ func main() {
 	svc := ticket.NewService(store, pub, nuclexEmitter, xpSvc, webhookDeliverer, magicSvc)
 
 	wsStore := workspace.NewPGStore(pool)
-	wsSvc := workspace.NewService(wsStore)
 
 	pjStore := project.NewPGStore(pool)
 	pjSvc := project.NewService(pjStore)
@@ -113,6 +112,8 @@ func main() {
 			log.Printf("spicedb connected: %s", cfg.SpiceDBEndpoint)
 		}
 	}
+
+	wsSvc := workspace.NewService(wsStore, sdbWriter)
 
 	apiKeyStore := apikey.NewPGStore(pool)
 	apiKeySvc := apikey.NewService(apiKeyStore)

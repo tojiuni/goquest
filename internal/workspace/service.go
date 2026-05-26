@@ -6,21 +6,24 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/tojiuni/goquest/internal/spicedb"
 )
 
 var slugRe = regexp.MustCompile(`[^a-z0-9-]+`)
 
 type Service struct {
-	store Store
+	store  Store
+	writer spicedb.RelationshipWriter
 }
 
-func NewService(store Store) *Service {
-	return &Service{store: store}
+func NewService(store Store, writer spicedb.RelationshipWriter) *Service {
+	return &Service{store: store, writer: writer}
 }
 
 // EnsurePersonalWorkspace creates a personal workspace for userID if none exists yet.
@@ -88,6 +91,10 @@ func (svc *Service) create(ctx context.Context, ownerID string, req CreateReq) (
 		return nil, fmt.Errorf("add owner as member: %w", err)
 	}
 
+	if err := svc.writer.WriteWorkspaceMember(ctx, ws.ID, ownerID, string(RoleOwner)); err != nil {
+		log.Printf("spicedb dual-write workspace owner %s: %v (continuing)", ws.ID, err)
+	}
+
 	return ws, nil
 }
 
@@ -144,14 +151,27 @@ func (svc *Service) SetMemberRole(ctx context.Context, workspaceID uuid.UUID, ta
 	if callerRole != RoleOwner {
 		return errors.New("only workspace owner can change roles")
 	}
-	return svc.store.SetMemberRole(ctx, workspaceID, targetUserID, req.Role)
+	if err := svc.store.SetMemberRole(ctx, workspaceID, targetUserID, req.Role); err != nil {
+		return err
+	}
+	_ = svc.writer.DeleteWorkspaceMember(ctx, workspaceID, targetUserID)
+	if err := svc.writer.WriteWorkspaceMember(ctx, workspaceID, targetUserID, string(req.Role)); err != nil {
+		log.Printf("spicedb dual-write ws role %s/%s: %v (continuing)", workspaceID, targetUserID, err)
+	}
+	return nil
 }
 
 func (svc *Service) RemoveMember(ctx context.Context, workspaceID uuid.UUID, targetUserID string, callerRole Role) error {
 	if callerRole != RoleAdmin && callerRole != RoleOwner {
 		return errors.New("insufficient permission to remove member")
 	}
-	return svc.store.RemoveMember(ctx, workspaceID, targetUserID)
+	if err := svc.store.RemoveMember(ctx, workspaceID, targetUserID); err != nil {
+		return err
+	}
+	if err := svc.writer.DeleteWorkspaceMember(ctx, workspaceID, targetUserID); err != nil {
+		log.Printf("spicedb dual-delete ws member %s/%s: %v (continuing)", workspaceID, targetUserID, err)
+	}
+	return nil
 }
 
 // ── Invitation ─────────────────────────────────────────────────────
@@ -212,6 +232,9 @@ func (svc *Service) AcceptInvitation(ctx context.Context, token, userID string) 
 		JoinedAt:    now,
 	}); err != nil {
 		return nil, err
+	}
+	if err := svc.writer.WriteWorkspaceMember(ctx, inv.WorkspaceID, userID, string(inv.Role)); err != nil {
+		log.Printf("spicedb dual-write ws invite-accept %s/%s: %v (continuing)", inv.WorkspaceID, userID, err)
 	}
 	if err := svc.store.MarkInvitationUsed(ctx, inv.ID); err != nil {
 		return nil, err
