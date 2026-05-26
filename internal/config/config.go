@@ -38,6 +38,7 @@ type Config struct {
 	SpiceDBEndpoint string
 	SpiceDBToken    string
 	SpiceDBInsecure bool
+	SpiceDBEnforce  bool
 
 	// CORS
 	CORSOrigins []string
@@ -74,6 +75,7 @@ func Load() *Config {
 		SpiceDBEndpoint: envOrDefault("SPICEDB_ENDPOINT", "localhost:50051"),
 		SpiceDBToken:    os.Getenv("SPICEDB_TOKEN"),
 		SpiceDBInsecure: parseBool(os.Getenv("SPICEDB_INSECURE"), true),
+		SpiceDBEnforce:  parseBool(os.Getenv("SPICEDB_ENFORCE"), false),
 
 		CORSOrigins: parseStringSlice(os.Getenv("CORS_ALLOWED_ORIGINS"), []string{"https://toji.homes", "https://www.toji.homes"}),
 	}

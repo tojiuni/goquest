@@ -106,9 +106,13 @@ func main() {
 		if sdbErr != nil {
 			log.Printf("warn: spicedb unavailable (%v) — running without fine-grained authz", sdbErr)
 		} else {
-			sdbChecker = sdbClient.Checker()
-			sdbWriter = sdbClient.Writer()
-			log.Printf("spicedb connected: %s", cfg.SpiceDBEndpoint)
+			sdbWriter = sdbClient.Writer() // dual-write always active when connected
+			if cfg.SpiceDBEnforce {
+				sdbChecker = sdbClient.Checker()
+				log.Printf("spicedb connected + ENFORCING: %s", cfg.SpiceDBEndpoint)
+			} else {
+				log.Printf("spicedb connected (shadow, checks permissive): %s", cfg.SpiceDBEndpoint)
+			}
 		}
 	}
 
