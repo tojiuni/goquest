@@ -22,6 +22,7 @@ type RelationshipWriter interface {
 	DeleteProjectMember(ctx context.Context, projectID uuid.UUID, userID string) error
 	WriteProjectWorkspace(ctx context.Context, projectID, workspaceID uuid.UUID) error
 	AddTicketViewer(ctx context.Context, ticketID uuid.UUID, userID string) error
+	ReplaceTicketAssignee(ctx context.Context, ticketID uuid.UUID, assigneeID string) error
 }
 
 // Ensure concrete types satisfy interfaces.

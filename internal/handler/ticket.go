@@ -145,6 +145,29 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Visibility enforcement: drop tickets the caller cannot view. In shadow mode
+	// (NoopChecker) every ticket passes → nothing is dropped and `total` is left
+	// untouched, so this is a true no-op until SPICEDB_ENFORCE is on. Under enforce,
+	// if any ticket is filtered out we adjust `total` to the filtered page count
+	// (cross-page counts are then approximate until LookupResources is adopted —
+	// see enforce-cutover runbook).
+	uid := auth.RequesterID(r)
+	filtered := tickets[:0]
+	for _, t := range tickets {
+		ok, cErr := h.checker.CanViewTicket(r.Context(), t.ID, uid, spicedb.VisibilityMode(t.Visibility))
+		if cErr != nil {
+			writeError(w, http.StatusInternalServerError, "visibility check: "+cErr.Error())
+			return
+		}
+		if ok {
+			filtered = append(filtered, t)
+		}
+	}
+	if len(filtered) != len(tickets) {
+		total = len(filtered) // some tickets dropped by enforcement
+	}
+	tickets = filtered
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tickets": tickets,
 		"total":   total,
@@ -216,6 +239,17 @@ func (h *TicketHandler) Update(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// Keep SpiceDB's assignee relation in sync after an update (best-effort).
+	// Detached bounded context — r.Context() is cancelled when the handler returns.
+	tid, asg := t.ID, t.AssigneeID
+	go func() {
+		bgctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if wErr := h.writer.ReplaceTicketAssignee(bgctx, tid, asg); wErr != nil {
+			log.Printf("spicedb ReplaceTicketAssignee %s: %v (continuing)", tid, wErr)
+		}
+	}()
 
 	writeJSON(w, http.StatusOK, t)
 }

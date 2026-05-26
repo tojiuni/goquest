@@ -65,6 +65,20 @@ func (w *Writer) AddTicketViewer(ctx context.Context, ticketID uuid.UUID, userID
 	return w.write(ctx, touch(TypeTicket, ticketID.String(), "restricted_viewer", TypeUser, userID, ""))
 }
 
+// ReplaceTicketAssignee makes SpiceDB's assignee relation match the current
+// assignee: it removes any existing assignee on the ticket, then writes the new
+// one (skipped when empty/unassigned). Idempotent — safe to call on every update.
+func (w *Writer) ReplaceTicketAssignee(ctx context.Context, ticketID uuid.UUID, assigneeID string) error {
+	// Delete all existing assignee relations (empty subId → matches any subject).
+	if err := w.delete(ctx, TypeTicket, ticketID.String(), "assignee", TypeUser, "", ""); err != nil {
+		return err
+	}
+	if assigneeID == "" {
+		return nil
+	}
+	return w.write(ctx, touch(TypeTicket, ticketID.String(), "assignee", TypeUser, assigneeID, ""))
+}
+
 func (w *Writer) write(ctx context.Context, updates ...*v1.RelationshipUpdate) error {
 	_, err := w.c.inner.WriteRelationships(ctx, &v1.WriteRelationshipsRequest{Updates: updates})
 	if err != nil {
