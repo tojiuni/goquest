@@ -98,6 +98,14 @@ GET /tickets/{id}  (project 가시성 티켓)
 - 백필 후 `zed relationship read goquest/workspace|project|ticket` 표본 수 확인.
 - enforce=true 후: requester/assignee/멤버는 view 가능, 비멤버는 거부.
 
+## enforce 전환 전 반드시 해결 (블로커)
+`SPICEDB_ENFORCE=true` 전에 처리/결정해야 하는 항목 (holistic 리뷰 식별):
+1. **restricted_viewer 미배선** — `AddTicketViewer`가 어디서도 호출되지 않음. enforce 시 restricted 티켓은 requester/assignee에게만 보임(명시적 추가 viewer 기능 없음). 파일럿에서 restricted 제외하거나 write 경로 추가.
+2. **재배정/가시성 변경 드리프트** — ticket `Update`의 assignee/visibility 변경에 dual-write 없음 → 백필 재실행 전까지 SpiceDB 드리프트.
+3. **`List` 엔드포인트 미강제 (놓치기 쉬움)** — `GET /tickets`는 SpiceDB/가시성 필터가 없어 enforce 후에도 restricted 티켓을 list로 누출한다. `Get`만 강제되므로 "restricted 닫혔다"는 착각 주의. enforce 전 list-side 필터링 추가 또는 누출 수용 결정 필요.
+4. (decision) 워크스페이스/프로젝트 삭제 시 tuple 고아, 백필 role 화이트리스트 미검증.
+5. (운영) enforce=true인데 SpiceDB dial 실패 시 조용히 permissive로 강등됨 — enforce cutover 런북에 dial 성공 확인 단계 포함.
+
 ## 미해결 / 후속
 - 역할 미들웨어 SpiceDB 이전(전면 인가) — 후속.
 - dual-write가 best-effort라 DB↔SpiceDB 드리프트 가능 → 주기 reconcile(백필 재실행)로 보정.
