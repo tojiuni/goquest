@@ -174,6 +174,15 @@ type UpdateTicketReq struct {
 	TagIDs         []uuid.UUID     `json:"tag_ids,omitempty"`
 }
 
+// VisibleTicketIDs carries the caller's SpiceDB-visible ticket ids, split by the
+// permission that granted them. Set only under enforce; nil means "no visibility
+// restriction" (shadow). Honors per-ticket visibility: project-visibility tickets
+// must be in Project, restricted ones in Restricted.
+type VisibleTicketIDs struct {
+	Project    []uuid.UUID
+	Restricted []uuid.UUID
+}
+
 type ListTicketsFilter struct {
 	Status       *Status
 	Type         *TicketType
@@ -189,6 +198,7 @@ type ListTicketsFilter struct {
 	TagIDs       []uuid.UUID
 	Limit        int
 	Offset       int
+	VisibleFilter *VisibleTicketIDs
 }
 
 // Attempt records a user's answer submission for answer-mode tickets.
