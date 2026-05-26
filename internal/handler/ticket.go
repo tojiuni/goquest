@@ -146,10 +146,11 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Visibility enforcement: drop tickets the caller cannot view. In shadow mode
-	// (NoopChecker) every ticket passes → no behavior change; under enforce the
-	// real checker filters. Post-filter only the current page; `total` is set to
-	// the filtered count (cross-page pagination counts are approximate until
-	// LookupResources is adopted — see enforce-cutover runbook).
+	// (NoopChecker) every ticket passes → nothing is dropped and `total` is left
+	// untouched, so this is a true no-op until SPICEDB_ENFORCE is on. Under enforce,
+	// if any ticket is filtered out we adjust `total` to the filtered page count
+	// (cross-page counts are then approximate until LookupResources is adopted —
+	// see enforce-cutover runbook).
 	uid := auth.RequesterID(r)
 	filtered := tickets[:0]
 	for _, t := range tickets {
@@ -162,8 +163,10 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 			filtered = append(filtered, t)
 		}
 	}
+	if len(filtered) != len(tickets) {
+		total = len(filtered) // some tickets dropped by enforcement
+	}
 	tickets = filtered
-	total = len(filtered)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tickets": tickets,
