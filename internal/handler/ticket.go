@@ -139,34 +139,37 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 		f.TopLevelOnly = true
 	}
 
+	// Visibility: restrict to SpiceDB-visible tickets. Two LookupResources calls —
+	// project-visibility tickets need can_view_project, restricted need
+	// can_view_restricted; the store combines them visibility-aware for an exact total.
+	// In shadow (NoopChecker) both report unrestricted → no filter (identical to before).
+	uid := auth.RequesterID(r)
+	projIDs, unrP, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_project", uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+		return
+	}
+	restrIDs, unrR, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_restricted", uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+		return
+	}
+	// Invariant: a live Checker returns unrestricted=false for both calls; NoopChecker
+	// returns true for both. So unrP and unrR always agree — there is no mixed state in
+	// which we'd build a filter from one real set and one empty set. Any new
+	// PermissionChecker must preserve this (return unrestricted consistently).
+	if !unrP || !unrR {
+		f.VisibleFilter = &ticket.VisibleTicketIDs{
+			Project:    parseTicketUUIDs(projIDs),
+			Restricted: parseTicketUUIDs(restrIDs),
+		}
+	}
+
 	tickets, total, err := h.svc.List(r.Context(), f)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	// Visibility enforcement: drop tickets the caller cannot view. In shadow mode
-	// (NoopChecker) every ticket passes → nothing is dropped and `total` is left
-	// untouched, so this is a true no-op until SPICEDB_ENFORCE is on. Under enforce,
-	// if any ticket is filtered out we adjust `total` to the filtered page count
-	// (cross-page counts are then approximate until LookupResources is adopted —
-	// see enforce-cutover runbook).
-	uid := auth.RequesterID(r)
-	filtered := tickets[:0]
-	for _, t := range tickets {
-		ok, cErr := h.checker.CanViewTicket(r.Context(), t.ID, uid, spicedb.VisibilityMode(t.Visibility))
-		if cErr != nil {
-			writeError(w, http.StatusInternalServerError, "visibility check: "+cErr.Error())
-			return
-		}
-		if ok {
-			filtered = append(filtered, t)
-		}
-	}
-	if len(filtered) != len(tickets) {
-		total = len(filtered) // some tickets dropped by enforcement
-	}
-	tickets = filtered
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tickets": tickets,
@@ -370,6 +373,18 @@ func (h *TicketHandler) ListAttempts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"attempts": attempts})
+}
+
+// parseTicketUUIDs parses LookupResources ids into uuids, skipping any that don't
+// parse. Always returns a non-nil slice so it is safe as a SQL ANY($) argument.
+func parseTicketUUIDs(ids []string) []uuid.UUID {
+	out := make([]uuid.UUID, 0, len(ids))
+	for _, s := range ids {
+		if u, err := uuid.Parse(s); err == nil {
+			out = append(out, u)
+		}
+	}
+	return out
 }
 
 func parseUUID(s string) (uuid.UUID, error) {
