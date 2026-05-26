@@ -92,7 +92,6 @@ func main() {
 	wsStore := workspace.NewPGStore(pool)
 
 	pjStore := project.NewPGStore(pool)
-	pjSvc := project.NewService(pjStore)
 
 	tagStore := tag.NewPGStore(pool)
 	tagSvc := tag.NewService(tagStore)
@@ -114,6 +113,7 @@ func main() {
 	}
 
 	wsSvc := workspace.NewService(wsStore, sdbWriter)
+	pjSvc := project.NewService(pjStore, sdbWriter)
 
 	apiKeyStore := apikey.NewPGStore(pool)
 	apiKeySvc := apikey.NewService(apiKeyStore)
