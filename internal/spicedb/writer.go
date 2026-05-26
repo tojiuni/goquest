@@ -74,6 +74,9 @@ func (w *Writer) write(ctx context.Context, updates ...*v1.RelationshipUpdate) e
 }
 
 func (w *Writer) delete(ctx context.Context, resType, resID, relation, subType, subID, subRelation string) error {
+	if subType == TypeUser {
+		subID = subjectID(subID)
+	}
 	filter := &v1.RelationshipFilter{
 		ResourceType:       resType,
 		OptionalResourceId: resID,
@@ -91,6 +94,9 @@ func (w *Writer) delete(ctx context.Context, resType, resID, relation, subType, 
 }
 
 func touch(resType, resID, relation, subType, subID, subRelation string) *v1.RelationshipUpdate {
+	if subType == TypeUser {
+		subID = subjectID(subID)
+	}
 	sub := &v1.SubjectReference{Object: &v1.ObjectReference{ObjectType: subType, ObjectId: subID}}
 	if subRelation != "" {
 		sub.OptionalRelation = subRelation
