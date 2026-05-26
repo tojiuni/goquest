@@ -30,7 +30,10 @@ func (m *mockWriter) DeleteWorkspaceMember(_ context.Context, wid uuid.UUID, uid
 func (m *mockWriter) WriteProjectMember(_ context.Context, _ uuid.UUID, _, _ string) error { return nil }
 func (m *mockWriter) DeleteProjectMember(_ context.Context, _ uuid.UUID, _ string) error    { return nil }
 func (m *mockWriter) WriteProjectWorkspace(_ context.Context, _, _ uuid.UUID) error         { return nil }
-func (m *mockWriter) AddTicketViewer(_ context.Context, _ uuid.UUID, _ string) error        { return nil }
+func (m *mockWriter) AddTicketViewer(_ context.Context, _ uuid.UUID, _ string) error { return nil }
+func (m *mockWriter) ReplaceTicketAssignee(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
 
 // ── mock store ────────────────────────────────────────────────────
 

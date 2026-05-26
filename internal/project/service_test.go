@@ -38,6 +38,9 @@ func (m *mockWriter) WriteProjectWorkspace(_ context.Context, pid, wid uuid.UUID
 	return nil
 }
 func (m *mockWriter) AddTicketViewer(_ context.Context, _ uuid.UUID, _ string) error { return nil }
+func (m *mockWriter) ReplaceTicketAssignee(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
 
 // ── mock store ────────────────────────────────────────────────────
 

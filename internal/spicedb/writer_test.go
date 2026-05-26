@@ -24,3 +24,12 @@ func TestTouchUsesPrefixedTypes(t *testing.T) {
 		t.Errorf("subject type = %s, want user", got)
 	}
 }
+
+func TestReplaceTicketAssignee_Compiles(t *testing.T) {
+	var _ RelationshipWriter = (*NoopWriter)(nil)
+	var _ RelationshipWriter = (*Writer)(nil)
+	u := touch(TypeTicket, "tid", "assignee", TypeUser, "lyckabc@toji.homes", "")
+	if u.Relationship.Subject.Object.ObjectId == "lyckabc@toji.homes" {
+		t.Error("assignee user subject must be encoded")
+	}
+}
