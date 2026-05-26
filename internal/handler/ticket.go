@@ -315,20 +315,31 @@ func (h *TicketHandler) ListSubtasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Visibility: drop subtasks the caller cannot view (shadow NoopChecker → no-op).
+	// Visibility: keep only subtasks the caller can view. Two LookupResources calls
+	// (project + restricted), then membership-test each child by its own visibility.
+	// shadow (NoopChecker) → unrestricted → keep all (no-op).
 	uid := auth.RequesterID(r)
-	visible := subtasks[:0]
-	for _, st := range subtasks {
-		ok, cErr := h.checker.CanViewTicket(r.Context(), st.ID, uid, spicedb.VisibilityMode(st.Visibility))
-		if cErr != nil {
-			writeError(w, http.StatusInternalServerError, "visibility check: "+cErr.Error())
-			return
-		}
-		if ok {
-			visible = append(visible, st)
-		}
+	projIDs, unrP, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_project", uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+		return
 	}
-	subtasks = visible
+	restrIDs, unrR, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_restricted", uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+		return
+	}
+	if !unrP || !unrR {
+		projSet := uuidSet(parseTicketUUIDs(projIDs))
+		restrSet := uuidSet(parseTicketUUIDs(restrIDs))
+		visible := subtasks[:0]
+		for _, st := range subtasks {
+			if visibleSubtask(st.ID, st.Visibility, projSet, restrSet) {
+				visible = append(visible, st)
+			}
+		}
+		subtasks = visible
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"subtasks": subtasks})
 }
@@ -385,6 +396,25 @@ func parseTicketUUIDs(ids []string) []uuid.UUID {
 		}
 	}
 	return out
+}
+
+// visibleSubtask reports whether a subtask is visible given the caller's two
+// LookupResources sets, honoring the subtask's own visibility mode. Any non-restricted
+// visibility is treated as project-scoped; only two Visibility values exist today, and
+// if a third is added this and the SQL predicate in store_pg.go must change together.
+func visibleSubtask(id uuid.UUID, vis ticket.Visibility, projSet, restrSet map[uuid.UUID]bool) bool {
+	if vis == ticket.VisibilityRestricted {
+		return restrSet[id]
+	}
+	return projSet[id]
+}
+
+func uuidSet(ids []uuid.UUID) map[uuid.UUID]bool {
+	m := make(map[uuid.UUID]bool, len(ids))
+	for _, id := range ids {
+		m[id] = true
+	}
+	return m
 }
 
 func parseUUID(s string) (uuid.UUID, error) {
