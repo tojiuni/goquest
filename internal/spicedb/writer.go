@@ -16,24 +16,24 @@ type Writer struct {
 // WriteTicket creates the ticket→project relationship and requester/assignee subjects.
 func (w *Writer) WriteTicket(ctx context.Context, ticketID, projectID uuid.UUID, requesterID, assigneeID string) error {
 	rels := []*v1.RelationshipUpdate{
-		touch("ticket", ticketID.String(), "project", "project", projectID.String(), ""),
-		touch("ticket", ticketID.String(), "requester", "user", requesterID, ""),
+		touch(TypeTicket, ticketID.String(), "project", TypeProject, projectID.String(), ""),
+		touch(TypeTicket, ticketID.String(), "requester", TypeUser, requesterID, ""),
 	}
 	if assigneeID != "" && assigneeID != requesterID {
-		rels = append(rels, touch("ticket", ticketID.String(), "assignee", "user", assigneeID, ""))
+		rels = append(rels, touch(TypeTicket, ticketID.String(), "assignee", TypeUser, assigneeID, ""))
 	}
 	return w.write(ctx, rels...)
 }
 
 // WriteWorkspaceMember grants a role relation on the workspace for a user.
 func (w *Writer) WriteWorkspaceMember(ctx context.Context, workspaceID uuid.UUID, userID, role string) error {
-	return w.write(ctx, touch("workspace", workspaceID.String(), role, "user", userID, ""))
+	return w.write(ctx, touch(TypeWorkspace, workspaceID.String(), role, TypeUser, userID, ""))
 }
 
 // DeleteWorkspaceMember removes all direct role relations for a user in a workspace.
 func (w *Writer) DeleteWorkspaceMember(ctx context.Context, workspaceID uuid.UUID, userID string) error {
 	for _, role := range []string{"owner", "admin", "member", "viewer"} {
-		if err := w.delete(ctx, "workspace", workspaceID.String(), role, "user", userID, ""); err != nil {
+		if err := w.delete(ctx, TypeWorkspace, workspaceID.String(), role, TypeUser, userID, ""); err != nil {
 			return err
 		}
 	}
@@ -42,17 +42,27 @@ func (w *Writer) DeleteWorkspaceMember(ctx context.Context, workspaceID uuid.UUI
 
 // WriteProjectMember grants a role relation on the project for a user.
 func (w *Writer) WriteProjectMember(ctx context.Context, projectID uuid.UUID, userID, role string) error {
-	return w.write(ctx, touch("project", projectID.String(), role, "user", userID, ""))
+	return w.write(ctx, touch(TypeProject, projectID.String(), role, TypeUser, userID, ""))
+}
+
+// DeleteProjectMember removes all direct role relations for a user in a project.
+func (w *Writer) DeleteProjectMember(ctx context.Context, projectID uuid.UUID, userID string) error {
+	for _, role := range []string{"admin", "member", "viewer"} {
+		if err := w.delete(ctx, TypeProject, projectID.String(), role, TypeUser, userID, ""); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // WriteProjectWorkspace links a project to its parent workspace.
 func (w *Writer) WriteProjectWorkspace(ctx context.Context, projectID, workspaceID uuid.UUID) error {
-	return w.write(ctx, touch("project", projectID.String(), "workspace", "workspace", workspaceID.String(), ""))
+	return w.write(ctx, touch(TypeProject, projectID.String(), "workspace", TypeWorkspace, workspaceID.String(), ""))
 }
 
 // AddTicketViewer grants an explicit viewer on a restricted ticket.
 func (w *Writer) AddTicketViewer(ctx context.Context, ticketID uuid.UUID, userID string) error {
-	return w.write(ctx, touch("ticket", ticketID.String(), "restricted_viewer", "user", userID, ""))
+	return w.write(ctx, touch(TypeTicket, ticketID.String(), "restricted_viewer", TypeUser, userID, ""))
 }
 
 func (w *Writer) write(ctx context.Context, updates ...*v1.RelationshipUpdate) error {

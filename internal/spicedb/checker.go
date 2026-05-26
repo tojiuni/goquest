@@ -28,17 +28,17 @@ func (ch *Checker) CanViewTicket(ctx context.Context, ticketID uuid.UUID, userID
 	if visibility == VisibilityRestricted {
 		permission = "can_view_restricted"
 	}
-	return ch.check(ctx, "ticket", ticketID.String(), permission, "user", userID)
+	return ch.check(ctx, TypeTicket, ticketID.String(), permission, TypeUser, userID)
 }
 
 // CanManageTicket returns true if userID may update/delete the ticket.
 func (ch *Checker) CanManageTicket(ctx context.Context, ticketID uuid.UUID, userID string) (bool, error) {
-	return ch.check(ctx, "ticket", ticketID.String(), "can_manage", "user", userID)
+	return ch.check(ctx, TypeTicket, ticketID.String(), "can_manage", TypeUser, userID)
 }
 
 // CanViewProject returns true if userID may view the project.
 func (ch *Checker) CanViewProject(ctx context.Context, projectID uuid.UUID, userID string) (bool, error) {
-	return ch.check(ctx, "project", projectID.String(), "can_view", "user", userID)
+	return ch.check(ctx, TypeProject, projectID.String(), "can_view", TypeUser, userID)
 }
 
 func (ch *Checker) check(ctx context.Context, resType, resID, permission, subType, subID string) (bool, error) {

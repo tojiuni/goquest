@@ -32,5 +32,8 @@ func (n *NoopWriter) DeleteWorkspaceMember(_ context.Context, _ uuid.UUID, _ str
 func (n *NoopWriter) WriteProjectMember(_ context.Context, _ uuid.UUID, _, _ string) error {
 	return nil
 }
+func (n *NoopWriter) DeleteProjectMember(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
 func (n *NoopWriter) WriteProjectWorkspace(_ context.Context, _, _ uuid.UUID) error { return nil }
 func (n *NoopWriter) AddTicketViewer(_ context.Context, _ uuid.UUID, _ string) error { return nil }
