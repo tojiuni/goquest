@@ -11,6 +11,14 @@ type PermissionChecker interface {
 	CanViewTicket(ctx context.Context, ticketID uuid.UUID, userID string, visibility VisibilityMode) (bool, error)
 	CanManageTicket(ctx context.Context, ticketID uuid.UUID, userID string) (bool, error)
 	CanViewProject(ctx context.Context, projectID uuid.UUID, userID string) (bool, error)
+	// Check is the generic single-resource primitive: does userID hold `permission`
+	// on objType:objID? (user subject is encoded centrally.)
+	Check(ctx context.Context, objType, objID, permission, userID string) (bool, error)
+	// VisibleResourceIDs returns the objType ids on which userID holds `permission`,
+	// via LookupResources. unrestricted=true signals "no restriction" (NoopChecker /
+	// shadow) so callers skip filtering. When unrestricted=true, ids is undefined
+	// (may be nil) and must not be used.
+	VisibleResourceIDs(ctx context.Context, objType, permission, userID string) (ids []string, unrestricted bool, err error)
 }
 
 // RelationshipWriter writes and deletes SpiceDB relationships.

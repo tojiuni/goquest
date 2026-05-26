@@ -2,7 +2,9 @@ package spicedb
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
@@ -39,6 +41,39 @@ func (ch *Checker) CanManageTicket(ctx context.Context, ticketID uuid.UUID, user
 // CanViewProject returns true if userID may view the project.
 func (ch *Checker) CanViewProject(ctx context.Context, projectID uuid.UUID, userID string) (bool, error) {
 	return ch.check(ctx, TypeProject, projectID.String(), "can_view", TypeUser, userID)
+}
+
+// Check returns true if userID holds permission on objType:objID. It is the generic
+// single-resource primitive; the user subject is encoded via subjectID() by check().
+func (ch *Checker) Check(ctx context.Context, objType, objID, permission, userID string) (bool, error) {
+	return ch.check(ctx, objType, objID, permission, TypeUser, userID)
+}
+
+// VisibleResourceIDs streams LookupResources and collects the ids on which userID
+// holds permission. A live Checker is always restricted (unrestricted=false).
+func (ch *Checker) VisibleResourceIDs(ctx context.Context, objType, permission, userID string) ([]string, bool, error) {
+	stream, err := ch.c.inner.LookupResources(ctx, &v1.LookupResourcesRequest{
+		ResourceObjectType: objType,
+		Permission:         permission,
+		Subject: &v1.SubjectReference{
+			Object: &v1.ObjectReference{ObjectType: TypeUser, ObjectId: subjectID(userID)},
+		},
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("spicedb lookup %s %s: %w", objType, permission, err)
+	}
+	var ids []string
+	for {
+		resp, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, false, fmt.Errorf("spicedb lookup recv %s %s: %w", objType, permission, err)
+		}
+		ids = append(ids, resp.ResourceObjectId)
+	}
+	return ids, false, nil
 }
 
 func (ch *Checker) check(ctx context.Context, resType, resID, permission, subType, subID string) (bool, error) {

@@ -18,6 +18,12 @@ func (n *NoopChecker) CanManageTicket(_ context.Context, _ uuid.UUID, _ string) 
 func (n *NoopChecker) CanViewProject(_ context.Context, _ uuid.UUID, _ string) (bool, error) {
 	return true, nil
 }
+func (n *NoopChecker) Check(_ context.Context, _, _, _, _ string) (bool, error) {
+	return true, nil
+}
+func (n *NoopChecker) VisibleResourceIDs(_ context.Context, _, _, _ string) ([]string, bool, error) {
+	return nil, true, nil
+}
 
 // NoopWriter silently discards all writes. Used when SpiceDB is disabled.
 type NoopWriter struct{}
