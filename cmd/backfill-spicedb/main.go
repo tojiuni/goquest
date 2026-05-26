@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -18,9 +19,13 @@ func main() {
 	ctx := context.Background()
 	cfg := config.Load()
 
-	if cfg.SpiceDBEndpoint == "" {
+	// config.Load() defaults SpiceDBEndpoint to localhost:50051, so guard on the
+	// raw env var: backfill must target an explicitly-configured SpiceDB and never
+	// silently fall back to localhost in a pod.
+	if os.Getenv("SPICEDB_ENDPOINT") == "" {
 		log.Fatal("SPICEDB_ENDPOINT is not set; cannot run backfill")
 	}
+	log.Printf("backfill connecting to SpiceDB at %s", cfg.SpiceDBEndpoint)
 
 	// ── DB pool ──────────────────────────────────────────────────────────
 	pool, err := pgxpool.New(ctx, cfg.PostgresDSN())
