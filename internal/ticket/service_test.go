@@ -164,6 +164,56 @@ func TestService_Create_RequireTitle(t *testing.T) {
 	}
 }
 
+func TestService_Create_SubtaskInheritsParentProject(t *testing.T) {
+	proj := uuid.New()
+	parentID := uuid.New()
+	store := &mockStore{getTicket: &ticket.Ticket{ID: parentID, ProjectID: &proj}}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	// subtask with a parent but no project → should inherit parent's project.
+	created, err := svc.Create(context.Background(),
+		ticket.CreateTicketReq{Title: "sub", ParentID: &parentID}, "user1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if created.ProjectID == nil || *created.ProjectID != proj {
+		t.Errorf("subtask did not inherit parent project: got %v, want %s", created.ProjectID, proj)
+	}
+}
+
+func TestService_Create_ExplicitProjectNotOverridden(t *testing.T) {
+	parentProj := uuid.New()
+	ownProj := uuid.New()
+	parentID := uuid.New()
+	store := &mockStore{getTicket: &ticket.Ticket{ID: parentID, ProjectID: &parentProj}}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	// explicit project on the subtask must win over the parent's.
+	created, err := svc.Create(context.Background(),
+		ticket.CreateTicketReq{Title: "sub", ParentID: &parentID, ProjectID: &ownProj}, "user1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if created.ProjectID == nil || *created.ProjectID != ownProj {
+		t.Errorf("explicit project overridden: got %v, want %s", created.ProjectID, ownProj)
+	}
+}
+
+func TestService_Create_TopLevelNoProjectStaysNil(t *testing.T) {
+	store := &mockStore{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	// no parent → no inheritance, project stays nil (Get is never consulted).
+	created, err := svc.Create(context.Background(),
+		ticket.CreateTicketReq{Title: "top"}, "user1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if created.ProjectID != nil {
+		t.Errorf("top-level ticket got a project: %v", created.ProjectID)
+	}
+}
+
 func TestService_Create_DefaultsApplied(t *testing.T) {
 	store := &mockStore{}
 	pub := &mockPublisher{}

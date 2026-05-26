@@ -70,7 +70,7 @@ stub checker가 "world"(사용자별 열람 가능 ticket 집합, 권한별)로 
 ## Group D — 알려진 갭(문서화된 기대 동작)
 | ID | 상황 | enforce 동작 | 비고 |
 |----|------|-------------|------|
-| D1 | `ProjectID` 없는 subtask | ListSubtasks에서 **전원에게 제외** | SpiceDB tuple 없음 → `can_view_*` 미포함. 백필/생성 시 부모 project tuple 필요. cutover 런북 추적 항목. |
+| D1 | `ProjectID` 없는 subtask | ListSubtasks에서 **전원에게 제외** | SpiceDB tuple 없음 → `can_view_*` 미포함. ✅ 해소: 생성 시 부모 project 상속(`Service.Create`) + migration `013`이 기존 orphan 보정. 본 시나리오는 보정 전(legacy/멀티레벨) orphan에 대한 fail-closed 동작을 고정한다. |
 
 ---
 

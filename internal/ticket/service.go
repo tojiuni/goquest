@@ -89,6 +89,16 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 		req.Visibility = VisibilityProject
 	}
 
+	// Subtasks inherit the parent's project when none is given, so they get a
+	// SpiceDB ticket→project tuple and are reachable by project-visibility checks
+	// (fine-grained authz). The subtask keeps its own Visibility. Best-effort: if
+	// the parent can't be read we leave project_id nil (no behavior change).
+	if req.ParentID != nil && req.ProjectID == nil {
+		if parent, err := s.store.Get(ctx, *req.ParentID); err == nil && parent != nil {
+			req.ProjectID = parent.ProjectID
+		}
+	}
+
 	now := time.Now().UTC()
 	t := &Ticket{
 		ID:             uuid.New(),
