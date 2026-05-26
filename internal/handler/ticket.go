@@ -333,6 +333,21 @@ func (h *TicketHandler) ListSubtasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Visibility: drop subtasks the caller cannot view (shadow NoopChecker → no-op).
+	uid := auth.RequesterID(r)
+	visible := subtasks[:0]
+	for _, st := range subtasks {
+		ok, cErr := h.checker.CanViewTicket(r.Context(), st.ID, uid, spicedb.VisibilityMode(st.Visibility))
+		if cErr != nil {
+			writeError(w, http.StatusInternalServerError, "visibility check: "+cErr.Error())
+			return
+		}
+		if ok {
+			visible = append(visible, st)
+		}
+	}
+	subtasks = visible
+
 	writeJSON(w, http.StatusOK, map[string]any{"subtasks": subtasks})
 }
 
@@ -367,6 +382,26 @@ func (h *TicketHandler) ListAttempts(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid ticket id")
+		return
+	}
+
+	t, err := h.svc.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, ticket.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "ticket not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	uid := auth.RequesterID(r)
+	ok, cErr := h.checker.CanViewTicket(r.Context(), id, uid, spicedb.VisibilityMode(t.Visibility))
+	if cErr != nil {
+		writeError(w, http.StatusInternalServerError, "visibility check: "+cErr.Error())
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusForbidden, "not permitted to view this ticket")
 		return
 	}
 
