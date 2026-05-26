@@ -3,18 +3,21 @@ package project
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/tojiuni/goquest/internal/spicedb"
 )
 
 type Service struct {
-	store Store
+	store  Store
+	writer spicedb.RelationshipWriter
 }
 
-func NewService(store Store) *Service {
-	return &Service{store: store}
+func NewService(store Store, writer spicedb.RelationshipWriter) *Service {
+	return &Service{store: store, writer: writer}
 }
 
 func (svc *Service) Create(ctx context.Context, workspaceID uuid.UUID, creatorID string, req CreateReq) (*Project, error) {
@@ -49,6 +52,13 @@ func (svc *Service) Create(ctx context.Context, workspaceID uuid.UUID, creatorID
 		return nil, err
 	}
 
+	if err := svc.writer.WriteProjectWorkspace(ctx, p.ID, workspaceID); err != nil {
+		log.Printf("spicedb dual-write project->workspace %s: %v (continuing)", p.ID, err)
+	}
+	if err := svc.writer.WriteProjectMember(ctx, p.ID, creatorID, string(RoleAdmin)); err != nil {
+		log.Printf("spicedb dual-write project admin %s: %v (continuing)", p.ID, err)
+	}
+
 	return p, nil
 }
 
@@ -77,20 +87,41 @@ func (svc *Service) ListMembers(ctx context.Context, projectID uuid.UUID) ([]*Me
 }
 
 func (svc *Service) AddMember(ctx context.Context, projectID uuid.UUID, req SetRoleReq, targetUserID string) error {
-	return svc.store.AddMember(ctx, &Member{
+	if err := svc.store.AddMember(ctx, &Member{
 		ProjectID:  projectID,
 		UserID:     targetUserID,
 		Role:       req.Role,
 		AssignedAt: time.Now().UTC(),
-	})
+	}); err != nil {
+		return err
+	}
+	if err := svc.writer.WriteProjectMember(ctx, projectID, targetUserID, string(req.Role)); err != nil {
+		log.Printf("spicedb dual-write project member %s/%s: %v (continuing)", projectID, targetUserID, err)
+	}
+	return nil
 }
 
 func (svc *Service) SetMemberRole(ctx context.Context, projectID uuid.UUID, targetUserID string, req SetRoleReq) error {
-	return svc.store.SetMemberRole(ctx, projectID, targetUserID, req.Role)
+	if err := svc.store.SetMemberRole(ctx, projectID, targetUserID, req.Role); err != nil {
+		return err
+	}
+	if err := svc.writer.DeleteProjectMember(ctx, projectID, targetUserID); err != nil {
+		log.Printf("spicedb dual-delete prior project role %s/%s: %v (continuing)", projectID, targetUserID, err)
+	}
+	if err := svc.writer.WriteProjectMember(ctx, projectID, targetUserID, string(req.Role)); err != nil {
+		log.Printf("spicedb dual-write project role %s/%s: %v (continuing)", projectID, targetUserID, err)
+	}
+	return nil
 }
 
 func (svc *Service) RemoveMember(ctx context.Context, projectID uuid.UUID, targetUserID string) error {
-	return svc.store.RemoveMember(ctx, projectID, targetUserID)
+	if err := svc.store.RemoveMember(ctx, projectID, targetUserID); err != nil {
+		return err
+	}
+	if err := svc.writer.DeleteProjectMember(ctx, projectID, targetUserID); err != nil {
+		log.Printf("spicedb dual-delete project member %s/%s: %v (continuing)", projectID, targetUserID, err)
+	}
+	return nil
 }
 
 // HasRole checks if callerRole satisfies the required minimum role.

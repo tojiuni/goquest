@@ -90,10 +90,8 @@ func main() {
 	svc := ticket.NewService(store, pub, nuclexEmitter, xpSvc, webhookDeliverer, magicSvc)
 
 	wsStore := workspace.NewPGStore(pool)
-	wsSvc := workspace.NewService(wsStore)
 
 	pjStore := project.NewPGStore(pool)
-	pjSvc := project.NewService(pjStore)
 
 	tagStore := tag.NewPGStore(pool)
 	tagSvc := tag.NewService(tagStore)
@@ -108,11 +106,18 @@ func main() {
 		if sdbErr != nil {
 			log.Printf("warn: spicedb unavailable (%v) — running without fine-grained authz", sdbErr)
 		} else {
-			sdbChecker = sdbClient.Checker()
-			sdbWriter = sdbClient.Writer()
-			log.Printf("spicedb connected: %s", cfg.SpiceDBEndpoint)
+			sdbWriter = sdbClient.Writer() // dual-write always active when connected
+			if cfg.SpiceDBEnforce {
+				sdbChecker = sdbClient.Checker()
+				log.Printf("spicedb connected + ENFORCING: %s", cfg.SpiceDBEndpoint)
+			} else {
+				log.Printf("spicedb connected (shadow, checks permissive): %s", cfg.SpiceDBEndpoint)
+			}
 		}
 	}
+
+	wsSvc := workspace.NewService(wsStore, sdbWriter)
+	pjSvc := project.NewService(pjStore, sdbWriter)
 
 	apiKeyStore := apikey.NewPGStore(pool)
 	apiKeySvc := apikey.NewService(apiKeyStore)

@@ -11,6 +11,27 @@ import (
 	"github.com/tojiuni/goquest/internal/workspace"
 )
 
+// ── mock SpiceDB writer ───────────────────────────────────────────
+
+type mockWriter struct {
+	wsWrites  []string // "wsID|userID|role"
+	wsDeletes []string // "wsID|userID"
+}
+
+func (m *mockWriter) WriteTicket(_ context.Context, _, _ uuid.UUID, _, _ string) error { return nil }
+func (m *mockWriter) WriteWorkspaceMember(_ context.Context, wid uuid.UUID, uid, role string) error {
+	m.wsWrites = append(m.wsWrites, wid.String()+"|"+uid+"|"+role)
+	return nil
+}
+func (m *mockWriter) DeleteWorkspaceMember(_ context.Context, wid uuid.UUID, uid string) error {
+	m.wsDeletes = append(m.wsDeletes, wid.String()+"|"+uid)
+	return nil
+}
+func (m *mockWriter) WriteProjectMember(_ context.Context, _ uuid.UUID, _, _ string) error { return nil }
+func (m *mockWriter) DeleteProjectMember(_ context.Context, _ uuid.UUID, _ string) error    { return nil }
+func (m *mockWriter) WriteProjectWorkspace(_ context.Context, _, _ uuid.UUID) error         { return nil }
+func (m *mockWriter) AddTicketViewer(_ context.Context, _ uuid.UUID, _ string) error        { return nil }
+
 // ── mock store ────────────────────────────────────────────────────
 
 type mockStore struct {
@@ -210,7 +231,7 @@ func TestHasRole_Ordering(t *testing.T) {
 
 func TestService_Create_Success(t *testing.T) {
 	store := newMockStore()
-	svc := workspace.NewService(store)
+	svc := workspace.NewService(store, &mockWriter{})
 
 	ws, err := svc.Create(context.Background(), "user-1", workspace.CreateReq{
 		Name: "My Team",
@@ -236,7 +257,7 @@ func TestService_Create_Success(t *testing.T) {
 }
 
 func TestService_Create_EmptyName(t *testing.T) {
-	svc := workspace.NewService(newMockStore())
+	svc := workspace.NewService(newMockStore(), &mockWriter{})
 	_, err := svc.Create(context.Background(), "user-1", workspace.CreateReq{Name: "  "})
 	if err == nil {
 		t.Fatal("expected error for empty name")
@@ -245,7 +266,7 @@ func TestService_Create_EmptyName(t *testing.T) {
 
 func TestService_Create_PersonalType(t *testing.T) {
 	store := newMockStore()
-	svc := workspace.NewService(store)
+	svc := workspace.NewService(store, &mockWriter{})
 
 	ws, err := svc.Create(context.Background(), "user-1", workspace.CreateReq{
 		Name: "Personal",
@@ -263,7 +284,7 @@ func TestService_Create_PersonalType(t *testing.T) {
 
 func TestService_EnsurePersonal_CreatesNew(t *testing.T) {
 	store := newMockStore()
-	svc := workspace.NewService(store)
+	svc := workspace.NewService(store, &mockWriter{})
 
 	ws, err := svc.EnsurePersonalWorkspace(context.Background(), "user-1", "Alice")
 	if err != nil {
@@ -279,7 +300,7 @@ func TestService_EnsurePersonal_CreatesNew(t *testing.T) {
 
 func TestService_EnsurePersonal_ReturnsExisting(t *testing.T) {
 	store := newMockStore()
-	svc := workspace.NewService(store)
+	svc := workspace.NewService(store, &mockWriter{})
 
 	// pre-seed a personal workspace in listForUser
 	existing := &workspace.Workspace{
@@ -328,7 +349,7 @@ func newInvitation(wid uuid.UUID, role workspace.Role, expired, used bool) *work
 
 func TestService_AcceptInvitation_Success(t *testing.T) {
 	store := newMockStore()
-	svc := workspace.NewService(store)
+	svc := workspace.NewService(store, &mockWriter{})
 
 	wsID := uuid.New()
 	ws := &workspace.Workspace{ID: wsID, Name: "Team", Type: workspace.TypeShared}
@@ -359,7 +380,7 @@ func TestService_AcceptInvitation_Success(t *testing.T) {
 
 func TestService_AcceptInvitation_Expired(t *testing.T) {
 	store := newMockStore()
-	svc := workspace.NewService(store)
+	svc := workspace.NewService(store, &mockWriter{})
 
 	wsID := uuid.New()
 	store.workspaces[wsID] = &workspace.Workspace{ID: wsID}
@@ -373,7 +394,7 @@ func TestService_AcceptInvitation_Expired(t *testing.T) {
 
 func TestService_AcceptInvitation_AlreadyUsed(t *testing.T) {
 	store := newMockStore()
-	svc := workspace.NewService(store)
+	svc := workspace.NewService(store, &mockWriter{})
 
 	wsID := uuid.New()
 	store.workspaces[wsID] = &workspace.Workspace{ID: wsID}
@@ -388,7 +409,7 @@ func TestService_AcceptInvitation_AlreadyUsed(t *testing.T) {
 // ── Service.SetMemberRole tests ───────────────────────────────────
 
 func TestService_SetMemberRole_OnlyOwner(t *testing.T) {
-	svc := workspace.NewService(newMockStore())
+	svc := workspace.NewService(newMockStore(), &mockWriter{})
 	wid := uuid.New()
 
 	err := svc.SetMemberRole(context.Background(), wid, "target", workspace.SetRoleReq{Role: workspace.RoleMember}, workspace.RoleAdmin)
@@ -399,7 +420,7 @@ func TestService_SetMemberRole_OnlyOwner(t *testing.T) {
 
 func TestService_SetMemberRole_OwnerCanChange(t *testing.T) {
 	store := newMockStore()
-	svc := workspace.NewService(store)
+	svc := workspace.NewService(store, &mockWriter{})
 	wid := uuid.New()
 
 	store.members[memberKey(wid, "target")] = &workspace.Member{
@@ -419,7 +440,7 @@ func TestService_SetMemberRole_OwnerCanChange(t *testing.T) {
 // ── Service.RemoveMember tests ────────────────────────────────────
 
 func TestService_RemoveMember_RequiresAdmin(t *testing.T) {
-	svc := workspace.NewService(newMockStore())
+	svc := workspace.NewService(newMockStore(), &mockWriter{})
 	wid := uuid.New()
 
 	err := svc.RemoveMember(context.Background(), wid, "target", workspace.RoleMember)
@@ -430,7 +451,7 @@ func TestService_RemoveMember_RequiresAdmin(t *testing.T) {
 
 func TestService_RemoveMember_AdminCanRemove(t *testing.T) {
 	store := newMockStore()
-	svc := workspace.NewService(store)
+	svc := workspace.NewService(store, &mockWriter{})
 	wid := uuid.New()
 
 	store.members[memberKey(wid, "target")] = &workspace.Member{
@@ -452,7 +473,7 @@ var _ = errors.Is(workspace.ErrNotFound, workspace.ErrNotFound)
 // ── Slug generation tests ─────────────────────────────────────────
 
 func TestCreate_SlugCleanNoRandomSuffix(t *testing.T) {
-	svc := workspace.NewService(newMockStore())
+	svc := workspace.NewService(newMockStore(), &mockWriter{})
 	ws, err := svc.Create(context.Background(), "owner-1", workspace.CreateReq{Name: "My Workspace"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -464,7 +485,7 @@ func TestCreate_SlugCleanNoRandomSuffix(t *testing.T) {
 
 func TestCreate_SlugCollisionDeterministicSuffix(t *testing.T) {
 	store := newMockStore()
-	svc := workspace.NewService(store)
+	svc := workspace.NewService(store, &mockWriter{})
 	ctx := context.Background()
 	a, _ := svc.Create(ctx, "o1", workspace.CreateReq{Name: "Dup"})
 	b, _ := svc.Create(ctx, "o2", workspace.CreateReq{Name: "Dup"})
@@ -477,7 +498,7 @@ func TestCreate_SlugCollisionDeterministicSuffix(t *testing.T) {
 }
 
 func TestCreate_SlugDegenerateFallbackToID(t *testing.T) {
-	svc := workspace.NewService(newMockStore())
+	svc := workspace.NewService(newMockStore(), &mockWriter{})
 	ws, err := svc.Create(context.Background(), "o1", workspace.CreateReq{Name: "내 워크스페이스"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
@@ -485,5 +506,43 @@ func TestCreate_SlugDegenerateFallbackToID(t *testing.T) {
 	want := "ws-" + ws.ID.String()[:8]
 	if ws.Slug != want {
 		t.Errorf("slug = %q, want %q (degenerate name → id fallback)", ws.Slug, want)
+	}
+}
+
+// ── SpiceDB dual-write tests ──────────────────────────────────────
+
+func TestCreate_DualWritesOwnerToSpiceDB(t *testing.T) {
+	mw := &mockWriter{}
+	svc := workspace.NewService(newMockStore(), mw)
+
+	ws, err := svc.Create(context.Background(), "owner-1", workspace.CreateReq{Name: "WS"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	want := ws.ID.String() + "|owner-1|owner"
+	if len(mw.wsWrites) != 1 || mw.wsWrites[0] != want {
+		t.Errorf("wsWrites = %v, want [%q]", mw.wsWrites, want)
+	}
+}
+
+func TestRemoveMember_DualDeletesFromSpiceDB(t *testing.T) {
+	store := newMockStore()
+	mw := &mockWriter{}
+	svc := workspace.NewService(store, mw)
+
+	wid := uuid.New()
+	store.members[memberKey(wid, "target-user")] = &workspace.Member{
+		WorkspaceID: wid, UserID: "target-user", Role: workspace.RoleMember,
+	}
+
+	err := svc.RemoveMember(context.Background(), wid, "target-user", workspace.RoleOwner)
+	if err != nil {
+		t.Fatalf("RemoveMember: %v", err)
+	}
+
+	want := wid.String() + "|target-user"
+	if len(mw.wsDeletes) != 1 || mw.wsDeletes[0] != want {
+		t.Errorf("wsDeletes = %v, want [%q]", mw.wsDeletes, want)
 	}
 }

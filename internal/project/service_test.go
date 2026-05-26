@@ -10,6 +10,35 @@ import (
 	"github.com/tojiuni/goquest/internal/project"
 )
 
+// ── mock writer ───────────────────────────────────────────────────
+
+type mockWriter struct {
+	pwLinks   []string // "projectID|wsID"
+	pjWrites  []string // "projectID|userID|role"
+	pjDeletes []string // "projectID|userID"
+}
+
+func (m *mockWriter) WriteTicket(_ context.Context, _, _ uuid.UUID, _, _ string) error { return nil }
+func (m *mockWriter) WriteWorkspaceMember(_ context.Context, _ uuid.UUID, _, _ string) error {
+	return nil
+}
+func (m *mockWriter) DeleteWorkspaceMember(_ context.Context, _ uuid.UUID, _ string) error {
+	return nil
+}
+func (m *mockWriter) WriteProjectMember(_ context.Context, pid uuid.UUID, uid, role string) error {
+	m.pjWrites = append(m.pjWrites, pid.String()+"|"+uid+"|"+role)
+	return nil
+}
+func (m *mockWriter) DeleteProjectMember(_ context.Context, pid uuid.UUID, uid string) error {
+	m.pjDeletes = append(m.pjDeletes, pid.String()+"|"+uid)
+	return nil
+}
+func (m *mockWriter) WriteProjectWorkspace(_ context.Context, pid, wid uuid.UUID) error {
+	m.pwLinks = append(m.pwLinks, pid.String()+"|"+wid.String())
+	return nil
+}
+func (m *mockWriter) AddTicketViewer(_ context.Context, _ uuid.UUID, _ string) error { return nil }
+
 // ── mock store ────────────────────────────────────────────────────
 
 type mockStore struct {
@@ -141,7 +170,7 @@ func TestHasRole_Ordering(t *testing.T) {
 
 func TestService_Create_Success(t *testing.T) {
 	store := newMockStore()
-	svc := project.NewService(store)
+	svc := project.NewService(store, &mockWriter{})
 
 	wid := uuid.New()
 	p, err := svc.Create(context.Background(), wid, "creator-1", project.CreateReq{
@@ -172,7 +201,7 @@ func TestService_Create_Success(t *testing.T) {
 }
 
 func TestService_Create_EmptyName(t *testing.T) {
-	svc := project.NewService(newMockStore())
+	svc := project.NewService(newMockStore(), &mockWriter{})
 	wid := uuid.New()
 	_, err := svc.Create(context.Background(), wid, "creator-1", project.CreateReq{Name: ""})
 	if err == nil {
@@ -182,7 +211,7 @@ func TestService_Create_EmptyName(t *testing.T) {
 
 func TestService_Create_WithDifficulty(t *testing.T) {
 	store := newMockStore()
-	svc := project.NewService(store)
+	svc := project.NewService(store, &mockWriter{})
 	wid := uuid.New()
 
 	p, err := svc.Create(context.Background(), wid, "creator-1", project.CreateReq{
@@ -203,7 +232,7 @@ func TestService_Create_WithDifficulty(t *testing.T) {
 
 func TestService_AddMember(t *testing.T) {
 	store := newMockStore()
-	svc := project.NewService(store)
+	svc := project.NewService(store, &mockWriter{})
 	wid := uuid.New()
 
 	p, _ := svc.Create(context.Background(), wid, "creator-1", project.CreateReq{Name: "proj"})
@@ -221,4 +250,32 @@ func TestService_AddMember(t *testing.T) {
 		t.Errorf("role = %q, want member", mem.Role)
 	}
 	_ = time.Now() // satisfy import
+}
+
+func TestCreate_DualWritesProjectWorkspaceAndCreator(t *testing.T) {
+	mw := &mockWriter{}
+	svc := project.NewService(newMockStore(), mw)
+	wid := uuid.New()
+	p, err := svc.Create(context.Background(), wid, "creator-1", project.CreateReq{Name: "P"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(mw.pwLinks) != 1 || mw.pwLinks[0] != p.ID.String()+"|"+wid.String() {
+		t.Errorf("project->workspace = %v", mw.pwLinks)
+	}
+	if len(mw.pjWrites) != 1 || mw.pjWrites[0] != p.ID.String()+"|creator-1|admin" {
+		t.Errorf("creator member = %v", mw.pjWrites)
+	}
+}
+
+func TestRemoveMember_DualDeletesProjectMember(t *testing.T) {
+	mw := &mockWriter{}
+	svc := project.NewService(newMockStore(), mw)
+	pid := uuid.New()
+	if err := svc.RemoveMember(context.Background(), pid, "u2"); err != nil {
+		t.Fatalf("RemoveMember: %v", err)
+	}
+	if len(mw.pjDeletes) != 1 || mw.pjDeletes[0] != pid.String()+"|u2" {
+		t.Errorf("pjDeletes = %v", mw.pjDeletes)
+	}
 }
