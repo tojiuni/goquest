@@ -154,7 +154,9 @@ func (svc *Service) SetMemberRole(ctx context.Context, workspaceID uuid.UUID, ta
 	if err := svc.store.SetMemberRole(ctx, workspaceID, targetUserID, req.Role); err != nil {
 		return err
 	}
-	_ = svc.writer.DeleteWorkspaceMember(ctx, workspaceID, targetUserID)
+	if err := svc.writer.DeleteWorkspaceMember(ctx, workspaceID, targetUserID); err != nil {
+		log.Printf("spicedb dual-delete prior ws role %s/%s: %v (continuing)", workspaceID, targetUserID, err)
+	}
 	if err := svc.writer.WriteWorkspaceMember(ctx, workspaceID, targetUserID, string(req.Role)); err != nil {
 		log.Printf("spicedb dual-write ws role %s/%s: %v (continuing)", workspaceID, targetUserID, err)
 	}
