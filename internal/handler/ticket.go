@@ -177,35 +177,14 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TicketHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, err := parseUUID(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid ticket id")
+	// Access (and ticket fetch) is performed by RequireTicketView, which stashes the
+	// ticket in context. If it's absent the middleware was not wired — fail loud rather
+	// than open-fetching unauthorized, since this route is always gated.
+	t := auth.TicketFrom(r)
+	if t == nil {
+		writeError(w, http.StatusInternalServerError, "ticket context missing (RequireTicketView not applied)")
 		return
 	}
-
-	t, err := h.svc.Get(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, ticket.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "ticket not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// SpiceDB visibility check (skip if no project, e.g. legacy tickets).
-	if t.ProjectID != nil {
-		userID := auth.RequesterID(r)
-		ok, checkErr := h.checker.CanViewTicket(r.Context(), t.ID, userID, spicedb.VisibilityMode(t.Visibility))
-		if checkErr != nil {
-			// Log but don't block on SpiceDB errors — fail open in degraded mode.
-			_ = checkErr
-		} else if !ok {
-			writeError(w, http.StatusForbidden, "access denied")
-			return
-		}
-	}
-
 	writeJSON(w, http.StatusOK, t)
 }
 
@@ -379,38 +358,17 @@ func (h *TicketHandler) SubmitAttempt(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TicketHandler) ListAttempts(w http.ResponseWriter, r *http.Request) {
+	// Parent-ticket access already gated by RequireTicketView.
 	id, err := parseUUID(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid ticket id")
 		return
 	}
-
-	t, err := h.svc.Get(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, ticket.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "ticket not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	uid := auth.RequesterID(r)
-	ok, cErr := h.checker.CanViewTicket(r.Context(), id, uid, spicedb.VisibilityMode(t.Visibility))
-	if cErr != nil {
-		writeError(w, http.StatusInternalServerError, "visibility check: "+cErr.Error())
-		return
-	}
-	if !ok {
-		writeError(w, http.StatusForbidden, "not permitted to view this ticket")
-		return
-	}
-
 	attempts, err := h.svc.ListAttempts(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
 	writeJSON(w, http.StatusOK, map[string]any{"attempts": attempts})
 }
 
