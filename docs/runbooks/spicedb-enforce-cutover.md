@@ -24,7 +24,7 @@ deployment `SPICEDB_ENFORCE=false` → 재배포. shadow로 복귀(즉시 허용
 - **댓글/attempts/subtasks 누출 → 해소:** `/tickets/{id}` 그룹 단일 미들웨어가 게이트. customer-token(magic-link)은 SpiceDB 우회하되 **토큰이 바운드된 ticket id에만** 허용 → 기존 A토큰→B티켓 누출도 차단.
 - **에러 정책 통일:** 미들웨어·List·ListSubtasks 모두 **fail-closed**(SpiceDB 에러 → 403/500). 기존 Get fail-open 제거.
 - ⚠️ **배선 시점 즉시 발동(enforce 플래그와 무관):** ① customer-token의 ticket 바인딩 강제, ② 존재하지 않는 티켓에 대한 미들웨어 404(이전엔 댓글 경로에서 FK 위반 400). 클라이언트가 400을 단언하면 영향. enforce 전환과 별개로 **배포 즉시** 적용됨에 유의.
-- ⛔ **subtask-without-project (enforce 신규 주의):** `ParentID`만 있고 `ProjectID`가 없는 subtask는 `WriteTicket`이 skip되어 SpiceDB tuple이 없다 → enforce 시 `can_view_*` LookupResources에 안 잡혀 **프로젝트 멤버 포함 전원에게 ListSubtasks에서 사라진다**. 백필이 subtask의 부모 project tuple을 쓰도록 하거나, 생성 시 부모 project를 상속해 tuple을 쓰도록 보정 필요. enforce 전 처리.
+- ✅ **subtask-without-project — 해소:** ① 생성 시 `Service.Create`가 부모 ProjectID 상속(`ParentID` 있고 `ProjectID` 없을 때) → 신규 subtask는 tuple 생성됨. ② migration `013_subtask_inherit_project.sql`이 기존 orphan subtask의 `project_id`를 부모에서 채움 → `cmd/backfill-spicedb`(WHERE project_id IS NOT NULL)가 픽업. ⚠️ migration은 **단일 레벨**(orphan subtask의 orphan subtask는 재실행 시 다음 패스에 보정; 재실행 idempotent). enforce 전 migration 적용 + 백필 재실행 확인.
 
 ## GA 전 정리(추적) — 파일럿엔 무방, GA 전 결정
 - **에러 정책 불일치:** `Get`은 SpiceDB 체크 에러 시 **fail-open**(티켓 반환, 로깅), `List`는 **fail-closed**(500). SpiceDB 일시 장애 시 목록은 깨지고 단건은 열리는 비대칭. GA 전 한쪽으로 정렬(보안상 양쪽 fail-closed 권장, 또는 양쪽 fail-open으로 가용성 우선) 결정 필요.
