@@ -145,6 +145,26 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Visibility enforcement: drop tickets the caller cannot view. In shadow mode
+	// (NoopChecker) every ticket passes → no behavior change; under enforce the
+	// real checker filters. Post-filter only the current page; `total` is set to
+	// the filtered count (cross-page pagination counts are approximate until
+	// LookupResources is adopted — see enforce-cutover runbook).
+	uid := auth.RequesterID(r)
+	filtered := tickets[:0]
+	for _, t := range tickets {
+		ok, cErr := h.checker.CanViewTicket(r.Context(), t.ID, uid, spicedb.VisibilityMode(t.Visibility))
+		if cErr != nil {
+			writeError(w, http.StatusInternalServerError, "visibility check: "+cErr.Error())
+			return
+		}
+		if ok {
+			filtered = append(filtered, t)
+		}
+	}
+	tickets = filtered
+	total = len(filtered)
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tickets": tickets,
 		"total":   total,
