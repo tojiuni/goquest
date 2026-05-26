@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -73,10 +75,16 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Write SpiceDB relationships asynchronously (best-effort).
+	// Use a fresh bounded context — r.Context() is cancelled when the handler
+	// returns, which would race-cancel the detached write and silently drop the
+	// ticket→project/requester/assignee tuples.
 	if t.ProjectID != nil {
+		tid, pid, reqID, asgID := t.ID, *t.ProjectID, t.RequesterID, t.AssigneeID
 		go func() {
-			if wErr := h.writer.WriteTicket(r.Context(), t.ID, *t.ProjectID, t.RequesterID, t.AssigneeID); wErr != nil {
-				_ = wErr // log in production
+			bgctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if wErr := h.writer.WriteTicket(bgctx, tid, pid, reqID, asgID); wErr != nil {
+				log.Printf("spicedb WriteTicket %s: %v (continuing)", tid, wErr)
 			}
 		}()
 	}
