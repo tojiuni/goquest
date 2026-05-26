@@ -129,6 +129,7 @@ func main() {
 
 	projectResolver := resolve.New(wsStore, pjStore)
 	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter, projectResolver)
+	requireTicketView := auth.RequireTicketView(svc, sdbChecker)
 	healthH := handler.NewHealthHandler(pool, rdb)
 	wsH := handler.NewWorkspaceHandler(wsSvc)
 	pjH := handler.NewProjectHandler(pjSvc)
@@ -234,6 +235,9 @@ func main() {
 			r.Post("/tickets", ticketH.Create)
 			r.Get("/tickets", ticketH.List)
 			r.Route("/tickets/{id}", func(r chi.Router) {
+				// View-only floor for all /tickets/{id}/* routes. Manage-level checks for
+				// mutating routes (Update/Cancel/Approve) are deferred to a later phase.
+				r.Use(requireTicketView)
 				r.Get("/", ticketH.Get)
 				r.Patch("/", ticketH.Update)
 				r.Delete("/", ticketH.Cancel)

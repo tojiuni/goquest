@@ -139,34 +139,37 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 		f.TopLevelOnly = true
 	}
 
+	// Visibility: restrict to SpiceDB-visible tickets. Two LookupResources calls —
+	// project-visibility tickets need can_view_project, restricted need
+	// can_view_restricted; the store combines them visibility-aware for an exact total.
+	// In shadow (NoopChecker) both report unrestricted → no filter (identical to before).
+	uid := auth.RequesterID(r)
+	projIDs, unrP, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_project", uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+		return
+	}
+	restrIDs, unrR, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_restricted", uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+		return
+	}
+	// Invariant: a live Checker returns unrestricted=false for both calls; NoopChecker
+	// returns true for both. So unrP and unrR always agree — there is no mixed state in
+	// which we'd build a filter from one real set and one empty set. Any new
+	// PermissionChecker must preserve this (return unrestricted consistently).
+	if !unrP || !unrR {
+		f.VisibleFilter = &ticket.VisibleTicketIDs{
+			Project:    parseTicketUUIDs(projIDs),
+			Restricted: parseTicketUUIDs(restrIDs),
+		}
+	}
+
 	tickets, total, err := h.svc.List(r.Context(), f)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
-	// Visibility enforcement: drop tickets the caller cannot view. In shadow mode
-	// (NoopChecker) every ticket passes → nothing is dropped and `total` is left
-	// untouched, so this is a true no-op until SPICEDB_ENFORCE is on. Under enforce,
-	// if any ticket is filtered out we adjust `total` to the filtered page count
-	// (cross-page counts are then approximate until LookupResources is adopted —
-	// see enforce-cutover runbook).
-	uid := auth.RequesterID(r)
-	filtered := tickets[:0]
-	for _, t := range tickets {
-		ok, cErr := h.checker.CanViewTicket(r.Context(), t.ID, uid, spicedb.VisibilityMode(t.Visibility))
-		if cErr != nil {
-			writeError(w, http.StatusInternalServerError, "visibility check: "+cErr.Error())
-			return
-		}
-		if ok {
-			filtered = append(filtered, t)
-		}
-	}
-	if len(filtered) != len(tickets) {
-		total = len(filtered) // some tickets dropped by enforcement
-	}
-	tickets = filtered
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tickets": tickets,
@@ -177,35 +180,14 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TicketHandler) Get(w http.ResponseWriter, r *http.Request) {
-	id, err := parseUUID(chi.URLParam(r, "id"))
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid ticket id")
+	// Access (and ticket fetch) is performed by RequireTicketView, which stashes the
+	// ticket in context. If it's absent the middleware was not wired — fail loud rather
+	// than open-fetching unauthorized, since this route is always gated.
+	t := auth.TicketFrom(r)
+	if t == nil {
+		writeError(w, http.StatusInternalServerError, "ticket context missing (RequireTicketView not applied)")
 		return
 	}
-
-	t, err := h.svc.Get(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, ticket.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "ticket not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// SpiceDB visibility check (skip if no project, e.g. legacy tickets).
-	if t.ProjectID != nil {
-		userID := auth.RequesterID(r)
-		ok, checkErr := h.checker.CanViewTicket(r.Context(), t.ID, userID, spicedb.VisibilityMode(t.Visibility))
-		if checkErr != nil {
-			// Log but don't block on SpiceDB errors — fail open in degraded mode.
-			_ = checkErr
-		} else if !ok {
-			writeError(w, http.StatusForbidden, "access denied")
-			return
-		}
-	}
-
 	writeJSON(w, http.StatusOK, t)
 }
 
@@ -333,20 +315,31 @@ func (h *TicketHandler) ListSubtasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Visibility: drop subtasks the caller cannot view (shadow NoopChecker → no-op).
+	// Visibility: keep only subtasks the caller can view. Two LookupResources calls
+	// (project + restricted), then membership-test each child by its own visibility.
+	// shadow (NoopChecker) → unrestricted → keep all (no-op).
 	uid := auth.RequesterID(r)
-	visible := subtasks[:0]
-	for _, st := range subtasks {
-		ok, cErr := h.checker.CanViewTicket(r.Context(), st.ID, uid, spicedb.VisibilityMode(st.Visibility))
-		if cErr != nil {
-			writeError(w, http.StatusInternalServerError, "visibility check: "+cErr.Error())
-			return
-		}
-		if ok {
-			visible = append(visible, st)
-		}
+	projIDs, unrP, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_project", uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+		return
 	}
-	subtasks = visible
+	restrIDs, unrR, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_restricted", uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+		return
+	}
+	if !unrP || !unrR {
+		projSet := uuidSet(parseTicketUUIDs(projIDs))
+		restrSet := uuidSet(parseTicketUUIDs(restrIDs))
+		visible := subtasks[:0]
+		for _, st := range subtasks {
+			if visibleSubtask(st.ID, st.Visibility, projSet, restrSet) {
+				visible = append(visible, st)
+			}
+		}
+		subtasks = visible
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"subtasks": subtasks})
 }
@@ -379,39 +372,49 @@ func (h *TicketHandler) SubmitAttempt(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TicketHandler) ListAttempts(w http.ResponseWriter, r *http.Request) {
+	// Parent-ticket access already gated by RequireTicketView.
 	id, err := parseUUID(chi.URLParam(r, "id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid ticket id")
 		return
 	}
-
-	t, err := h.svc.Get(r.Context(), id)
-	if err != nil {
-		if errors.Is(err, ticket.ErrNotFound) {
-			writeError(w, http.StatusNotFound, "ticket not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	uid := auth.RequesterID(r)
-	ok, cErr := h.checker.CanViewTicket(r.Context(), id, uid, spicedb.VisibilityMode(t.Visibility))
-	if cErr != nil {
-		writeError(w, http.StatusInternalServerError, "visibility check: "+cErr.Error())
-		return
-	}
-	if !ok {
-		writeError(w, http.StatusForbidden, "not permitted to view this ticket")
-		return
-	}
-
 	attempts, err := h.svc.ListAttempts(r.Context(), id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-
 	writeJSON(w, http.StatusOK, map[string]any{"attempts": attempts})
+}
+
+// parseTicketUUIDs parses LookupResources ids into uuids, skipping any that don't
+// parse. Always returns a non-nil slice so it is safe as a SQL ANY($) argument.
+func parseTicketUUIDs(ids []string) []uuid.UUID {
+	out := make([]uuid.UUID, 0, len(ids))
+	for _, s := range ids {
+		if u, err := uuid.Parse(s); err == nil {
+			out = append(out, u)
+		}
+	}
+	return out
+}
+
+// visibleSubtask reports whether a subtask is visible given the caller's two
+// LookupResources sets, honoring the subtask's own visibility mode. Any non-restricted
+// visibility is treated as project-scoped; only two Visibility values exist today, and
+// if a third is added this and the SQL predicate in store_pg.go must change together.
+func visibleSubtask(id uuid.UUID, vis ticket.Visibility, projSet, restrSet map[uuid.UUID]bool) bool {
+	if vis == ticket.VisibilityRestricted {
+		return restrSet[id]
+	}
+	return projSet[id]
+}
+
+func uuidSet(ids []uuid.UUID) map[uuid.UUID]bool {
+	m := make(map[uuid.UUID]bool, len(ids))
+	for _, id := range ids {
+		m[id] = true
+	}
+	return m
 }
 
 func parseUUID(s string) (uuid.UUID, error) {

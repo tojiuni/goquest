@@ -32,6 +32,22 @@ func TestNoopChecker_AlwaysPermits(t *testing.T) {
 	if err != nil || !ok {
 		t.Errorf("CanViewProject: want (true, nil), got (%v, %v)", ok, err)
 	}
+
+	ok, err = ch.Check(ctx, spicedb.TypeTicket, id.String(), "can_view_project", "user1")
+	if err != nil || !ok {
+		t.Errorf("Check: want (true, nil), got (%v, %v)", ok, err)
+	}
+
+	ids, unrestricted, err := ch.VisibleResourceIDs(ctx, spicedb.TypeTicket, "can_view_project", "user1")
+	if err != nil {
+		t.Errorf("VisibleResourceIDs: unexpected err %v", err)
+	}
+	if !unrestricted {
+		t.Error("VisibleResourceIDs: NoopChecker must report unrestricted=true (shadow no-op)")
+	}
+	if ids != nil {
+		t.Errorf("VisibleResourceIDs: want nil ids, got %v", ids)
+	}
 }
 
 func TestNoopWriter_NoError(t *testing.T) {

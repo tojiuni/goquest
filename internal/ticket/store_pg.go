@@ -359,6 +359,17 @@ func (s *pgStore) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int
 	if f.TopLevelOnly {
 		where += " AND t.parent_id IS NULL"
 	}
+	if f.VisibleFilter != nil {
+		// enforce mode: restrict to SpiceDB-visible tickets, honoring per-ticket
+		// visibility. Empty (non-nil) slices → ANY('{}') is false → ticket excluded.
+		// Callers (List handler) MUST pass non-nil slices; a nil slice encodes as SQL
+		// NULL, and t.id = ANY(NULL) is NULL (unknown), not false.
+		where += fmt.Sprintf(
+			" AND ((t.visibility='project' AND t.id = ANY($%d)) OR (t.visibility='restricted' AND t.id = ANY($%d)))",
+			i, i+1)
+		args = append(args, f.VisibleFilter.Project, f.VisibleFilter.Restricted)
+		i += 2
+	}
 
 	countQuery := "SELECT COUNT(*) FROM tickets t " + where
 	var total int
