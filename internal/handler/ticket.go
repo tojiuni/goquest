@@ -217,6 +217,17 @@ func (h *TicketHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Keep SpiceDB's assignee relation in sync after an update (best-effort).
+	// Detached bounded context — r.Context() is cancelled when the handler returns.
+	tid, asg := t.ID, t.AssigneeID
+	go func() {
+		bgctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if wErr := h.writer.ReplaceTicketAssignee(bgctx, tid, asg); wErr != nil {
+			log.Printf("spicedb ReplaceTicketAssignee %s: %v (continuing)", tid, wErr)
+		}
+	}()
+
 	writeJSON(w, http.StatusOK, t)
 }
 
