@@ -42,6 +42,9 @@ func (ch *Checker) CanViewProject(ctx context.Context, projectID uuid.UUID, user
 }
 
 func (ch *Checker) check(ctx context.Context, resType, resID, permission, subType, subID string) (bool, error) {
+	if subType == TypeUser {
+		subID = subjectID(subID)
+	}
 	resp, err := ch.c.inner.CheckPermission(ctx, &v1.CheckPermissionRequest{
 		Resource:   &v1.ObjectReference{ObjectType: resType, ObjectId: resID},
 		Permission: permission,
