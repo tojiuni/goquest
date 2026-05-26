@@ -68,6 +68,12 @@ func CustomerTokenMiddleware(parser CustomerTokenParser) func(http.Handler) http
 	}
 }
 
+// WithCustomerCtx attaches a CustomerCtx (test/helper hook; production path is
+// CustomerTokenMiddleware).
+func WithCustomerCtx(ctx context.Context, c *CustomerCtx) context.Context {
+	return context.WithValue(ctx, customerCtxKey, c)
+}
+
 // CustomerFrom returns the customer context if the request was authenticated
 // via a magic-link access token; nil otherwise.
 func CustomerFrom(r *http.Request) *CustomerCtx {
