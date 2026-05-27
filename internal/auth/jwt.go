@@ -16,7 +16,9 @@ const requesterKey contextKey = "requester_id"
 
 type Claims struct {
 	jwt.RegisteredClaims
-	Sub string `json:"sub"`
+	Sub           string `json:"sub"`
+	Email         string `json:"email"`
+	EmailVerified bool   `json:"email_verified"`
 }
 
 func Middleware(jwksURL string, skip bool) func(http.Handler) http.Handler {
@@ -56,12 +58,7 @@ func Middleware(jwksURL string, skip bool) func(http.Handler) http.Handler {
 				return
 			}
 
-			sub := claims.Sub
-			if sub == "" {
-				sub = claims.Subject // fallback to RegisteredClaims.Subject
-			}
-
-			ctx := context.WithValue(r.Context(), requesterKey, sub)
+			ctx := context.WithValue(r.Context(), requesterKey, requesterFromClaims(claims))
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -76,6 +73,23 @@ func RequesterID(r *http.Request) string {
 // Primarily for tests that need to bypass JWT/API-key middleware.
 func WithRequesterID(ctx context.Context, id string) context.Context {
 	return context.WithValue(ctx, requesterKey, id)
+}
+
+// requesterFromClaims picks the platform subject: the email claim (the standard)
+// first, then sub, then RegisteredClaims.Subject. The fallbacks protect tokens
+// without an email claim (machine users, non-OIDC, legacy).
+//
+// email is only trusted when email_verified is true — an unverified email claim
+// must not be usable to impersonate another verified identity. (The ZITADEL
+// setEmail action emits email_verified alongside email.)
+func requesterFromClaims(c *Claims) string {
+	if c.Email != "" && c.EmailVerified {
+		return c.Email
+	}
+	if c.Sub != "" {
+		return c.Sub
+	}
+	return c.Subject
 }
 
 func bearerToken(r *http.Request) string {
