@@ -18,6 +18,19 @@ restricted 티켓은 **requester + assignee 에게만** 보인다. 명시적 추
 ## 롤백
 deployment `SPICEDB_ENFORCE=false` → 재배포. shadow로 복귀(즉시 허용).
 
+## 전환 완료 기록 (2026-05-27)
+neunexus#265로 `SPICEDB_ENFORCE=true` 전환, ArgoCD sync, pod 로그 `spicedb connected + ENFORCING` 확인. 백필 errors=0, zed 멤버/비멤버 검증 통과. 레거시 numeric sub(`3705…`, 29 tickets, 전부 project-가시성)는 이메일 신원으로 remap 완료(requester/owner/project_member, residual=0) + 재백필.
+
+## post-enforce 모니터링 (log-based)
+goquest는 Prometheus 메트릭 미노출 → 로그 기반. 로그는 promtail→Loki로 적재되어 Grafana에서 LogQL로 조회. enforce 오탐(정당 사용자 차단)·permissive 강등을 아래로 감시:
+
+- **permissive 강등(최우선)**: `{namespace="goquest"} |~ "spicedb unavailable|checks permissive"` — enforce 의도인데 이게 뜨면 dial 실패로 인가 OFF. 즉시 조사.
+- **인가 거부 급증**: `{namespace="goquest"} |~ "access denied|not permitted|visibility (lookup|check)"` — 평소 거의 0. 스파이크는 백필 누락/식별자 불일치 신호.
+- **403 비율**: `{namespace="goquest"} |~ "tickets.* - 403"` — 봇/API-key가 자기 소유 아닌 티켓을 읽어 차단되는 패턴 탐지.
+- **봇/파이프라인**: claude_bot·nuclex·openclaw가 "ticket not found"/403로 실패하면 해당 주체의 SpiceDB tuple 부재 가능 → 백필 재실행 또는 멤버십 보정.
+
+**롤백 트리거**: 정당 사용자/봇의 광범위 403 또는 permissive 강등 확인 시 즉시 `SPICEDB_ENFORCE=false`로 롤백(위 §롤백) 후 원인 분석. (메트릭 알람은 goquest에 /metrics 추가 후 별도 PrometheusRule로 격상 권장.)
+
 ## PR #37 (core 슬라이스) 이후 갱신
 중앙 인가 core 슬라이스(`RequireTicketView` 그룹 미들웨어 + `VisibleResourceIDs`)로 아래가 바뀌었다:
 - **List `total` 근사치 → 정확:** 가시성을 store SQL(`VisibleTicketIDs` 2-bucket)로 필터 → count 쿼리도 동일 술어 → 크로스페이지 합계 정확. per-ticket N RPC 제거.
