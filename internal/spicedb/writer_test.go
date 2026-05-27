@@ -33,3 +33,22 @@ func TestReplaceTicketAssignee_Compiles(t *testing.T) {
 		t.Error("assignee user subject must be encoded")
 	}
 }
+
+func TestWriteWorkspaceOrg_Tuple(t *testing.T) {
+	var _ RelationshipWriter = (*Writer)(nil)
+	var _ RelationshipWriter = (*NoopWriter)(nil)
+	u := touch(TypeWorkspace, "wid", "org", TypeOrg, "370549762107174099", "")
+	if u.Relationship.Resource.ObjectType != "goquest/workspace" {
+		t.Errorf("resource type = %s", u.Relationship.Resource.ObjectType)
+	}
+	if u.Relationship.Relation != "org" {
+		t.Errorf("relation = %s, want org", u.Relationship.Relation)
+	}
+	if u.Relationship.Subject.Object.ObjectType != "org" {
+		t.Errorf("subject type = %s, want org", u.Relationship.Subject.Object.ObjectType)
+	}
+	// org subject must NOT be base64-encoded (only user subjects are)
+	if u.Relationship.Subject.Object.ObjectId != "370549762107174099" {
+		t.Errorf("org subject must be raw, got %s", u.Relationship.Subject.Object.ObjectId)
+	}
+}

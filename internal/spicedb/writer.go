@@ -60,6 +60,16 @@ func (w *Writer) WriteProjectWorkspace(ctx context.Context, projectID, workspace
 	return w.write(ctx, touch(TypeProject, projectID.String(), "workspace", TypeWorkspace, workspaceID.String(), ""))
 }
 
+// WriteWorkspaceOrg links a workspace to its owning org (org admins inherit access).
+func (w *Writer) WriteWorkspaceOrg(ctx context.Context, workspaceID uuid.UUID, orgID string) error {
+	return w.write(ctx, touch(TypeWorkspace, workspaceID.String(), "org", TypeOrg, orgID, ""))
+}
+
+// DeleteWorkspaceOrg removes the workspace→org link (org reassignment/unset).
+func (w *Writer) DeleteWorkspaceOrg(ctx context.Context, workspaceID uuid.UUID) error {
+	return w.delete(ctx, TypeWorkspace, workspaceID.String(), "org", TypeOrg, "", "")
+}
+
 // AddTicketViewer grants an explicit viewer on a restricted ticket.
 func (w *Writer) AddTicketViewer(ctx context.Context, ticketID uuid.UUID, userID string) error {
 	return w.write(ctx, touch(TypeTicket, ticketID.String(), "restricted_viewer", TypeUser, userID, ""))
