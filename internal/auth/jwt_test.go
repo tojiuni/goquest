@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	jwt "github.com/golang-jwt/jwt/v5"
 )
 
 func TestBearerToken(t *testing.T) {
@@ -79,5 +81,32 @@ func TestRequesterID_Empty(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	if id := RequesterID(r); id != "" {
 		t.Errorf("expected empty requester_id with no context value, got %q", id)
+	}
+}
+
+func TestRequesterFromClaims(t *testing.T) {
+	cases := []struct {
+		name         string
+		email        string
+		verified     bool
+		sub, subject string
+		want         string
+	}{
+		{"verified email wins", "user@example.com", true, "uid-001", "", "user@example.com"},
+		{"unverified email falls back to sub", "spoof@example.com", false, "uid-001", "", "uid-001"},
+		{"no email falls back to sub", "", false, "uid-001", "", "uid-001"},
+		{"no email/sub falls back to Subject", "", false, "", "svc-x", "svc-x"},
+		{"all empty -> empty", "", false, "", "", ""},
+	}
+	for _, c := range cases {
+		claims := &Claims{
+			Email:            c.email,
+			EmailVerified:    c.verified,
+			Sub:              c.sub,
+			RegisteredClaims: jwt.RegisteredClaims{Subject: c.subject},
+		}
+		if got := requesterFromClaims(claims); got != c.want {
+			t.Errorf("%s: got %q want %q", c.name, got, c.want)
+		}
 	}
 }
