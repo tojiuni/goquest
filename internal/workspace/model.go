@@ -60,6 +60,7 @@ type CreateReq struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Type        Type   `json:"type"`
+	OrgID       string `json:"org_id,omitempty"`
 }
 
 type UpdateReq struct {

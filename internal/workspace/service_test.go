@@ -16,6 +16,10 @@ import (
 type mockWriter struct {
 	wsWrites  []string // "wsID|userID|role"
 	wsDeletes []string // "wsID|userID"
+
+	wroteOrgWS   uuid.UUID
+	wroteOrg     string
+	deletedOrgWS uuid.UUID
 }
 
 func (m *mockWriter) WriteTicket(_ context.Context, _, _ uuid.UUID, _, _ string) error { return nil }
@@ -32,9 +36,16 @@ func (m *mockWriter) WriteProjectMember(_ context.Context, _ uuid.UUID, _, _ str
 }
 func (m *mockWriter) DeleteProjectMember(_ context.Context, _ uuid.UUID, _ string) error { return nil }
 func (m *mockWriter) WriteProjectWorkspace(_ context.Context, _, _ uuid.UUID) error      { return nil }
-func (m *mockWriter) WriteWorkspaceOrg(_ context.Context, _ uuid.UUID, _ string) error   { return nil }
-func (m *mockWriter) DeleteWorkspaceOrg(_ context.Context, _ uuid.UUID) error            { return nil }
-func (m *mockWriter) AddTicketViewer(_ context.Context, _ uuid.UUID, _ string) error     { return nil }
+func (m *mockWriter) WriteWorkspaceOrg(_ context.Context, wid uuid.UUID, org string) error {
+	m.wroteOrgWS = wid
+	m.wroteOrg = org
+	return nil
+}
+func (m *mockWriter) DeleteWorkspaceOrg(_ context.Context, wid uuid.UUID) error {
+	m.deletedOrgWS = wid
+	return nil
+}
+func (m *mockWriter) AddTicketViewer(_ context.Context, _ uuid.UUID, _ string) error { return nil }
 func (m *mockWriter) ReplaceTicketAssignee(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
 }
@@ -47,6 +58,9 @@ type mockStore struct {
 	invitations map[string]*workspace.Invitation // key: token
 	createErr   error
 	listForUser []*workspace.Workspace
+
+	setOrgID  uuid.UUID
+	setOrgVal *string
 }
 
 func newMockStore() *mockStore {
@@ -205,7 +219,11 @@ func (m *mockStore) DeleteInvitation(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
-func (m *mockStore) SetOrg(_ context.Context, _ uuid.UUID, _ *string) error { return nil }
+func (m *mockStore) SetOrg(_ context.Context, id uuid.UUID, orgID *string) error {
+	m.setOrgID = id
+	m.setOrgVal = orgID
+	return nil
+}
 
 // ── HasRole tests ─────────────────────────────────────────────────
 
@@ -473,6 +491,56 @@ func TestService_RemoveMember_AdminCanRemove(t *testing.T) {
 	}
 	if _, ok := store.members[memberKey(wid, "target")]; ok {
 		t.Error("member should have been removed")
+	}
+}
+
+// ── Service.SetOrg tests ──────────────────────────────────────────
+
+func TestService_SetOrg_AssignsAndDualWrites(t *testing.T) {
+	store := newMockStore()
+	w := &mockWriter{}
+	svc := workspace.NewService(store, w)
+	id := uuid.New()
+	if err := svc.SetOrg(context.Background(), id, "org-123"); err != nil {
+		t.Fatal(err)
+	}
+	if store.setOrgVal == nil || *store.setOrgVal != "org-123" {
+		t.Errorf("store.SetOrg got %v, want org-123", store.setOrgVal)
+	}
+	if w.wroteOrg != "org-123" || w.wroteOrgWS != id {
+		t.Errorf("dual-write got ws=%v org=%q, want ws=%v org=org-123", w.wroteOrgWS, w.wroteOrg, id)
+	}
+}
+
+func TestService_SetOrg_EmptyClearsAndDeletes(t *testing.T) {
+	store := newMockStore()
+	w := &mockWriter{}
+	svc := workspace.NewService(store, w)
+	id := uuid.New()
+	if err := svc.SetOrg(context.Background(), id, ""); err != nil {
+		t.Fatal(err)
+	}
+	if store.setOrgVal != nil {
+		t.Errorf("empty orgID must clear column (nil), got %v", store.setOrgVal)
+	}
+	if w.deletedOrgWS != id {
+		t.Errorf("empty orgID must delete tuple for ws=%v, got %v", id, w.deletedOrgWS)
+	}
+}
+
+func TestCreate_DualWritesOrgToSpiceDB(t *testing.T) {
+	w := &mockWriter{}
+	svc := workspace.NewService(newMockStore(), w)
+
+	ws, err := svc.Create(context.Background(), "owner-1", workspace.CreateReq{Name: "WS", OrgID: "org-123"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if ws.OrgID == nil || *ws.OrgID != "org-123" {
+		t.Errorf("workspace OrgID = %v, want org-123", ws.OrgID)
+	}
+	if w.wroteOrg != "org-123" || w.wroteOrgWS != ws.ID {
+		t.Errorf("create org dual-write got ws=%v org=%q, want ws=%v org-123", w.wroteOrgWS, w.wroteOrg, ws.ID)
 	}
 }
 
