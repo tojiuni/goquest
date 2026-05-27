@@ -27,10 +27,14 @@ func (m *mockWriter) DeleteWorkspaceMember(_ context.Context, wid uuid.UUID, uid
 	m.wsDeletes = append(m.wsDeletes, wid.String()+"|"+uid)
 	return nil
 }
-func (m *mockWriter) WriteProjectMember(_ context.Context, _ uuid.UUID, _, _ string) error { return nil }
-func (m *mockWriter) DeleteProjectMember(_ context.Context, _ uuid.UUID, _ string) error    { return nil }
-func (m *mockWriter) WriteProjectWorkspace(_ context.Context, _, _ uuid.UUID) error         { return nil }
-func (m *mockWriter) AddTicketViewer(_ context.Context, _ uuid.UUID, _ string) error { return nil }
+func (m *mockWriter) WriteProjectMember(_ context.Context, _ uuid.UUID, _, _ string) error {
+	return nil
+}
+func (m *mockWriter) DeleteProjectMember(_ context.Context, _ uuid.UUID, _ string) error { return nil }
+func (m *mockWriter) WriteProjectWorkspace(_ context.Context, _, _ uuid.UUID) error      { return nil }
+func (m *mockWriter) WriteWorkspaceOrg(_ context.Context, _ uuid.UUID, _ string) error   { return nil }
+func (m *mockWriter) DeleteWorkspaceOrg(_ context.Context, _ uuid.UUID) error            { return nil }
+func (m *mockWriter) AddTicketViewer(_ context.Context, _ uuid.UUID, _ string) error     { return nil }
 func (m *mockWriter) ReplaceTicketAssignee(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
 }
@@ -39,7 +43,7 @@ func (m *mockWriter) ReplaceTicketAssignee(_ context.Context, _ uuid.UUID, _ str
 
 type mockStore struct {
 	workspaces  map[uuid.UUID]*workspace.Workspace
-	members     map[string]*workspace.Member // key: wid+":"+uid
+	members     map[string]*workspace.Member     // key: wid+":"+uid
 	invitations map[string]*workspace.Invitation // key: token
 	createErr   error
 	listForUser []*workspace.Workspace
@@ -201,6 +205,8 @@ func (m *mockStore) DeleteInvitation(_ context.Context, id uuid.UUID) error {
 	return nil
 }
 
+func (m *mockStore) SetOrg(_ context.Context, _ uuid.UUID, _ *string) error { return nil }
+
 // ── HasRole tests ─────────────────────────────────────────────────
 
 func TestHasRole_Ordering(t *testing.T) {
@@ -307,9 +313,9 @@ func TestService_EnsurePersonal_ReturnsExisting(t *testing.T) {
 
 	// pre-seed a personal workspace in listForUser
 	existing := &workspace.Workspace{
-		ID:    uuid.New(),
-		Name:  "Alice's Workspace",
-		Type:  workspace.TypePersonal,
+		ID:      uuid.New(),
+		Name:    "Alice's Workspace",
+		Type:    workspace.TypePersonal,
 		OwnerID: "user-1",
 	}
 	store.listForUser = []*workspace.Workspace{existing}

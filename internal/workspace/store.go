@@ -14,6 +14,7 @@ type Store interface {
 	Update(ctx context.Context, id uuid.UUID, req UpdateReq) (*Workspace, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	ListByUser(ctx context.Context, userID string) ([]*Workspace, error)
+	SetOrg(ctx context.Context, id uuid.UUID, orgID *string) error
 
 	AddMember(ctx context.Context, m *Member) error
 	GetMember(ctx context.Context, workspaceID uuid.UUID, userID string) (*Member, error)

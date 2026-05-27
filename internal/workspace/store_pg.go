@@ -24,9 +24,9 @@ func NewPGStore(db *pgxpool.Pool) Store {
 
 func (s *pgStore) Create(ctx context.Context, ws *Workspace) error {
 	_, err := s.db.Exec(ctx, `
-		INSERT INTO workspaces (id, name, slug, description, type, owner_id, created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-		ws.ID, ws.Name, ws.Slug, ws.Description, string(ws.Type), ws.OwnerID,
+		INSERT INTO workspaces (id, name, slug, description, type, owner_id, org_id, created_at, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+		ws.ID, ws.Name, ws.Slug, ws.Description, string(ws.Type), ws.OwnerID, ws.OrgID,
 		ws.CreatedAt, ws.UpdatedAt,
 	)
 	if err != nil {
@@ -41,21 +41,21 @@ func (s *pgStore) Create(ctx context.Context, ws *Workspace) error {
 
 func (s *pgStore) Get(ctx context.Context, id uuid.UUID) (*Workspace, error) {
 	row := s.db.QueryRow(ctx, `
-		SELECT id, name, slug, description, type, owner_id, created_at, updated_at
+		SELECT id, name, slug, description, type, owner_id, org_id, created_at, updated_at
 		FROM workspaces WHERE id = $1`, id)
 	return scanWorkspace(row)
 }
 
 func (s *pgStore) GetBySlug(ctx context.Context, slug string) (*Workspace, error) {
 	row := s.db.QueryRow(ctx, `
-		SELECT id, name, slug, description, type, owner_id, created_at, updated_at
+		SELECT id, name, slug, description, type, owner_id, org_id, created_at, updated_at
 		FROM workspaces WHERE slug = $1`, slug)
 	return scanWorkspace(row)
 }
 
 func (s *pgStore) GetByName(ctx context.Context, name string) (*Workspace, error) {
 	row := s.db.QueryRow(ctx, `
-		SELECT id, name, slug, description, type, owner_id, created_at, updated_at
+		SELECT id, name, slug, description, type, owner_id, org_id, created_at, updated_at
 		FROM workspaces WHERE LOWER(name) = LOWER($1)`, name)
 	return scanWorkspace(row)
 }
@@ -90,7 +90,7 @@ func (s *pgStore) Delete(ctx context.Context, id uuid.UUID) error {
 
 func (s *pgStore) ListByUser(ctx context.Context, userID string) ([]*Workspace, error) {
 	rows, err := s.db.Query(ctx, `
-		SELECT w.id, w.name, w.slug, w.description, w.type, w.owner_id, w.created_at, w.updated_at
+		SELECT w.id, w.name, w.slug, w.description, w.type, w.owner_id, w.org_id, w.created_at, w.updated_at
 		FROM workspaces w
 		JOIN workspace_members wm ON wm.workspace_id = w.id
 		WHERE wm.user_id = $1
@@ -109,6 +109,14 @@ func (s *pgStore) ListByUser(ctx context.Context, userID string) ([]*Workspace, 
 		list = append(list, ws)
 	}
 	return list, rows.Err()
+}
+
+func (s *pgStore) SetOrg(ctx context.Context, id uuid.UUID, orgID *string) error {
+	_, err := s.db.Exec(ctx, `UPDATE workspaces SET org_id=$2, updated_at=now() WHERE id=$1`, id, orgID)
+	if err != nil {
+		return fmt.Errorf("set workspace org: %w", err)
+	}
+	return nil
 }
 
 // ── Member ────────────────────────────────────────────────────────
@@ -261,7 +269,7 @@ func scanWorkspace(s rowScanner) (*Workspace, error) {
 	ws := &Workspace{}
 	err := s.Scan(
 		&ws.ID, &ws.Name, &ws.Slug, &ws.Description,
-		&ws.Type, &ws.OwnerID, &ws.CreatedAt, &ws.UpdatedAt,
+		&ws.Type, &ws.OwnerID, &ws.OrgID, &ws.CreatedAt, &ws.UpdatedAt,
 	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
