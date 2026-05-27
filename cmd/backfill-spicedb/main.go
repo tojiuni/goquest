@@ -45,7 +45,7 @@ func main() {
 	}
 	w := client.Writer()
 
-	var wsMemberCount, projectCount, pjMemberCount, ticketCount, errCount int
+	var wsMemberCount, projectCount, pjMemberCount, wsOrgCount, ticketCount, errCount int
 
 	// ── 1. Workspace members ─────────────────────────────────────────────
 	// SELECT all workspace_members rows directly; no list-all-workspaces store method.
@@ -127,6 +127,33 @@ func main() {
 		}
 	}
 
+	// ── 2.5 Workspace → org links ────────────────────────────────────────
+	{
+		rows, err := pool.Query(ctx, `SELECT id, org_id FROM workspaces WHERE org_id IS NOT NULL`)
+		if err != nil {
+			log.Fatalf("query workspace orgs: %v", err)
+		}
+		for rows.Next() {
+			var wsID uuid.UUID
+			var orgID string
+			if err := rows.Scan(&wsID, &orgID); err != nil {
+				log.Printf("ERR scan workspace org: %v", err)
+				errCount++
+				continue
+			}
+			if err := w.WriteWorkspaceOrg(ctx, wsID, orgID); err != nil {
+				log.Printf("ERR WriteWorkspaceOrg ws=%s org=%s: %v", wsID, orgID, err)
+				errCount++
+				continue
+			}
+			wsOrgCount++
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			log.Fatalf("rows error workspace orgs: %v", err)
+		}
+	}
+
 	// ── 3. Tickets with a non-null project_id ────────────────────────────
 	// assignee_id is TEXT NOT NULL DEFAULT '' — pass "" when empty; writer handles it.
 	// requester_id is TEXT NOT NULL.
@@ -159,6 +186,6 @@ func main() {
 		}
 	}
 
-	log.Printf("backfill complete: ws_members=%d projects=%d pj_members=%d tickets=%d errors=%d",
-		wsMemberCount, projectCount, pjMemberCount, ticketCount, errCount)
+	log.Printf("backfill complete: ws_members=%d projects=%d pj_members=%d ws_orgs=%d tickets=%d errors=%d",
+		wsMemberCount, projectCount, pjMemberCount, wsOrgCount, ticketCount, errCount)
 }
