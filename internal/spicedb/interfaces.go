@@ -29,6 +29,8 @@ type RelationshipWriter interface {
 	WriteProjectMember(ctx context.Context, projectID uuid.UUID, userID, role string) error
 	DeleteProjectMember(ctx context.Context, projectID uuid.UUID, userID string) error
 	WriteProjectWorkspace(ctx context.Context, projectID, workspaceID uuid.UUID) error
+	WriteWorkspaceOrg(ctx context.Context, workspaceID uuid.UUID, orgID string) error
+	DeleteWorkspaceOrg(ctx context.Context, workspaceID uuid.UUID) error
 	AddTicketViewer(ctx context.Context, ticketID uuid.UUID, userID string) error
 	ReplaceTicketAssignee(ctx context.Context, ticketID uuid.UUID, assigneeID string) error
 }

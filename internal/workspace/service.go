@@ -71,6 +71,7 @@ func (svc *Service) create(ctx context.Context, ownerID string, req CreateReq) (
 		Description: req.Description,
 		Type:        wsType,
 		OwnerID:     ownerID,
+		OrgID:       orgPtr(req.OrgID),
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -93,6 +94,14 @@ func (svc *Service) create(ctx context.Context, ownerID string, req CreateReq) (
 
 	if err := svc.writer.WriteWorkspaceMember(ctx, ws.ID, ownerID, string(RoleOwner)); err != nil {
 		log.Printf("spicedb dual-write workspace owner %s: %v (continuing)", ws.ID, err)
+	}
+
+	// Link the workspace to its org in SpiceDB (best-effort; DB is source of truth,
+	// backfill reconciles on failure).
+	if req.OrgID != "" {
+		if err := svc.writer.WriteWorkspaceOrg(ctx, ws.ID, req.OrgID); err != nil {
+			log.Printf("spicedb dual-write workspace org %s: %v (continuing)", ws.ID, err)
+		}
 	}
 
 	return ws, nil
@@ -131,6 +140,24 @@ func (svc *Service) Update(ctx context.Context, id uuid.UUID, req UpdateReq) (*W
 
 func (svc *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	return svc.store.Delete(ctx, id)
+}
+
+// SetOrg assigns (or clears, when orgID=="") the workspace's owning org and keeps
+// the SpiceDB workspace→org relation in sync (best-effort; DB is source of truth).
+func (svc *Service) SetOrg(ctx context.Context, id uuid.UUID, orgID string) error {
+	if err := svc.store.SetOrg(ctx, id, orgPtr(orgID)); err != nil {
+		return err
+	}
+	if orgID == "" {
+		if err := svc.writer.DeleteWorkspaceOrg(ctx, id); err != nil {
+			log.Printf("spicedb DeleteWorkspaceOrg %s: %v (continuing)", id, err)
+		}
+		return nil
+	}
+	if err := svc.writer.WriteWorkspaceOrg(ctx, id, orgID); err != nil {
+		log.Printf("spicedb WriteWorkspaceOrg %s org=%s: %v (continuing)", id, orgID, err)
+	}
+	return nil
 }
 
 func (svc *Service) ListByUser(ctx context.Context, userID string) ([]*Workspace, error) {
@@ -278,4 +305,11 @@ func randomHex(n int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func orgPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

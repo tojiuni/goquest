@@ -41,8 +41,10 @@ func (n *NoopWriter) WriteProjectMember(_ context.Context, _ uuid.UUID, _, _ str
 func (n *NoopWriter) DeleteProjectMember(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
 }
-func (n *NoopWriter) WriteProjectWorkspace(_ context.Context, _, _ uuid.UUID) error { return nil }
-func (n *NoopWriter) AddTicketViewer(_ context.Context, _ uuid.UUID, _ string) error { return nil }
+func (n *NoopWriter) WriteProjectWorkspace(_ context.Context, _, _ uuid.UUID) error    { return nil }
+func (n *NoopWriter) WriteWorkspaceOrg(_ context.Context, _ uuid.UUID, _ string) error { return nil }
+func (n *NoopWriter) DeleteWorkspaceOrg(_ context.Context, _ uuid.UUID) error          { return nil }
+func (n *NoopWriter) AddTicketViewer(_ context.Context, _ uuid.UUID, _ string) error   { return nil }
 func (n *NoopWriter) ReplaceTicketAssignee(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
 }

@@ -29,6 +29,7 @@ type Workspace struct {
 	Description string    `json:"description"`
 	Type        Type      `json:"type"`
 	OwnerID     string    `json:"owner_id"`
+	OrgID       *string   `json:"org_id,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -59,6 +60,7 @@ type CreateReq struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Type        Type   `json:"type"`
+	OrgID       string `json:"org_id,omitempty"`
 }
 
 type UpdateReq struct {
