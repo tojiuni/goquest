@@ -3,6 +3,9 @@
 *.out
 /service
 
+# Git worktrees (subagent-driven dev isolation)
+/.worktrees/
+
 # UI
 ui/node_modules/
 ui/dist/
