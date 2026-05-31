@@ -2,6 +2,7 @@ package ticket
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -111,6 +112,7 @@ type Ticket struct {
 	DueAt          *time.Time     `json:"due_at,omitempty"`
 	CallbackURL    string         `json:"callback_url,omitempty"`
 	Tags           []Tag          `json:"tags,omitempty"`
+	Refs           []string       `json:"ref_ids,omitempty"`
 	// Denormalized read-only fields populated via JOIN in store queries.
 	WorkspaceName  string         `json:"workspace_name,omitempty"`
 	ProjectName    string         `json:"project_name,omitempty"`
@@ -153,6 +155,7 @@ type CreateTicketReq struct {
 	DueAt          *time.Time     `json:"due_at,omitempty"`
 	CallbackURL    string         `json:"callback_url,omitempty"`
 	TagIDs         []uuid.UUID    `json:"tag_ids,omitempty"`
+	RefIDs         []string       `json:"ref_ids,omitempty"`
 }
 
 type UpdateTicketReq struct {
@@ -172,6 +175,7 @@ type UpdateTicketReq struct {
 	DueAt          *time.Time      `json:"due_at,omitempty"`
 	CallbackURL    *string         `json:"callback_url,omitempty"`
 	TagIDs         []uuid.UUID     `json:"tag_ids,omitempty"`
+	RefIDs         []string        `json:"ref_ids,omitempty"`
 }
 
 // VisibleTicketIDs carries the caller's SpiceDB-visible ticket ids, split by the
@@ -245,3 +249,23 @@ type ApproveTicketReq struct {
 	RevisionNote string          `json:"revision_note,omitempty"`
 	OperatorID   string          `json:"operator_id"`
 }
+
+type TicketRef struct {
+	TicketID    uuid.UUID `json:"ticket_id"`
+	GopediaL1ID string    `json:"gopedia_l1_id"`
+	Position    int       `json:"position"`
+	CreatedAt   time.Time `json:"created_at"`
+	CreatedBy   string    `json:"created_by"`
+}
+
+const (
+	MaxRefsPerTicket = 50
+	MaxRefIDLength   = 512
+)
+
+var (
+	ErrRefConflict      = errors.New("ref already exists for this ticket")
+	ErrRefLimitExceeded = errors.New("ref count exceeds MaxRefsPerTicket")
+	ErrRefIDInvalid     = errors.New("gopedia_l1_id must be 1..512 chars")
+	ErrRefIDsDuplicate  = errors.New("duplicate gopedia_l1_id in request")
+)
