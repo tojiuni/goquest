@@ -53,10 +53,24 @@ func newMemStore(tickets ...*ticket.Ticket) *memStore {
 }
 
 func (s *memStore) Get(_ context.Context, id uuid.UUID) (*ticket.Ticket, error) {
-	if t, ok := s.byID[id]; ok {
-		return t, nil
+	t, ok := s.byID[id]
+	if !ok {
+		return nil, ticket.ErrNotFound
 	}
-	return nil, ticket.ErrNotFound
+	// Mirror the PG store contract: Get populates Refs from the refs side-table
+	// (see store_pg.go's Get → ListRefIDsForTickets). This keeps HTTP-level tests
+	// faithful to the production round-trip where the Ticket response body's
+	// ref_ids field reflects currently attached refs.
+	if rs, ok := s.refs[id]; ok && len(rs) > 0 {
+		ids := make([]string, len(rs))
+		for i, r := range rs {
+			ids[i] = r.GopediaL1ID
+		}
+		t.Refs = ids
+	} else {
+		t.Refs = nil
+	}
+	return t, nil
 }
 
 func contains(ids []uuid.UUID, id uuid.UUID) bool {
