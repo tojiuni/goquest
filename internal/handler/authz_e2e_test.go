@@ -25,6 +25,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/tojiuni/goquest/internal/audit"
 	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/resolve"
@@ -303,8 +304,14 @@ func (nilResolver) ResolveProjectID(_ context.Context, _ resolve.Ref) (*uuid.UUI
 
 // e2eRouter builds the production-shaped route tree for the ticket read paths.
 func e2eRouter(store ticket.Store, checker spicedb.PermissionChecker) http.Handler {
+	return e2eRouterWithAudit(store, checker, nil)
+}
+
+// e2eRouterWithAudit is identical to e2eRouter but injects an audit.Logger into
+// the TicketHandler. Used by tests that need to verify audit_log behavior.
+func e2eRouterWithAudit(store ticket.Store, checker spicedb.PermissionChecker, auditLogger audit.Logger) http.Handler {
 	svc := ticket.NewService(store, nil, nil, nil, nil, nil)
-	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{})
+	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{}, auditLogger)
 
 	r := chi.NewRouter()
 	r.Get("/tickets", h.List)

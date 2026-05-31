@@ -14,13 +14,16 @@ package handler_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/tojiuni/goquest/internal/audit"
 	"github.com/tojiuni/goquest/internal/spicedb"
 	"github.com/tojiuni/goquest/internal/ticket"
 )
@@ -68,6 +71,73 @@ func refsTestSetup() (router http.Handler, ticketID uuid.UUID) {
 		},
 	}
 	return e2eRouter(store, checker), tk.ID
+}
+
+// fakeAudit is an in-memory audit.Logger test double. It records entries
+// without touching Postgres, which keeps audit-verification tests hermetic
+// (no GOQUEST_TEST_DATABASE_URL env requirement). It implements the full
+// audit.Logger interface; List supports the same filter fields the production
+// pgLogger does so tests assert against the public contract.
+type fakeAudit struct {
+	mu      sync.Mutex
+	entries []audit.Entry
+}
+
+func (f *fakeAudit) Record(_ context.Context, actor, action, targetKind, targetID string, detail map[string]any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	// Copy the detail map — callers may mutate the original after Record returns.
+	cp := make(map[string]any, len(detail))
+	for k, v := range detail {
+		cp[k] = v
+	}
+	f.entries = append(f.entries, audit.Entry{
+		ID:         int64(len(f.entries) + 1),
+		Actor:      actor,
+		Action:     action,
+		TargetKind: targetKind,
+		TargetID:   targetID,
+		Detail:     cp,
+	})
+}
+
+func (f *fakeAudit) List(_ context.Context, filter audit.ListFilter) ([]*audit.Entry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []*audit.Entry
+	for i := range f.entries {
+		e := f.entries[i]
+		if filter.Actor != "" && e.Actor != filter.Actor {
+			continue
+		}
+		if filter.Action != "" && e.Action != filter.Action {
+			continue
+		}
+		if filter.TargetKind != "" && e.TargetKind != filter.TargetKind {
+			continue
+		}
+		if filter.TargetID != "" && e.TargetID != filter.TargetID {
+			continue
+		}
+		cp := e
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
+// refsTestSetupWithAudit mirrors refsTestSetup but wires an in-memory
+// audit.Logger into the TicketHandler so callers can assert recorded entries.
+func refsTestSetupWithAudit(_ *testing.T) (router http.Handler, ticketID uuid.UUID, logger *fakeAudit) {
+	proj := pid()
+	tk := tProject(proj)
+	store := newMemStore(tk)
+	checker := &worldChecker{
+		proj: map[string]map[uuid.UUID]bool{
+			"alice": {tk.ID: true},
+		},
+	}
+	logger = &fakeAudit{}
+	return e2eRouterWithAudit(store, checker, logger), tk.ID, logger
 }
 
 // ── tests ───────────────────────────────────────────────────────────────────────
@@ -359,5 +429,42 @@ func TestRefsHandler_ReverseLookup_NoLeak(t *testing.T) {
 	// safely iterate without null-guards.
 	if !strings.Contains(rec.Body.String(), `"ticket_ids":[]`) {
 		t.Errorf("want ticket_ids:[] literal in body, got %s", rec.Body.String())
+	}
+}
+
+// ── audit-logging tests (Task 11) ───────────────────────────────────────────────
+
+// TestRefsHandler_AuditOnAdd: a successful POST /tickets/{id}/refs must produce
+// one audit_log entry per attached ref, with action="ref.add", the caller as
+// actor, the ticket id as target, and gopedia_l1_id in detail. Uses an
+// in-memory audit.Logger double so the test is hermetic (no PG required).
+func TestRefsHandler_AuditOnAdd(t *testing.T) {
+	router, tid, auditLogger := refsTestSetupWithAudit(t)
+
+	body := postJSON("/tickets/"+tid.String()+"/refs", map[string]any{
+		"ref_ids": []string{"l1-a"},
+	})
+	rec := do(router, asUser(body, "alice"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST refs: want 200, got %d", rec.Code)
+	}
+
+	entries, err := auditLogger.List(context.Background(), audit.ListFilter{
+		Action:     "ref.add",
+		TargetKind: "ticket",
+		TargetID:   tid.String(),
+	})
+	if err != nil {
+		t.Fatalf("List audit: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("want 1 audit entry, got %d", len(entries))
+	} else {
+		if entries[0].Actor != "alice" {
+			t.Errorf("actor: want alice, got %q", entries[0].Actor)
+		}
+		if did, _ := entries[0].Detail["gopedia_l1_id"].(string); did != "l1-a" {
+			t.Errorf("detail.gopedia_l1_id: want l1-a, got %v", entries[0].Detail["gopedia_l1_id"])
+		}
 	}
 }

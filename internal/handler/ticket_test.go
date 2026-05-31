@@ -60,7 +60,7 @@ func nameRefBody(t *testing.T) *bytes.Reader {
 
 func TestTicketCreate_ResolveWorkspaceNotFound_400(t *testing.T) {
 	resolver := &stubResolver{err: resolve.ErrWorkspaceNotFound}
-	h := handler.NewTicketHandler(nil, nil, nil, resolver)
+	h := handler.NewTicketHandler(nil, nil, nil, resolver, nil)
 
 	r := ticketRouter(h)
 	req := httptest.NewRequest(http.MethodPost, "/tickets", nameRefBody(t))
@@ -75,7 +75,7 @@ func TestTicketCreate_ResolveWorkspaceNotFound_400(t *testing.T) {
 
 func TestTicketCreate_ResolveIncompleteRef_400(t *testing.T) {
 	resolver := &stubResolver{err: resolve.ErrIncompleteRef}
-	h := handler.NewTicketHandler(nil, nil, nil, resolver)
+	h := handler.NewTicketHandler(nil, nil, nil, resolver, nil)
 
 	r := ticketRouter(h)
 	req := httptest.NewRequest(http.MethodPost, "/tickets", nameRefBody(t))
@@ -90,7 +90,7 @@ func TestTicketCreate_ResolveIncompleteRef_400(t *testing.T) {
 
 func TestTicketCreate_ResolveGenericError_500(t *testing.T) {
 	resolver := &stubResolver{err: errors.New("db down")}
-	h := handler.NewTicketHandler(nil, nil, nil, resolver)
+	h := handler.NewTicketHandler(nil, nil, nil, resolver, nil)
 
 	r := ticketRouter(h)
 	req := httptest.NewRequest(http.MethodPost, "/tickets", nameRefBody(t))

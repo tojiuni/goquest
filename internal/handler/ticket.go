@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/tojiuni/goquest/internal/audit"
 	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/resolve"
 	"github.com/tojiuni/goquest/internal/spicedb"
@@ -27,10 +28,15 @@ type TicketHandler struct {
 	checker  spicedb.PermissionChecker
 	writer   spicedb.RelationshipWriter
 	resolver ProjectResolver
+	audit    audit.Logger
 }
 
-func NewTicketHandler(svc *ticket.Service, checker spicedb.PermissionChecker, writer spicedb.RelationshipWriter, resolver ProjectResolver) *TicketHandler {
-	return &TicketHandler{svc: svc, checker: checker, writer: writer, resolver: resolver}
+// NewTicketHandler wires the ticket HTTP handlers. The audit parameter is
+// optional: if nil, audit calls are silently skipped (each call site guards
+// with `if h.audit != nil`). This keeps unit tests that don't care about audit
+// from needing a fake logger.
+func NewTicketHandler(svc *ticket.Service, checker spicedb.PermissionChecker, writer spicedb.RelationshipWriter, resolver ProjectResolver, auditLogger audit.Logger) *TicketHandler {
+	return &TicketHandler{svc: svc, checker: checker, writer: writer, resolver: resolver, audit: auditLogger}
 }
 
 func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -440,6 +446,14 @@ func (h *TicketHandler) AddRefs(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if h.audit != nil {
+		for _, rf := range refs {
+			h.audit.Record(r.Context(), actor, "ref.add", "ticket", tk.ID.String(), map[string]any{
+				"gopedia_l1_id": rf.GopediaL1ID,
+				"position":      rf.Position,
+			})
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"refs": refs})
 }
 
@@ -459,6 +473,11 @@ func (h *TicketHandler) RemoveRef(w http.ResponseWriter, r *http.Request) {
 	if err := h.svc.RemoveRef(r.Context(), tk.ID, l1); err != nil {
 		writeError(w, http.StatusInternalServerError, "remove ref: "+err.Error())
 		return
+	}
+	if h.audit != nil {
+		h.audit.Record(r.Context(), auth.RequesterID(r), "ref.remove", "ticket", tk.ID.String(), map[string]any{
+			"gopedia_l1_id": l1,
+		})
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
