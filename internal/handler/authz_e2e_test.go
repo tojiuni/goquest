@@ -141,20 +141,26 @@ func (s *memStore) AddRefs(_ context.Context, ticketID uuid.UUID, gopediaL1IDs [
 			return nil, ticket.ErrRefConflict
 		}
 	}
-	pos := len(existing)
+	// Compute next position as MAX(existing positions)+1 to handle gaps left by deletes.
+	nextPos := 0
+	for _, r := range existing {
+		if r.Position+1 > nextPos {
+			nextPos = r.Position + 1
+		}
+	}
 	added := make([]ticket.TicketRef, 0, len(gopediaL1IDs))
 	now := time.Now().UTC()
 	for _, id := range gopediaL1IDs {
 		r := ticket.TicketRef{
 			TicketID:    ticketID,
 			GopediaL1ID: id,
-			Position:    pos,
+			Position:    nextPos,
 			CreatedAt:   now,
 			CreatedBy:   createdBy,
 		}
 		existing = append(existing, r)
 		added = append(added, r)
-		pos++
+		nextPos++
 	}
 	s.refs[ticketID] = existing
 	return added, nil
@@ -173,10 +179,8 @@ func (s *memStore) RemoveRef(_ context.Context, ticketID uuid.UUID, gopediaL1ID 
 		}
 		kept = append(kept, r)
 	}
-	// reindex positions to remain contiguous
-	for i := range kept {
-		kept[i].Position = i
-	}
+	// Match PG store contract: leave gaps in position sequence after delete.
+	// Next AddRefs computes MAX(position)+1 from the surviving refs.
 	s.refs[ticketID] = kept
 	return nil
 }
