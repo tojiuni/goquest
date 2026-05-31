@@ -26,4 +26,14 @@ type Store interface {
 
 	// SLA
 	ListOverdue(ctx context.Context) ([]*Ticket, error)
+
+	// Refs (id-only). All methods are transaction-internal where needed; callers
+	// do not assume cross-call atomicity except where explicitly noted.
+	AddRefs(ctx context.Context, ticketID uuid.UUID, gopediaL1IDs []string, createdBy string) ([]TicketRef, error)
+	ListRefs(ctx context.Context, ticketID uuid.UUID) ([]TicketRef, error)
+	RemoveRef(ctx context.Context, ticketID uuid.UUID, gopediaL1ID string) error
+	ReorderRefs(ctx context.Context, ticketID uuid.UUID, orderedL1IDs []string) error
+	CountRefs(ctx context.Context, ticketID uuid.UUID) (int, error)
+	ListTicketIDsByRef(ctx context.Context, gopediaL1ID string) ([]uuid.UUID, error)
+	ListRefIDsForTickets(ctx context.Context, ticketIDs []uuid.UUID) (map[uuid.UUID][]string, error)
 }

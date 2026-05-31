@@ -121,6 +121,25 @@ func (s *memStore) CountAttempts(_ context.Context, _ uuid.UUID, _ string) (int,
 }
 func (s *memStore) ListOverdue(_ context.Context) ([]*ticket.Ticket, error) { return nil, nil }
 
+// refs no-op stubs (Task 4 compile-glue; not exercised by these e2e read-path tests).
+func (s *memStore) AddRefs(_ context.Context, _ uuid.UUID, _ []string, _ string) ([]ticket.TicketRef, error) {
+	return nil, nil
+}
+func (s *memStore) ListRefs(_ context.Context, _ uuid.UUID) ([]ticket.TicketRef, error) {
+	return nil, nil
+}
+func (s *memStore) RemoveRef(_ context.Context, _ uuid.UUID, _ string) error { return nil }
+func (s *memStore) ReorderRefs(_ context.Context, _ uuid.UUID, _ []string) error {
+	return nil
+}
+func (s *memStore) CountRefs(_ context.Context, _ uuid.UUID) (int, error) { return 0, nil }
+func (s *memStore) ListTicketIDsByRef(_ context.Context, _ string) ([]uuid.UUID, error) {
+	return nil, nil
+}
+func (s *memStore) ListRefIDsForTickets(_ context.Context, _ []uuid.UUID) (map[uuid.UUID][]string, error) {
+	return nil, nil
+}
+
 // ── stub checker simulating SpiceDB enforce ─────────────────────────────────────
 
 // worldChecker models, per user, which ticket ids are viewable under each permission.
