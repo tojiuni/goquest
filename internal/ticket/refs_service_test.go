@@ -126,6 +126,60 @@ func TestSvcRefs_VisibleTicketsByRef_NoFilter(t *testing.T) {
 	}
 }
 
+func TestSvcRefs_CreateWithRefs(t *testing.T) {
+	_, store := setupTestDB(t)
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	req := ticket.CreateTicketReq{
+		Title:        "with refs",
+		Type:         ticket.TypeTask,
+		Priority:     ticket.PriorityNormal,
+		AssigneeType: ticket.AssigneeHuman,
+		Visibility:   ticket.VisibilityProject,
+		RefIDs:       []string{"l1-a", "l1-b"},
+	}
+	tk, err := svc.Create(context.Background(), req, "user@example.com")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if len(tk.Refs) != 2 || tk.Refs[0] != "l1-a" || tk.Refs[1] != "l1-b" {
+		t.Errorf("Refs on returned ticket: %v", tk.Refs)
+	}
+}
+
+func TestSvcRefs_UpdateReplacesRefs(t *testing.T) {
+	_, store := setupTestDB(t)
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	tid := seedTicket(t, store)
+	_, _ = svc.AddRefs(context.Background(), tid, []string{"l1-old"}, "u@x")
+
+	newRefs := []string{"l1-x", "l1-y"}
+	req := ticket.UpdateTicketReq{RefIDs: &newRefs}
+	tk, err := svc.Update(context.Background(), tid, req)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(tk.Refs) != 2 || tk.Refs[0] != "l1-x" || tk.Refs[1] != "l1-y" {
+		t.Errorf("Refs after update: %v", tk.Refs)
+	}
+}
+
+func TestSvcRefs_UpdateNilLeavesRefsUntouched(t *testing.T) {
+	_, store := setupTestDB(t)
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	tid := seedTicket(t, store)
+	_, _ = svc.AddRefs(context.Background(), tid, []string{"l1-keep"}, "u@x")
+
+	desc := "updated description"
+	req := ticket.UpdateTicketReq{Description: &desc}
+	tk, err := svc.Update(context.Background(), tid, req)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(tk.Refs) != 1 || tk.Refs[0] != "l1-keep" {
+		t.Errorf("Refs must be untouched: %v", tk.Refs)
+	}
+}
+
 func TestSvcRefs_VisibleTicketsByRef_WithFilter(t *testing.T) {
 	svc, store := newSvcWithStore(t)
 	t1 := seedTicket(t, store)

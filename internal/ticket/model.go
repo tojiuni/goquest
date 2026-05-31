@@ -175,7 +175,7 @@ type UpdateTicketReq struct {
 	DueAt          *time.Time      `json:"due_at,omitempty"`
 	CallbackURL    *string         `json:"callback_url,omitempty"`
 	TagIDs         []uuid.UUID     `json:"tag_ids,omitempty"`
-	RefIDs         []string        `json:"ref_ids,omitempty"`
+	RefIDs         *[]string       `json:"ref_ids,omitempty"`
 }
 
 // VisibleTicketIDs carries the caller's SpiceDB-visible ticket ids, split by the
