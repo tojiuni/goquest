@@ -175,6 +175,9 @@ type UpdateTicketReq struct {
 	DueAt          *time.Time      `json:"due_at,omitempty"`
 	CallbackURL    *string         `json:"callback_url,omitempty"`
 	TagIDs         []uuid.UUID     `json:"tag_ids,omitempty"`
+	// RefIDs replaces the ticket's full ref-doc set on Update.
+	// Semantics: nil (field omitted) = leave refs untouched;
+	// &[]string{} = clear all refs; &[]string{...} = replace with that ordered set.
 	RefIDs         *[]string       `json:"ref_ids,omitempty"`
 }
 

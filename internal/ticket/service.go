@@ -501,8 +501,10 @@ func validateRefIDs(ids []string) error {
 	return nil
 }
 
-// replaceRefs deletes all current refs for the ticket and inserts the provided
-// ordered set. Used by Update when req.RefIDs != nil.
+// replaceRefs clears existing refs and installs newIDs. Not transactional across
+// the remove/add boundary: a concurrent Update on the same ticket can interleave.
+// Acceptable for v1 (refs are optional/idempotent and races are extremely rare in
+// practice); revisit when SLO requires hard atomicity.
 func (s *Service) replaceRefs(ctx context.Context, ticketID uuid.UUID, newIDs []string, createdBy string) error {
 	existing, err := s.store.ListRefs(ctx, ticketID)
 	if err != nil {
