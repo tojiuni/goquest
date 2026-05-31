@@ -497,6 +497,57 @@ func (h *TicketHandler) ReorderRefs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"refs": refs})
 }
 
+// ReverseLookupRefs handles GET /api/v1/refs?gopedia_l1_id=X.
+// Returns the ticket ids that reference the given doc, filtered by the caller's
+// SpiceDB-visible ticket set (via can_view_project). Under shadow (NoopChecker),
+// unrestricted=true skips filtering. No-leak invariant: a caller who can't see
+// ANY tickets must receive 200 + {"ticket_ids": []}, NOT 403/404 — that would
+// confirm the doc's existence (or non-existence) to an unauthorized observer.
+func (h *TicketHandler) ReverseLookupRefs(w http.ResponseWriter, r *http.Request) {
+	docID := r.URL.Query().Get("gopedia_l1_id")
+	if docID == "" {
+		writeError(w, http.StatusBadRequest, "gopedia_l1_id is required")
+		return
+	}
+	if len(docID) > ticket.MaxRefIDLength {
+		writeError(w, http.StatusBadRequest, "gopedia_l1_id too long")
+		return
+	}
+
+	uid := auth.RequesterID(r)
+	visibleIDs, unrestricted, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_project", uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+		return
+	}
+
+	var visible map[uuid.UUID]bool
+	if !unrestricted {
+		visible = make(map[uuid.UUID]bool, len(visibleIDs))
+		for _, s := range visibleIDs {
+			if id, perr := uuid.Parse(s); perr == nil {
+				visible[id] = true
+			}
+		}
+	}
+
+	ids, err := h.svc.ListTicketsByRef(r.Context(), docID, visible)
+	if err != nil {
+		if errors.Is(err, ticket.ErrRefIDInvalid) {
+			writeError(w, http.StatusBadRequest, "invalid gopedia_l1_id")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "lookup: "+err.Error())
+		return
+	}
+	// Always emit a non-nil slice so the JSON literal is `[]` not `null`.
+	strIDs := make([]string, 0, len(ids))
+	for _, id := range ids {
+		strIDs = append(strIDs, id.String())
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ticket_ids": strIDs})
+}
+
 // parseTicketUUIDs parses LookupResources ids into uuids, skipping any that don't
 // parse. Always returns a non-nil slice so it is safe as a SQL ANY($) argument.
 func parseTicketUUIDs(ids []string) []uuid.UUID {

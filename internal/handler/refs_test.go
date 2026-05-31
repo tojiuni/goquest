@@ -224,3 +224,140 @@ func TestRefsHandler_AddRejectsConflict(t *testing.T) {
 // guard: ensure spicedb.NoopChecker still satisfies the interface signature we
 // pass to e2eRouter elsewhere (compile-time check only).
 var _ spicedb.PermissionChecker = (*spicedb.NoopChecker)(nil)
+
+// ── reverse-lookup tests (Task 8: GET /api/v1/refs?gopedia_l1_id=X) ─────────────
+
+// reverseLookupResp matches the handler envelope {"ticket_ids": [...]}.
+type reverseLookupResp struct {
+	TicketIDs []string `json:"ticket_ids"`
+}
+
+func decodeReverse(t *testing.T, rec *httptest.ResponseRecorder) reverseLookupResp {
+	t.Helper()
+	var rr reverseLookupResp
+	if err := json.Unmarshal(rec.Body.Bytes(), &rr); err != nil {
+		t.Fatalf("decode reverse: %v (body=%s)", err, rec.Body.String())
+	}
+	return rr
+}
+
+// TestRefsHandler_ReverseLookup_UnrestrictedShadow: shadow/NoopChecker reports
+// unrestricted=true, so all matching tickets are returned regardless of caller.
+func TestRefsHandler_ReverseLookup_UnrestrictedShadow(t *testing.T) {
+	proj := pid()
+	t1 := tProject(proj)
+	t2 := tProject(proj)
+	store := newMemStore(t1, t2)
+	router := e2eRouter(store, &spicedb.NoopChecker{})
+
+	// Seed: attach the same ref to both tickets. The ticket-scoped POST is gated by
+	// RequireTicketView; under NoopChecker that gate is open for any caller.
+	for _, tid := range []uuid.UUID{t1.ID, t2.ID} {
+		rec := do(router, asUser(postJSON("/tickets/"+tid.String()+"/refs", map[string]any{
+			"ref_ids": []string{"l1-shared"},
+		}), "alice"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("seed POST %s: %d (%s)", tid, rec.Code, rec.Body.String())
+		}
+	}
+
+	rec := do(router, asUser(get("/refs?gopedia_l1_id=l1-shared"), "alice"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /refs: want 200, got %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	rr := decodeReverse(t, rec)
+	if len(rr.TicketIDs) != 2 {
+		t.Errorf("want 2 ticket ids, got %d (%+v)", len(rr.TicketIDs), rr.TicketIDs)
+	}
+	gotSet := map[string]bool{}
+	for _, id := range rr.TicketIDs {
+		gotSet[id] = true
+	}
+	if !gotSet[t1.ID.String()] || !gotSet[t2.ID.String()] {
+		t.Errorf("want both ticket ids in response, got %+v", rr.TicketIDs)
+	}
+}
+
+// TestRefsHandler_ReverseLookup_FilteredByVisibility: under enforce, the
+// caller's VisibleResourceIDs trims the result to only the tickets they can see.
+func TestRefsHandler_ReverseLookup_FilteredByVisibility(t *testing.T) {
+	proj := pid()
+	t1 := tProject(proj)
+	t2 := tProject(proj)
+	store := newMemStore(t1, t2)
+	// alice can see both (to seed refs on both); bob can see only t1.
+	checker := &worldChecker{
+		proj: map[string]map[uuid.UUID]bool{
+			"alice": {t1.ID: true, t2.ID: true},
+			"bob":   {t1.ID: true},
+		},
+	}
+	router := e2eRouter(store, checker)
+
+	// Seed both via alice.
+	for _, tid := range []uuid.UUID{t1.ID, t2.ID} {
+		rec := do(router, asUser(postJSON("/tickets/"+tid.String()+"/refs", map[string]any{
+			"ref_ids": []string{"l1-shared"},
+		}), "alice"))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("seed POST %s: %d (%s)", tid, rec.Code, rec.Body.String())
+		}
+	}
+
+	rec := do(router, asUser(get("/refs?gopedia_l1_id=l1-shared"), "bob"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /refs as bob: want 200, got %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	rr := decodeReverse(t, rec)
+	if len(rr.TicketIDs) != 1 || rr.TicketIDs[0] != t1.ID.String() {
+		t.Errorf("want exactly [t1], got %+v", rr.TicketIDs)
+	}
+}
+
+// TestRefsHandler_ReverseLookup_RequiresGopediaL1ID: missing query param → 400.
+func TestRefsHandler_ReverseLookup_RequiresGopediaL1ID(t *testing.T) {
+	proj := pid()
+	tk := tProject(proj)
+	store := newMemStore(tk)
+	router := e2eRouter(store, &spicedb.NoopChecker{})
+
+	rec := do(router, asUser(get("/refs"), "alice"))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("want 400, got %d (body=%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestRefsHandler_ReverseLookup_NoLeak: a caller who sees NO tickets must get
+// 200 + empty list — NOT 403/404 (which would leak existence of the ref).
+func TestRefsHandler_ReverseLookup_NoLeak(t *testing.T) {
+	proj := pid()
+	tk := tProject(proj)
+	store := newMemStore(tk)
+	// alice seeds; bob sees nothing.
+	checker := &worldChecker{
+		proj: map[string]map[uuid.UUID]bool{
+			"alice": {tk.ID: true},
+		},
+	}
+	router := e2eRouter(store, checker)
+
+	if rec := do(router, asUser(postJSON("/tickets/"+tk.ID.String()+"/refs", map[string]any{
+		"ref_ids": []string{"l1-secret"},
+	}), "alice")); rec.Code != http.StatusOK {
+		t.Fatalf("seed: %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	rec := do(router, asUser(get("/refs?gopedia_l1_id=l1-secret"), "bob"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /refs as bob: want 200 (no-leak), got %d (body=%s)", rec.Code, rec.Body.String())
+	}
+	rr := decodeReverse(t, rec)
+	if len(rr.TicketIDs) != 0 {
+		t.Errorf("want empty ticket_ids (no-leak), got %+v", rr.TicketIDs)
+	}
+	// Also ensure the JSON literal is an empty array, not null, so JS clients can
+	// safely iterate without null-guards.
+	if !strings.Contains(rec.Body.String(), `"ticket_ids":[]`) {
+		t.Errorf("want ticket_ids:[] literal in body, got %s", rec.Body.String())
+	}
+}

@@ -294,6 +294,9 @@ func e2eRouter(store ticket.Store, checker spicedb.PermissionChecker) http.Handl
 
 	r := chi.NewRouter()
 	r.Get("/tickets", h.List)
+	// Top-level reverse-lookup: GET /refs?gopedia_l1_id=X — NOT under /tickets/{id}.
+	// Authentication is the only gate; the handler internally applies the visibility filter.
+	r.Get("/refs", h.ReverseLookupRefs)
 	r.Route("/tickets/{id}", func(r chi.Router) {
 		r.Use(auth.RequireTicketView(svc, checker))
 		r.Get("/", h.Get)
