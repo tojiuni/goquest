@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -355,5 +356,101 @@ func TestPublishCreated_ZeroProjectFields(t *testing.T) {
 	}
 	if _, ok := decoded["project_name"]; ok {
 		t.Error("project_name should be omitted when empty")
+	}
+}
+
+// TestPublishCreated_RefIDsIncluded verifies that ref_ids is included in the
+// published stream payload when a ticket has refs attached (spec §5).
+func TestPublishCreated_RefIDsIncluded(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("start miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	p := NewPublisher(rdb)
+	ctx := context.Background()
+
+	tk := newTestTicket()
+	tk.Refs = []string{"l1-a", "l1-b"}
+
+	if err := p.PublishCreated(ctx, tk); err != nil {
+		t.Fatalf("PublishCreated: %v", err)
+	}
+
+	msgs, err := rdb.XRange(ctx, StreamCreated, "-", "+").Result()
+	if err != nil {
+		t.Fatalf("XRange: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message in stream, got %d", len(msgs))
+	}
+
+	raw, ok := msgs[0].Values["data"].(string)
+	if !ok {
+		t.Fatal("data field missing or not a string")
+	}
+
+	if !strings.Contains(raw, `"ref_ids":["l1-a","l1-b"]`) {
+		t.Errorf("expected ref_ids in payload, got: %s", raw)
+	}
+
+	var ev TicketEvent
+	if err := json.Unmarshal([]byte(raw), &ev); err != nil {
+		t.Fatalf("unmarshal TicketEvent: %v", err)
+	}
+	if len(ev.RefIDs) != 2 || ev.RefIDs[0] != "l1-a" || ev.RefIDs[1] != "l1-b" {
+		t.Errorf("RefIDs roundtrip mismatch: %v", ev.RefIDs)
+	}
+}
+
+// TestPublishCreated_RefIDsOmittedWhenNil verifies that ref_ids is absent from
+// the JSON payload when the ticket has no refs (nil slice, omitempty drops it).
+func TestPublishCreated_RefIDsOmittedWhenNil(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatalf("start miniredis: %v", err)
+	}
+	defer mr.Close()
+
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+
+	p := NewPublisher(rdb)
+	ctx := context.Background()
+
+	tk := newTestTicket()
+	tk.Refs = nil
+
+	if err := p.PublishCreated(ctx, tk); err != nil {
+		t.Fatalf("PublishCreated: %v", err)
+	}
+
+	msgs, err := rdb.XRange(ctx, StreamCreated, "-", "+").Result()
+	if err != nil {
+		t.Fatalf("XRange: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 message in stream, got %d", len(msgs))
+	}
+
+	raw, ok := msgs[0].Values["data"].(string)
+	if !ok {
+		t.Fatal("data field missing or not a string")
+	}
+
+	if strings.Contains(raw, "ref_ids") {
+		t.Errorf("ref_ids should be omitted when Refs is nil, got: %s", raw)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, ok := decoded["ref_ids"]; ok {
+		t.Error("ref_ids key should not appear in JSON when Refs is nil")
 	}
 }

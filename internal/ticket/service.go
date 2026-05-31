@@ -206,6 +206,9 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 		if err := validateRefIDs(newIDs); err != nil {
 			return nil, err
 		}
+		// TODO: plumb the requester id through Service.Update so replaceRefs gets a real actor.
+		// Currently PATCH-replaced refs are recorded with empty created_by; impact is loss of
+		// actor attribution in ticket_refs.created_by and no audit `ref.add` entry for replaces.
 		if err := s.replaceRefs(ctx, id, newIDs, ""); err != nil {
 			return nil, fmt.Errorf("replace refs: %w", err)
 		}
@@ -505,6 +508,8 @@ func validateRefIDs(ids []string) error {
 // the remove/add boundary: a concurrent Update on the same ticket can interleave.
 // Acceptable for v1 (refs are optional/idempotent and races are extremely rare in
 // practice); revisit when SLO requires hard atomicity.
+// TODO: createdBy is empty when called from Update — see replaceRefs call site in Update.
+// Refs added directly via AddRefs carry the actor; refs replaced via Update PATCH do not.
 func (s *Service) replaceRefs(ctx context.Context, ticketID uuid.UUID, newIDs []string, createdBy string) error {
 	existing, err := s.store.ListRefs(ctx, ticketID)
 	if err != nil {

@@ -42,6 +42,7 @@ type TicketEvent struct {
 	DueAt         string `json:"due_at,omitempty"`
 	CreatedAt     string `json:"created_at"`
 	EventTime     string `json:"event_time"`
+	RefIDs        []string `json:"ref_ids,omitempty"`
 }
 
 func (p *Publisher) PublishCreated(ctx context.Context, t *ticket.Ticket) error {
@@ -83,6 +84,7 @@ func (p *Publisher) publish(ctx context.Context, stream string, t *ticket.Ticket
 		WorkspaceName: t.WorkspaceName,
 		ProjectName:   t.ProjectName,
 		EventTime:     time.Now().UTC().Format(time.RFC3339),
+		RefIDs:        t.Refs,
 	}
 
 	if t.ParentID != nil {
