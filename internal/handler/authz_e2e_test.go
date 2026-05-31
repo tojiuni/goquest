@@ -21,9 +21,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/tojiuni/goquest/internal/audit"
 	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/resolve"
@@ -36,10 +38,14 @@ import (
 type memStore struct {
 	byID  map[uuid.UUID]*ticket.Ticket
 	order []uuid.UUID // deterministic List order
+	refs  map[uuid.UUID][]ticket.TicketRef
 }
 
 func newMemStore(tickets ...*ticket.Ticket) *memStore {
-	s := &memStore{byID: map[uuid.UUID]*ticket.Ticket{}}
+	s := &memStore{
+		byID: map[uuid.UUID]*ticket.Ticket{},
+		refs: map[uuid.UUID][]ticket.TicketRef{},
+	}
 	for _, t := range tickets {
 		s.byID[t.ID] = t
 		s.order = append(s.order, t.ID)
@@ -48,10 +54,24 @@ func newMemStore(tickets ...*ticket.Ticket) *memStore {
 }
 
 func (s *memStore) Get(_ context.Context, id uuid.UUID) (*ticket.Ticket, error) {
-	if t, ok := s.byID[id]; ok {
-		return t, nil
+	t, ok := s.byID[id]
+	if !ok {
+		return nil, ticket.ErrNotFound
 	}
-	return nil, ticket.ErrNotFound
+	// Mirror the PG store contract: Get populates Refs from the refs side-table
+	// (see store_pg.go's Get → ListRefIDsForTickets). This keeps HTTP-level tests
+	// faithful to the production round-trip where the Ticket response body's
+	// ref_ids field reflects currently attached refs.
+	if rs, ok := s.refs[id]; ok && len(rs) > 0 {
+		ids := make([]string, len(rs))
+		for i, r := range rs {
+			ids[i] = r.GopediaL1ID
+		}
+		t.Refs = ids
+	} else {
+		t.Refs = nil
+	}
+	return t, nil
 }
 
 func contains(ids []uuid.UUID, id uuid.UUID) bool {
@@ -121,6 +141,110 @@ func (s *memStore) CountAttempts(_ context.Context, _ uuid.UUID, _ string) (int,
 }
 func (s *memStore) ListOverdue(_ context.Context) ([]*ticket.Ticket, error) { return nil, nil }
 
+// refs: real in-memory behavior so HTTP-level handler tests can exercise the
+// service+store contract hermetically (no PG dependency). Mirrors the PG store
+// semantics: append-with-conflict on AddRefs, idempotent RemoveRef, ReorderRefs
+// must cover the exact existing set.
+func (s *memStore) AddRefs(_ context.Context, ticketID uuid.UUID, gopediaL1IDs []string, createdBy string) ([]ticket.TicketRef, error) {
+	existing := s.refs[ticketID]
+	seen := map[string]bool{}
+	for _, r := range existing {
+		seen[r.GopediaL1ID] = true
+	}
+	for _, id := range gopediaL1IDs {
+		if seen[id] {
+			return nil, ticket.ErrRefConflict
+		}
+	}
+	// Compute next position as MAX(existing positions)+1 to handle gaps left by deletes.
+	nextPos := 0
+	for _, r := range existing {
+		if r.Position+1 > nextPos {
+			nextPos = r.Position + 1
+		}
+	}
+	added := make([]ticket.TicketRef, 0, len(gopediaL1IDs))
+	now := time.Now().UTC()
+	for _, id := range gopediaL1IDs {
+		r := ticket.TicketRef{
+			TicketID:    ticketID,
+			GopediaL1ID: id,
+			Position:    nextPos,
+			CreatedAt:   now,
+			CreatedBy:   createdBy,
+		}
+		existing = append(existing, r)
+		added = append(added, r)
+		nextPos++
+	}
+	s.refs[ticketID] = existing
+	return added, nil
+}
+func (s *memStore) ListRefs(_ context.Context, ticketID uuid.UUID) ([]ticket.TicketRef, error) {
+	out := make([]ticket.TicketRef, len(s.refs[ticketID]))
+	copy(out, s.refs[ticketID])
+	return out, nil
+}
+func (s *memStore) RemoveRef(_ context.Context, ticketID uuid.UUID, gopediaL1ID string) error {
+	existing := s.refs[ticketID]
+	kept := existing[:0]
+	for _, r := range existing {
+		if r.GopediaL1ID == gopediaL1ID {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	// Match PG store contract: leave gaps in position sequence after delete.
+	// Next AddRefs computes MAX(position)+1 from the surviving refs.
+	s.refs[ticketID] = kept
+	return nil
+}
+func (s *memStore) ReorderRefs(_ context.Context, ticketID uuid.UUID, orderedL1IDs []string) error {
+	existing := s.refs[ticketID]
+	if len(existing) != len(orderedL1IDs) {
+		return errors.New("reorder: id set mismatch")
+	}
+	byID := map[string]ticket.TicketRef{}
+	for _, r := range existing {
+		byID[r.GopediaL1ID] = r
+	}
+	out := make([]ticket.TicketRef, 0, len(orderedL1IDs))
+	for i, id := range orderedL1IDs {
+		r, ok := byID[id]
+		if !ok {
+			return errors.New("reorder: unknown id " + id)
+		}
+		r.Position = i
+		out = append(out, r)
+	}
+	s.refs[ticketID] = out
+	return nil
+}
+func (s *memStore) CountRefs(_ context.Context, ticketID uuid.UUID) (int, error) {
+	return len(s.refs[ticketID]), nil
+}
+func (s *memStore) ListTicketIDsByRef(_ context.Context, gopediaL1ID string) ([]uuid.UUID, error) {
+	var out []uuid.UUID
+	for tid, rs := range s.refs {
+		for _, r := range rs {
+			if r.GopediaL1ID == gopediaL1ID {
+				out = append(out, tid)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+func (s *memStore) ListRefIDsForTickets(_ context.Context, ticketIDs []uuid.UUID) (map[uuid.UUID][]string, error) {
+	out := map[uuid.UUID][]string{}
+	for _, tid := range ticketIDs {
+		for _, r := range s.refs[tid] {
+			out[tid] = append(out[tid], r.GopediaL1ID)
+		}
+	}
+	return out, nil
+}
+
 // ── stub checker simulating SpiceDB enforce ─────────────────────────────────────
 
 // worldChecker models, per user, which ticket ids are viewable under each permission.
@@ -180,11 +304,20 @@ func (nilResolver) ResolveProjectID(_ context.Context, _ resolve.Ref) (*uuid.UUI
 
 // e2eRouter builds the production-shaped route tree for the ticket read paths.
 func e2eRouter(store ticket.Store, checker spicedb.PermissionChecker) http.Handler {
+	return e2eRouterWithAudit(store, checker, nil)
+}
+
+// e2eRouterWithAudit is identical to e2eRouter but injects an audit.Logger into
+// the TicketHandler. Used by tests that need to verify audit_log behavior.
+func e2eRouterWithAudit(store ticket.Store, checker spicedb.PermissionChecker, auditLogger audit.Logger) http.Handler {
 	svc := ticket.NewService(store, nil, nil, nil, nil, nil)
-	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{})
+	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{}, auditLogger)
 
 	r := chi.NewRouter()
 	r.Get("/tickets", h.List)
+	// Top-level reverse-lookup: GET /refs?gopedia_l1_id=X — NOT under /tickets/{id}.
+	// Authentication is the only gate; the handler internally applies the visibility filter.
+	r.Get("/refs", h.ReverseLookupRefs)
 	r.Route("/tickets/{id}", func(r chi.Router) {
 		r.Use(auth.RequireTicketView(svc, checker))
 		r.Get("/", h.Get)
@@ -192,6 +325,11 @@ func e2eRouter(store ticket.Store, checker spicedb.PermissionChecker) http.Handl
 		r.Get("/attempts", h.ListAttempts)
 		// comment routes share the same group gate; a stand-in proves coverage.
 		r.Get("/comments", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+		// refs routes (Task 7): same RequireTicketView gate as comments/subtasks.
+		r.Get("/refs", h.ListRefs)
+		r.Post("/refs", h.AddRefs)
+		r.Patch("/refs/reorder", h.ReorderRefs)
+		r.Delete("/refs/{l1_id}", h.RemoveRef)
 	})
 	return r
 }

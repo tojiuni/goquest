@@ -87,6 +87,26 @@ func (m *mockStore) ListOverdue(_ context.Context) ([]*ticket.Ticket, error) {
 	return nil, nil
 }
 
+// --- refs no-op stubs (Task 4 compile-glue; real behavior may be added in Task 5) ---
+
+func (m *mockStore) AddRefs(_ context.Context, _ uuid.UUID, _ []string, _ string) ([]ticket.TicketRef, error) {
+	return nil, nil
+}
+func (m *mockStore) ListRefs(_ context.Context, _ uuid.UUID) ([]ticket.TicketRef, error) {
+	return nil, nil
+}
+func (m *mockStore) RemoveRef(_ context.Context, _ uuid.UUID, _ string) error { return nil }
+func (m *mockStore) ReorderRefs(_ context.Context, _ uuid.UUID, _ []string) error {
+	return nil
+}
+func (m *mockStore) CountRefs(_ context.Context, _ uuid.UUID) (int, error) { return 0, nil }
+func (m *mockStore) ListTicketIDsByRef(_ context.Context, _ string) ([]uuid.UUID, error) {
+	return nil, nil
+}
+func (m *mockStore) ListRefIDsForTickets(_ context.Context, _ []uuid.UUID) (map[uuid.UUID][]string, error) {
+	return nil, nil
+}
+
 type mockPublisher struct {
 	created  int
 	assigned int

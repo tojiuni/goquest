@@ -81,6 +81,13 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 			return nil, err
 		}
 	}
+	// Pre-validate refs before creating the ticket so a bad request doesn't
+	// leave a half-built ticket behind.
+	if len(req.RefIDs) > 0 {
+		if err := validateRefIDs(req.RefIDs); err != nil {
+			return nil, err
+		}
+	}
 
 	if req.CompletionMode == "" {
 		req.CompletionMode = CompletionManual
@@ -149,6 +156,13 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 		}
 	}
 
+	if len(req.RefIDs) > 0 {
+		if _, err := s.store.AddRefs(ctx, t.ID, req.RefIDs, requesterID); err != nil {
+			return nil, fmt.Errorf("attach refs: %w", err)
+		}
+		t.Refs = append([]string(nil), req.RefIDs...)
+	}
+
 	if err := s.pub.PublishCreated(ctx, t); err != nil {
 		log.Printf("warn: publish created: %v", err)
 	}
@@ -183,6 +197,24 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	t, err := s.store.Update(ctx, id, req)
 	if err != nil {
 		return nil, err
+	}
+
+	// Replace-semantics: nil = leave untouched; empty = clear; non-empty = replace.
+	// createdBy is empty for now (Task 11 will plumb actor through).
+	if req.RefIDs != nil {
+		newIDs := *req.RefIDs
+		if err := validateRefIDs(newIDs); err != nil {
+			return nil, err
+		}
+		// TODO: plumb the requester id through Service.Update so replaceRefs gets a real actor.
+		// Currently PATCH-replaced refs are recorded with empty created_by; impact is loss of
+		// actor attribution in ticket_refs.created_by and no audit `ref.add` entry for replaces.
+		if err := s.replaceRefs(ctx, id, newIDs, ""); err != nil {
+			return nil, fmt.Errorf("replace refs: %w", err)
+		}
+		if refreshed, gerr := s.store.Get(ctx, id); gerr == nil && refreshed != nil {
+			t = refreshed
+		}
 	}
 
 	if err := s.pub.PublishUpdated(ctx, t); err != nil {
@@ -409,4 +441,113 @@ func metadataString(m map[string]any, key string) (string, bool) {
 	}
 	s, ok := v.(string)
 	return s, ok && s != ""
+}
+
+// --- Refs ---
+
+// AddRefs validates the requested gopedia L1 ids and appends them to the
+// ticket's ref list. Empty input is a no-op (returns nil, nil). Duplicates
+// within the request, empty/over-long ids, and crossing MaxRefsPerTicket are
+// all rejected before the store is touched.
+func (s *Service) AddRefs(ctx context.Context, ticketID uuid.UUID, gopediaL1IDs []string, createdBy string) ([]TicketRef, error) {
+	if len(gopediaL1IDs) == 0 {
+		return nil, nil
+	}
+	if err := validateRefIDs(gopediaL1IDs); err != nil {
+		return nil, err
+	}
+	existing, err := s.store.CountRefs(ctx, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	if existing+len(gopediaL1IDs) > MaxRefsPerTicket {
+		return nil, ErrRefLimitExceeded
+	}
+	return s.store.AddRefs(ctx, ticketID, gopediaL1IDs, createdBy)
+}
+
+// ListRefs returns the ticket's refs in stored order.
+func (s *Service) ListRefs(ctx context.Context, ticketID uuid.UUID) ([]TicketRef, error) {
+	return s.store.ListRefs(ctx, ticketID)
+}
+
+// RemoveRef removes a single ref from a ticket. Idempotent at the store layer.
+func (s *Service) RemoveRef(ctx context.Context, ticketID uuid.UUID, gopediaL1ID string) error {
+	return s.store.RemoveRef(ctx, ticketID, gopediaL1ID)
+}
+
+// ReorderRefs validates ids and reorders the ticket's refs to match the input.
+func (s *Service) ReorderRefs(ctx context.Context, ticketID uuid.UUID, orderedL1IDs []string) error {
+	if err := validateRefIDs(orderedL1IDs); err != nil {
+		return err
+	}
+	return s.store.ReorderRefs(ctx, ticketID, orderedL1IDs)
+}
+
+// validateRefIDs checks per-request ref id constraints: non-empty, length <= 512,
+// no duplicates, and request size within MaxRefsPerTicket. Cumulative limits across
+// existing refs must be enforced separately by the caller (see AddRefs).
+func validateRefIDs(ids []string) error {
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if id == "" || len(id) > MaxRefIDLength {
+			return ErrRefIDInvalid
+		}
+		if seen[id] {
+			return ErrRefIDsDuplicate
+		}
+		seen[id] = true
+	}
+	if len(ids) > MaxRefsPerTicket {
+		return ErrRefLimitExceeded
+	}
+	return nil
+}
+
+// replaceRefs clears existing refs and installs newIDs. Not transactional across
+// the remove/add boundary: a concurrent Update on the same ticket can interleave.
+// Acceptable for v1 (refs are optional/idempotent and races are extremely rare in
+// practice); revisit when SLO requires hard atomicity.
+// TODO: createdBy is empty when called from Update — see replaceRefs call site in Update.
+// Refs added directly via AddRefs carry the actor; refs replaced via Update PATCH do not.
+func (s *Service) replaceRefs(ctx context.Context, ticketID uuid.UUID, newIDs []string, createdBy string) error {
+	existing, err := s.store.ListRefs(ctx, ticketID)
+	if err != nil {
+		return err
+	}
+	for _, r := range existing {
+		if err := s.store.RemoveRef(ctx, ticketID, r.GopediaL1ID); err != nil {
+			return err
+		}
+	}
+	if len(newIDs) > 0 {
+		if _, err := s.store.AddRefs(ctx, ticketID, newIDs, createdBy); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ListTicketsByRef returns ticket ids that reference the given gopedia L1 doc.
+// If `visible` is nil, no visibility filter is applied (caller is unrestricted —
+// e.g., shadow mode with NoopChecker). If `visible` is non-nil, only ids whose
+// UUID appears as a key with value true are returned.
+func (s *Service) ListTicketsByRef(ctx context.Context, gopediaL1ID string, visible map[uuid.UUID]bool) ([]uuid.UUID, error) {
+	if gopediaL1ID == "" || len(gopediaL1ID) > MaxRefIDLength {
+		return nil, ErrRefIDInvalid
+	}
+	ids, err := s.store.ListTicketIDsByRef(ctx, gopediaL1ID)
+	if err != nil {
+		return nil, err
+	}
+	if visible == nil {
+		return ids, nil
+	}
+	out := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if visible[id] {
+			out = append(out, id)
+		}
+	}
+	return out, nil
 }

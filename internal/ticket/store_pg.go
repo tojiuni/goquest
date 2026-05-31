@@ -103,6 +103,11 @@ func (s *pgStore) Get(ctx context.Context, id uuid.UUID) (*Ticket, error) {
 		}
 		return nil, fmt.Errorf("get ticket: %w", err)
 	}
+	refs, err := s.ListRefIDsForTickets(ctx, []uuid.UUID{t.ID})
+	if err != nil {
+		return nil, fmt.Errorf("load refs: %w", err)
+	}
+	t.Refs = refs[t.ID]
 	return t, nil
 }
 
@@ -409,6 +414,20 @@ func (s *pgStore) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int
 		return nil, 0, fmt.Errorf("rows error: %w", err)
 	}
 
+	if len(tickets) > 0 {
+		ids := make([]uuid.UUID, 0, len(tickets))
+		for _, t := range tickets {
+			ids = append(ids, t.ID)
+		}
+		refs, err := s.ListRefIDsForTickets(ctx, ids)
+		if err != nil {
+			return nil, 0, fmt.Errorf("load refs: %w", err)
+		}
+		for _, t := range tickets {
+			t.Refs = refs[t.ID]
+		}
+	}
+
 	return tickets, total, nil
 }
 
@@ -516,6 +535,14 @@ func marshalNullableJSON(v any) ([]byte, error) {
 func isUniqueViolation(err error, constraintName string) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == constraintName
+}
+
+// isUniqueViolationAny returns true when err is any PostgreSQL unique_violation
+// (23505), regardless of which constraint was violated. Used by refs methods
+// where the only unique key is the primary key (ticket_id, gopedia_l1_id).
+func isUniqueViolationAny(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
 var (
@@ -654,4 +681,194 @@ func (s *pgStore) ListOverdue(ctx context.Context) ([]*Ticket, error) {
 		tickets = append(tickets, t)
 	}
 	return tickets, rows.Err()
+}
+
+// --- Refs ---
+
+func (s *pgStore) AddRefs(ctx context.Context, ticketID uuid.UUID, gopediaL1IDs []string, createdBy string) ([]TicketRef, error) {
+	if len(gopediaL1IDs) == 0 {
+		return nil, nil
+	}
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Lock the ticket row to serialize concurrent ref appends and read a stable max(position).
+	var lockID uuid.UUID
+	if err := tx.QueryRow(ctx,
+		`SELECT id FROM tickets WHERE id=$1 FOR UPDATE`, ticketID,
+	).Scan(&lockID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("lock ticket: %w", err)
+	}
+
+	var maxPos *int
+	if err := tx.QueryRow(ctx,
+		`SELECT MAX(position) FROM ticket_refs WHERE ticket_id=$1`, ticketID,
+	).Scan(&maxPos); err != nil {
+		return nil, fmt.Errorf("max pos: %w", err)
+	}
+	nextPos := 0
+	if maxPos != nil {
+		nextPos = *maxPos + 1
+	}
+
+	out := make([]TicketRef, 0, len(gopediaL1IDs))
+	for i, id := range gopediaL1IDs {
+		var r TicketRef
+		err := tx.QueryRow(ctx, `
+			INSERT INTO ticket_refs (ticket_id, gopedia_l1_id, position, created_by)
+			VALUES ($1, $2, $3, $4)
+			RETURNING ticket_id, gopedia_l1_id, position, created_at, created_by`,
+			ticketID, id, nextPos+i, createdBy,
+		).Scan(&r.TicketID, &r.GopediaL1ID, &r.Position, &r.CreatedAt, &r.CreatedBy)
+		if err != nil {
+			if isUniqueViolationAny(err) {
+				return nil, ErrRefConflict
+			}
+			return nil, fmt.Errorf("insert ref %s: %w", id, err)
+		}
+		out = append(out, r)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
+	}
+	return out, nil
+}
+
+func (s *pgStore) ListRefs(ctx context.Context, ticketID uuid.UUID) ([]TicketRef, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT ticket_id, gopedia_l1_id, position, created_at, created_by
+		  FROM ticket_refs
+		 WHERE ticket_id=$1
+		 ORDER BY position ASC`, ticketID)
+	if err != nil {
+		return nil, fmt.Errorf("list refs: %w", err)
+	}
+	defer rows.Close()
+	var out []TicketRef
+	for rows.Next() {
+		var r TicketRef
+		if err := rows.Scan(&r.TicketID, &r.GopediaL1ID, &r.Position, &r.CreatedAt, &r.CreatedBy); err != nil {
+			return nil, fmt.Errorf("scan ref: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *pgStore) RemoveRef(ctx context.Context, ticketID uuid.UUID, gopediaL1ID string) error {
+	_, err := s.db.Exec(ctx,
+		`DELETE FROM ticket_refs WHERE ticket_id=$1 AND gopedia_l1_id=$2`,
+		ticketID, gopediaL1ID)
+	if err != nil {
+		return fmt.Errorf("delete ref: %w", err)
+	}
+	return nil
+}
+
+func (s *pgStore) ReorderRefs(ctx context.Context, ticketID uuid.UUID, orderedL1IDs []string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Verify the proposed set matches the existing set exactly.
+	rows, err := tx.Query(ctx,
+		`SELECT gopedia_l1_id FROM ticket_refs WHERE ticket_id=$1 FOR UPDATE`, ticketID)
+	if err != nil {
+		return fmt.Errorf("select existing refs: %w", err)
+	}
+	existing := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan existing ref: %w", err)
+		}
+		existing[id] = true
+	}
+	rows.Close()
+
+	if len(existing) != len(orderedL1IDs) {
+		return fmt.Errorf("reorder: id count mismatch (existing=%d, given=%d)", len(existing), len(orderedL1IDs))
+	}
+	seen := map[string]bool{}
+	for _, id := range orderedL1IDs {
+		if !existing[id] {
+			return fmt.Errorf("reorder: %s not in existing set", id)
+		}
+		if seen[id] {
+			return fmt.Errorf("reorder: %s duplicated", id)
+		}
+		seen[id] = true
+	}
+
+	for i, id := range orderedL1IDs {
+		if _, err := tx.Exec(ctx,
+			`UPDATE ticket_refs SET position=$1 WHERE ticket_id=$2 AND gopedia_l1_id=$3`,
+			i, ticketID, id); err != nil {
+			return fmt.Errorf("update ref position: %w", err)
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *pgStore) CountRefs(ctx context.Context, ticketID uuid.UUID) (int, error) {
+	var n int
+	err := s.db.QueryRow(ctx,
+		`SELECT COUNT(*) FROM ticket_refs WHERE ticket_id=$1`, ticketID).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count refs: %w", err)
+	}
+	return n, nil
+}
+
+func (s *pgStore) ListTicketIDsByRef(ctx context.Context, gopediaL1ID string) ([]uuid.UUID, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT ticket_id FROM ticket_refs WHERE gopedia_l1_id=$1`, gopediaL1ID)
+	if err != nil {
+		return nil, fmt.Errorf("list ticket ids by ref: %w", err)
+	}
+	defer rows.Close()
+	var out []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan ticket id: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+func (s *pgStore) ListRefIDsForTickets(ctx context.Context, ticketIDs []uuid.UUID) (map[uuid.UUID][]string, error) {
+	if len(ticketIDs) == 0 {
+		return map[uuid.UUID][]string{}, nil
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT ticket_id, gopedia_l1_id
+		  FROM ticket_refs
+		 WHERE ticket_id = ANY($1)
+		 ORDER BY ticket_id, position ASC`, ticketIDs)
+	if err != nil {
+		return nil, fmt.Errorf("list ref ids for tickets: %w", err)
+	}
+	defer rows.Close()
+	out := map[uuid.UUID][]string{}
+	for rows.Next() {
+		var tid uuid.UUID
+		var rid string
+		if err := rows.Scan(&tid, &rid); err != nil {
+			return nil, fmt.Errorf("scan ref row: %w", err)
+		}
+		out[tid] = append(out[tid], rid)
+	}
+	return out, rows.Err()
 }

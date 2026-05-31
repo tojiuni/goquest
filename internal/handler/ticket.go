@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/tojiuni/goquest/internal/audit"
 	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/resolve"
 	"github.com/tojiuni/goquest/internal/spicedb"
@@ -27,10 +28,15 @@ type TicketHandler struct {
 	checker  spicedb.PermissionChecker
 	writer   spicedb.RelationshipWriter
 	resolver ProjectResolver
+	audit    audit.Logger
 }
 
-func NewTicketHandler(svc *ticket.Service, checker spicedb.PermissionChecker, writer spicedb.RelationshipWriter, resolver ProjectResolver) *TicketHandler {
-	return &TicketHandler{svc: svc, checker: checker, writer: writer, resolver: resolver}
+// NewTicketHandler wires the ticket HTTP handlers. The audit parameter is
+// optional: if nil, audit calls are silently skipped (each call site guards
+// with `if h.audit != nil`). This keeps unit tests that don't care about audit
+// from needing a fake logger.
+func NewTicketHandler(svc *ticket.Service, checker spicedb.PermissionChecker, writer spicedb.RelationshipWriter, resolver ProjectResolver, auditLogger audit.Logger) *TicketHandler {
+	return &TicketHandler{svc: svc, checker: checker, writer: writer, resolver: resolver, audit: auditLogger}
 }
 
 func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -384,6 +390,181 @@ func (h *TicketHandler) ListAttempts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"attempts": attempts})
+}
+
+// --- Refs (ticket-scoped) ---
+
+// ListRefs handles GET /api/v1/tickets/{id}/refs. RequireTicketView has already
+// authorized the caller and stashed the ticket; we only need the id.
+func (h *TicketHandler) ListRefs(w http.ResponseWriter, r *http.Request) {
+	tk := auth.TicketFrom(r)
+	if tk == nil {
+		writeError(w, http.StatusInternalServerError, "ticket context missing (RequireTicketView not applied)")
+		return
+	}
+	refs, err := h.svc.ListRefs(r.Context(), tk.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list refs: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"refs": refs})
+}
+
+// AddRefs handles POST /api/v1/tickets/{id}/refs. Body: {"ref_ids": [...]}.
+// Validation/limit errors are surfaced as 4xx with a stable error message.
+func (h *TicketHandler) AddRefs(w http.ResponseWriter, r *http.Request) {
+	tk := auth.TicketFrom(r)
+	if tk == nil {
+		writeError(w, http.StatusInternalServerError, "ticket context missing (RequireTicketView not applied)")
+		return
+	}
+	var body struct {
+		RefIDs []string `json:"ref_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	if len(body.RefIDs) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"refs": []ticket.TicketRef{}})
+		return
+	}
+	actor := auth.RequesterID(r)
+	refs, err := h.svc.AddRefs(r.Context(), tk.ID, body.RefIDs, actor)
+	if err != nil {
+		switch {
+		case errors.Is(err, ticket.ErrRefIDInvalid):
+			writeError(w, http.StatusBadRequest, "invalid ref id (empty or >512 chars)")
+		case errors.Is(err, ticket.ErrRefIDsDuplicate):
+			writeError(w, http.StatusBadRequest, "duplicate ref id in request")
+		case errors.Is(err, ticket.ErrRefLimitExceeded):
+			writeError(w, http.StatusUnprocessableEntity, "max 50 refs per ticket")
+		case errors.Is(err, ticket.ErrRefConflict):
+			writeError(w, http.StatusConflict, "ref already exists for this ticket")
+		default:
+			writeError(w, http.StatusInternalServerError, "add refs: "+err.Error())
+		}
+		return
+	}
+	if h.audit != nil {
+		for _, rf := range refs {
+			h.audit.Record(r.Context(), actor, "ref.add", "ticket", tk.ID.String(), map[string]any{
+				"gopedia_l1_id": rf.GopediaL1ID,
+				"position":      rf.Position,
+			})
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"refs": refs})
+}
+
+// RemoveRef handles DELETE /api/v1/tickets/{id}/refs/{l1_id}. The store-layer
+// RemoveRef is idempotent — removing a never-attached id is also 204.
+func (h *TicketHandler) RemoveRef(w http.ResponseWriter, r *http.Request) {
+	tk := auth.TicketFrom(r)
+	if tk == nil {
+		writeError(w, http.StatusInternalServerError, "ticket context missing (RequireTicketView not applied)")
+		return
+	}
+	l1 := chi.URLParam(r, "l1_id")
+	if l1 == "" {
+		writeError(w, http.StatusBadRequest, "missing l1_id")
+		return
+	}
+	if err := h.svc.RemoveRef(r.Context(), tk.ID, l1); err != nil {
+		writeError(w, http.StatusInternalServerError, "remove ref: "+err.Error())
+		return
+	}
+	if h.audit != nil {
+		h.audit.Record(r.Context(), auth.RequesterID(r), "ref.remove", "ticket", tk.ID.String(), map[string]any{
+			"gopedia_l1_id": l1,
+		})
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ReorderRefs handles PATCH /api/v1/tickets/{id}/refs/reorder.
+// Body: {"ordered_l1_ids": [...]}. Returns the new ordered slice on success.
+func (h *TicketHandler) ReorderRefs(w http.ResponseWriter, r *http.Request) {
+	tk := auth.TicketFrom(r)
+	if tk == nil {
+		writeError(w, http.StatusInternalServerError, "ticket context missing (RequireTicketView not applied)")
+		return
+	}
+	var body struct {
+		OrderedL1IDs []string `json:"ordered_l1_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	if err := h.svc.ReorderRefs(r.Context(), tk.ID, body.OrderedL1IDs); err != nil {
+		switch {
+		case errors.Is(err, ticket.ErrRefIDInvalid):
+			writeError(w, http.StatusBadRequest, "invalid ref id")
+		case errors.Is(err, ticket.ErrRefIDsDuplicate):
+			writeError(w, http.StatusBadRequest, "duplicate ref id")
+		default:
+			writeError(w, http.StatusBadRequest, "reorder: "+err.Error())
+		}
+		return
+	}
+	refs, err := h.svc.ListRefs(r.Context(), tk.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list refs after reorder: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"refs": refs})
+}
+
+// ReverseLookupRefs handles GET /api/v1/refs?gopedia_l1_id=X.
+// Returns the ticket ids that reference the given doc, filtered by the caller's
+// SpiceDB-visible ticket set (via can_view_project). Under shadow (NoopChecker),
+// unrestricted=true skips filtering. No-leak invariant: a caller who can't see
+// ANY tickets must receive 200 + {"ticket_ids": []}, NOT 403/404 — that would
+// confirm the doc's existence (or non-existence) to an unauthorized observer.
+func (h *TicketHandler) ReverseLookupRefs(w http.ResponseWriter, r *http.Request) {
+	docID := r.URL.Query().Get("gopedia_l1_id")
+	if docID == "" {
+		writeError(w, http.StatusBadRequest, "gopedia_l1_id is required")
+		return
+	}
+	if len(docID) > ticket.MaxRefIDLength {
+		writeError(w, http.StatusBadRequest, "gopedia_l1_id too long")
+		return
+	}
+
+	uid := auth.RequesterID(r)
+	visibleIDs, unrestricted, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_project", uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+		return
+	}
+
+	var visible map[uuid.UUID]bool
+	if !unrestricted {
+		visible = make(map[uuid.UUID]bool, len(visibleIDs))
+		for _, s := range visibleIDs {
+			if id, perr := uuid.Parse(s); perr == nil {
+				visible[id] = true
+			}
+		}
+	}
+
+	ids, err := h.svc.ListTicketsByRef(r.Context(), docID, visible)
+	if err != nil {
+		if errors.Is(err, ticket.ErrRefIDInvalid) {
+			writeError(w, http.StatusBadRequest, "invalid gopedia_l1_id")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "lookup: "+err.Error())
+		return
+	}
+	// Always emit a non-nil slice so the JSON literal is `[]` not `null`.
+	strIDs := make([]string, 0, len(ids))
+	for _, id := range ids {
+		strIDs = append(strIDs, id.String())
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ticket_ids": strIDs})
 }
 
 // parseTicketUUIDs parses LookupResources ids into uuids, skipping any that don't
