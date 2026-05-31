@@ -246,6 +246,12 @@ func main() {
 				r.Post("/attempts", ticketH.SubmitAttempt)
 				r.Get("/attempts", ticketH.ListAttempts)
 
+				// ── Gopedia refs (gopedia ref-doc feature) ────────
+				r.Get("/refs", ticketH.ListRefs)
+				r.Post("/refs", ticketH.AddRefs)
+				r.Delete("/refs/{l1_id}", ticketH.RemoveRef)
+				r.Patch("/refs/reorder", ticketH.ReorderRefs)
+
 				// ── Helpdesk: comments (Phase H1 + H5 publish) ───
 				r.Post("/comments", commentH.Create)
 				r.Get("/comments", commentH.List)
@@ -253,6 +259,11 @@ func main() {
 				r.Delete("/comments/{cid}", commentH.Delete)
 				r.Post("/comments/{cid}/publish", commentH.Publish)
 			})
+
+			// Reverse-lookup: which tickets reference a given gopedia doc?
+			// Top-level (no /tickets/{id}/) and gated only by auth — the handler applies
+			// the per-user SpiceDB visibility filter internally.
+			r.Get("/refs", ticketH.ReverseLookupRefs)
 
 			// ── XP Levels ─────────────────────────────────────────
 			r.Get("/xp/levels", xpH.ListLevels)
