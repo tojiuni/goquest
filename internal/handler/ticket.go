@@ -386,6 +386,117 @@ func (h *TicketHandler) ListAttempts(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"attempts": attempts})
 }
 
+// --- Refs (ticket-scoped) ---
+
+// ListRefs handles GET /api/v1/tickets/{id}/refs. RequireTicketView has already
+// authorized the caller and stashed the ticket; we only need the id.
+func (h *TicketHandler) ListRefs(w http.ResponseWriter, r *http.Request) {
+	tk := auth.TicketFrom(r)
+	if tk == nil {
+		writeError(w, http.StatusInternalServerError, "ticket context missing (RequireTicketView not applied)")
+		return
+	}
+	refs, err := h.svc.ListRefs(r.Context(), tk.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list refs: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"refs": refs})
+}
+
+// AddRefs handles POST /api/v1/tickets/{id}/refs. Body: {"ref_ids": [...]}.
+// Validation/limit errors are surfaced as 4xx with a stable error message.
+func (h *TicketHandler) AddRefs(w http.ResponseWriter, r *http.Request) {
+	tk := auth.TicketFrom(r)
+	if tk == nil {
+		writeError(w, http.StatusInternalServerError, "ticket context missing (RequireTicketView not applied)")
+		return
+	}
+	var body struct {
+		RefIDs []string `json:"ref_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	if len(body.RefIDs) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"refs": []ticket.TicketRef{}})
+		return
+	}
+	actor := auth.RequesterID(r)
+	refs, err := h.svc.AddRefs(r.Context(), tk.ID, body.RefIDs, actor)
+	if err != nil {
+		switch {
+		case errors.Is(err, ticket.ErrRefIDInvalid):
+			writeError(w, http.StatusBadRequest, "invalid ref id (empty or >512 chars)")
+		case errors.Is(err, ticket.ErrRefIDsDuplicate):
+			writeError(w, http.StatusBadRequest, "duplicate ref id in request")
+		case errors.Is(err, ticket.ErrRefLimitExceeded):
+			writeError(w, http.StatusUnprocessableEntity, "max 50 refs per ticket")
+		case errors.Is(err, ticket.ErrRefConflict):
+			writeError(w, http.StatusConflict, "ref already exists for this ticket")
+		default:
+			writeError(w, http.StatusInternalServerError, "add refs: "+err.Error())
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"refs": refs})
+}
+
+// RemoveRef handles DELETE /api/v1/tickets/{id}/refs/{l1_id}. The store-layer
+// RemoveRef is idempotent — removing a never-attached id is also 204.
+func (h *TicketHandler) RemoveRef(w http.ResponseWriter, r *http.Request) {
+	tk := auth.TicketFrom(r)
+	if tk == nil {
+		writeError(w, http.StatusInternalServerError, "ticket context missing (RequireTicketView not applied)")
+		return
+	}
+	l1 := chi.URLParam(r, "l1_id")
+	if l1 == "" {
+		writeError(w, http.StatusBadRequest, "missing l1_id")
+		return
+	}
+	if err := h.svc.RemoveRef(r.Context(), tk.ID, l1); err != nil {
+		writeError(w, http.StatusInternalServerError, "remove ref: "+err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ReorderRefs handles PATCH /api/v1/tickets/{id}/refs/reorder.
+// Body: {"ordered_l1_ids": [...]}. Returns the new ordered slice on success.
+func (h *TicketHandler) ReorderRefs(w http.ResponseWriter, r *http.Request) {
+	tk := auth.TicketFrom(r)
+	if tk == nil {
+		writeError(w, http.StatusInternalServerError, "ticket context missing (RequireTicketView not applied)")
+		return
+	}
+	var body struct {
+		OrderedL1IDs []string `json:"ordered_l1_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	if err := h.svc.ReorderRefs(r.Context(), tk.ID, body.OrderedL1IDs); err != nil {
+		switch {
+		case errors.Is(err, ticket.ErrRefIDInvalid):
+			writeError(w, http.StatusBadRequest, "invalid ref id")
+		case errors.Is(err, ticket.ErrRefIDsDuplicate):
+			writeError(w, http.StatusBadRequest, "duplicate ref id")
+		default:
+			writeError(w, http.StatusBadRequest, "reorder: "+err.Error())
+		}
+		return
+	}
+	refs, err := h.svc.ListRefs(r.Context(), tk.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list refs after reorder: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"refs": refs})
+}
+
 // parseTicketUUIDs parses LookupResources ids into uuids, skipping any that don't
 // parse. Always returns a non-nil slice so it is safe as a SQL ANY($) argument.
 func parseTicketUUIDs(ids []string) []uuid.UUID {
