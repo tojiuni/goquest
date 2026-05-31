@@ -410,3 +410,82 @@ func metadataString(m map[string]any, key string) (string, bool) {
 	s, ok := v.(string)
 	return s, ok && s != ""
 }
+
+// --- Refs ---
+
+// AddRefs validates the requested gopedia L1 ids and appends them to the
+// ticket's ref list. Empty input is a no-op (returns nil, nil). Duplicates
+// within the request, empty/over-long ids, and crossing MaxRefsPerTicket are
+// all rejected before the store is touched.
+func (s *Service) AddRefs(ctx context.Context, ticketID uuid.UUID, gopediaL1IDs []string, createdBy string) ([]TicketRef, error) {
+	if len(gopediaL1IDs) == 0 {
+		return nil, nil
+	}
+	seen := map[string]bool{}
+	for _, id := range gopediaL1IDs {
+		if id == "" || len(id) > MaxRefIDLength {
+			return nil, ErrRefIDInvalid
+		}
+		if seen[id] {
+			return nil, ErrRefIDsDuplicate
+		}
+		seen[id] = true
+	}
+	existing, err := s.store.CountRefs(ctx, ticketID)
+	if err != nil {
+		return nil, err
+	}
+	if existing+len(gopediaL1IDs) > MaxRefsPerTicket {
+		return nil, ErrRefLimitExceeded
+	}
+	return s.store.AddRefs(ctx, ticketID, gopediaL1IDs, createdBy)
+}
+
+// ListRefs returns the ticket's refs in stored order.
+func (s *Service) ListRefs(ctx context.Context, ticketID uuid.UUID) ([]TicketRef, error) {
+	return s.store.ListRefs(ctx, ticketID)
+}
+
+// RemoveRef removes a single ref from a ticket. Idempotent at the store layer.
+func (s *Service) RemoveRef(ctx context.Context, ticketID uuid.UUID, gopediaL1ID string) error {
+	return s.store.RemoveRef(ctx, ticketID, gopediaL1ID)
+}
+
+// ReorderRefs validates ids and reorders the ticket's refs to match the input.
+func (s *Service) ReorderRefs(ctx context.Context, ticketID uuid.UUID, orderedL1IDs []string) error {
+	seen := map[string]bool{}
+	for _, id := range orderedL1IDs {
+		if id == "" || len(id) > MaxRefIDLength {
+			return ErrRefIDInvalid
+		}
+		if seen[id] {
+			return ErrRefIDsDuplicate
+		}
+		seen[id] = true
+	}
+	return s.store.ReorderRefs(ctx, ticketID, orderedL1IDs)
+}
+
+// ListTicketsByRef returns ticket ids that reference the given gopedia L1 doc.
+// If `visible` is nil, no visibility filter is applied (caller is unrestricted —
+// e.g., shadow mode with NoopChecker). If `visible` is non-nil, only ids whose
+// UUID appears as a key with value true are returned.
+func (s *Service) ListTicketsByRef(ctx context.Context, gopediaL1ID string, visible map[uuid.UUID]bool) ([]uuid.UUID, error) {
+	if gopediaL1ID == "" || len(gopediaL1ID) > MaxRefIDLength {
+		return nil, ErrRefIDInvalid
+	}
+	ids, err := s.store.ListTicketIDsByRef(ctx, gopediaL1ID)
+	if err != nil {
+		return nil, err
+	}
+	if visible == nil {
+		return ids, nil
+	}
+	out := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if visible[id] {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
