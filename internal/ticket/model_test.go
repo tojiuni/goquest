@@ -113,3 +113,37 @@ func TestTicket_RefsPresentWhenSet(t *testing.T) {
 		t.Errorf("Refs not serialized as ref_ids: %s", string(b))
 	}
 }
+
+func TestTicket_CancellationNoteOmittedWhenNil(t *testing.T) {
+	var tk ticket.Ticket
+	b, _ := json.Marshal(tk)
+	if strings.Contains(string(b), `"cancellation_note"`) {
+		t.Errorf("nil CancellationNote must be omitted: %s", string(b))
+	}
+}
+
+func TestTicket_CancellationNotePresentWhenSet(t *testing.T) {
+	note := "rejected by approver"
+	tk := ticket.Ticket{CancellationNote: &note}
+	b, _ := json.Marshal(tk)
+	if !strings.Contains(string(b), `"cancellation_note":"rejected by approver"`) {
+		t.Errorf("CancellationNote not serialized: %s", string(b))
+	}
+}
+
+func TestUpdateTicketReq_CancellationNoteOmittedWhenNil(t *testing.T) {
+	req := ticket.UpdateTicketReq{}
+	b, _ := json.Marshal(req)
+	if strings.Contains(string(b), `"cancellation_note"`) {
+		t.Errorf("nil CancellationNote must be omitted from UpdateTicketReq: %s", string(b))
+	}
+}
+
+func TestUpdateTicketReq_CancellationNotePresentWhenSet(t *testing.T) {
+	note := "cascade reject"
+	req := ticket.UpdateTicketReq{CancellationNote: &note}
+	b, _ := json.Marshal(req)
+	if !strings.Contains(string(b), `"cancellation_note":"cascade reject"`) {
+		t.Errorf("CancellationNote not in UpdateTicketReq JSON: %s", string(b))
+	}
+}
