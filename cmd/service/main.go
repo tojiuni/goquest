@@ -358,6 +358,13 @@ func main() {
 			r.Route("/contracts/{wf_id}", func(r chi.Router) {
 				r.Post("/approve", contractH.Approve)
 				r.Post("/abort", contractH.Abort)
+				r.Post("/reject", contractH.RejectPlan)
+			})
+
+			// ── Goals proxy (submission gate) ──────────────────────
+			r.Route("/goals/{wf_id}", func(r chi.Router) {
+				r.Post("/submission-approve", contractH.SubmissionApprove)
+				r.Post("/reject", contractH.RejectSubmission)
 			})
 		})
 	})
