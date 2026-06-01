@@ -10,3 +10,8 @@ const (
 	TypeUser      = "user" // shared across services; no goquest/ prefix
 	TypeOrg       = "org"  // shared platform org; no goquest/ prefix
 )
+
+// Permission constants — passed to PermissionChecker.Check.
+const (
+	PermContractApprove = "contract_approve"
+)

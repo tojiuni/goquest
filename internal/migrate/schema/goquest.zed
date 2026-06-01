@@ -15,9 +15,10 @@ definition workspace {
   relation member: user
   relation viewer: user
 
-  permission can_view   = owner + admin + member + viewer
-  permission can_manage = owner + admin
-  permission can_admin  = owner
+  permission can_view        = owner + admin + member + viewer
+  permission can_manage      = owner + admin
+  permission can_admin       = owner
+  permission contract_approve = owner + admin
 }
 
 definition project {
