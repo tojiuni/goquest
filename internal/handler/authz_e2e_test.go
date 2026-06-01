@@ -15,11 +15,14 @@ package handler_test
 // Scenarios map 1:1 to docs/runbooks/authz-core-slice-e2e-scenarios.md (Group A/B/C/D).
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,6 +30,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/tojiuni/goquest/internal/audit"
 	"github.com/tojiuni/goquest/internal/auth"
+	"github.com/tojiuni/goquest/internal/contract"
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/resolve"
 	"github.com/tojiuni/goquest/internal/spicedb"
@@ -567,6 +571,110 @@ func TestE2E_GroupC_Enforce(t *testing.T) {
 	})
 }
 
+// ── memAudit: in-memory audit logger for e2e tests ──────────────────────────────
+
+type memAudit struct {
+	mu      sync.Mutex
+	records []*audit.Entry
+}
+
+func (m *memAudit) Record(_ context.Context, actor, action, targetKind, targetID string, detail map[string]any) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.records = append(m.records, &audit.Entry{
+		OccurredAt: time.Now().UTC(),
+		Actor:      actor,
+		Action:     action,
+		TargetKind: targetKind,
+		TargetID:   targetID,
+		Detail:     detail,
+	})
+}
+
+func (m *memAudit) List(_ context.Context, f audit.ListFilter) ([]*audit.Entry, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*audit.Entry
+	for _, e := range m.records {
+		if f.Action != "" && e.Action != f.Action {
+			continue
+		}
+		if f.TargetID != "" && e.TargetID != f.TargetID {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+// contractApproveChecker is a PermissionChecker stub that grants contract_approve
+// on a specific workspace to a set of allowed user IDs only. All ticket-level
+// methods delegate to a wrapped worldChecker (or return safe defaults if nil).
+type contractApproveChecker struct {
+	workspaceID string              // workspace for which the permission applies
+	allowed     map[string]bool     // userID → may approve
+	inner       spicedb.PermissionChecker // for ticket-check methods (may be nil)
+}
+
+func (c *contractApproveChecker) CanViewTicket(ctx context.Context, id uuid.UUID, user string, vis spicedb.VisibilityMode) (bool, error) {
+	if c.inner != nil {
+		return c.inner.CanViewTicket(ctx, id, user, vis)
+	}
+	return false, nil
+}
+func (c *contractApproveChecker) CanManageTicket(ctx context.Context, id uuid.UUID, user string) (bool, error) {
+	if c.inner != nil {
+		return c.inner.CanManageTicket(ctx, id, user)
+	}
+	return false, nil
+}
+func (c *contractApproveChecker) CanViewProject(ctx context.Context, id uuid.UUID, user string) (bool, error) {
+	if c.inner != nil {
+		return c.inner.CanViewProject(ctx, id, user)
+	}
+	return false, nil
+}
+func (c *contractApproveChecker) Check(_ context.Context, objType, objID, permission, userID string) (bool, error) {
+	if objType == spicedb.TypeWorkspace && objID == c.workspaceID && permission == spicedb.PermContractApprove {
+		return c.allowed[userID], nil
+	}
+	return false, nil
+}
+func (c *contractApproveChecker) VisibleResourceIDs(_ context.Context, _, _, _ string) ([]string, bool, error) {
+	return nil, false, nil
+}
+
+// contractPlaneServer returns a minimal httptest.Server that acts as the upstream
+// contract-plane, returning the expected approve response.
+func contractPlaneServer() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Extract wf_id from path: /contracts/{wf_id}/approve
+		parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+		wfID := ""
+		if len(parts) >= 2 {
+			wfID = parts[1]
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"workflow_id": wfID,
+			"decision":    true,
+		})
+	}))
+}
+
+// contractApproveRouter builds a chi router with the contract handler wired to the
+// real contract.Service (permission check + audit + upstream proxy).
+func contractApproveRouter(checker spicedb.PermissionChecker, auditLog audit.Logger, upstreamURL string) http.Handler {
+	cli := contract.NewClient(upstreamURL, nil)
+	svc := contract.NewService(cli, checker, auditLog)
+	h := handler.NewContractHandler(svc)
+
+	r := chi.NewRouter()
+	r.Post("/api/v1/contracts/{wf_id}/approve", h.Approve)
+	r.Post("/api/v1/contracts/{wf_id}/abort", h.Abort)
+	return r
+}
+
 // ── Group D: known gap (subtask without project invisible under enforce) ────────
 
 func TestE2E_GroupD_SubtaskNoProject(t *testing.T) {
@@ -591,4 +699,110 @@ func TestE2E_GroupD_SubtaskNoProject(t *testing.T) {
 	if rec.Code != 200 || len(sr.Subtasks) != 0 {
 		t.Errorf("D1: expected orphan subtask filtered out (0 subtasks), got %d + %+v", rec.Code, sr.Subtasks)
 	}
+}
+
+// ── Group E: contract_approve permission boundary ───────────────────────────────
+
+// TestE2E_GroupE_ContractApprove exercises the full HTTP stack for the contract
+// approve endpoint:
+//
+//   - E1: user "alice" holds contract_approve on the workspace → POST 200, audit recorded
+//   - E2: user "bob" does NOT hold contract_approve → POST 403, no audit entry
+//   - E3: unauthenticated request (no actor) → POST 401
+//
+// The upstream contract-plane is replaced with an httptest.Server so no real
+// contract service is required. Permission checks are driven by
+// contractApproveChecker (a PermissionChecker stub), so no Postgres or SpiceDB
+// instance is needed.
+func TestE2E_GroupE_ContractApprove(t *testing.T) {
+	// Upstream contract-plane stub.
+	upstream := contractPlaneServer()
+	defer upstream.Close()
+
+	const wsID = "workspace-e2e"
+	const wfID = "wf-test"
+
+	// alice is granted contract_approve on wsID; bob is not.
+	checker := &contractApproveChecker{
+		workspaceID: wsID,
+		allowed:     map[string]bool{"alice": true},
+	}
+	auditLog := &memAudit{}
+	router := contractApproveRouter(checker, auditLog, upstream.URL)
+
+	approveBody := func() *bytes.Reader {
+		b, _ := json.Marshal(map[string]any{"decision": true})
+		return bytes.NewReader(b)
+	}
+
+	t.Run("E1 alice has contract_approve → 200 + audit entry", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v1/contracts/"+wfID+"/approve?workspace_id="+wsID,
+			approveBody())
+		req = asUser(req, "alice")
+
+		rec := do(router, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("want 200, got %d (body=%s)", rec.Code, rec.Body.String())
+		}
+
+		// Verify response contains workflow_id from upstream.
+		var resp map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		if resp["workflow_id"] != wfID {
+			t.Errorf("want workflow_id=%q, got %v", wfID, resp["workflow_id"])
+		}
+
+		// Verify audit_log row was recorded.
+		entries, err := auditLog.List(context.Background(), audit.ListFilter{
+			Action:   "contract.approve",
+			TargetID: wfID,
+		})
+		if err != nil {
+			t.Fatalf("audit list: %v", err)
+		}
+		if len(entries) != 1 {
+			t.Fatalf("want 1 audit entry, got %d", len(entries))
+		}
+		e := entries[0]
+		if e.Actor != "alice" {
+			t.Errorf("audit actor: want %q, got %q", "alice", e.Actor)
+		}
+		if e.TargetKind != "contract" {
+			t.Errorf("audit target_kind: want %q, got %q", "contract", e.TargetKind)
+		}
+	})
+
+	t.Run("E2 bob lacks contract_approve → 403, no audit entry", func(t *testing.T) {
+		countBefore := len(auditLog.records)
+
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v1/contracts/"+wfID+"/approve?workspace_id="+wsID,
+			approveBody())
+		req = asUser(req, "bob")
+
+		rec := do(router, req)
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("want 403, got %d (body=%s)", rec.Code, rec.Body.String())
+		}
+
+		// No new audit entry should have been added.
+		if len(auditLog.records) != countBefore {
+			t.Errorf("audit entries grew from %d to %d on denied request", countBefore, len(auditLog.records))
+		}
+	})
+
+	t.Run("E3 unauthenticated → 401", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost,
+			"/api/v1/contracts/"+wfID+"/approve?workspace_id="+wsID,
+			approveBody())
+		// No asUser() call — no requester ID in context.
+
+		rec := do(router, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("want 401, got %d (body=%s)", rec.Code, rec.Body.String())
+		}
+	})
 }
