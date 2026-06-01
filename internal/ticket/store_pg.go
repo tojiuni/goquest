@@ -128,7 +128,7 @@ const ticketSelectSQL = `
 	       t.domain, t.agent_context, t.metadata,
 	       t.project_id, t.parent_id, t.visibility, t.completion_mode,
 	       t.completion_spec, t.reward_xp, t.due_at, t.callback_url,
-	       t.created_at, t.updated_at, t.completed_at,
+	       t.created_at, t.updated_at, t.completed_at, t.cancellation_note,
 	       COALESCE(
 	         json_agg(json_build_object('id',tg.id,'name',tg.name,'color',tg.color))
 	         FILTER (WHERE tg.id IS NOT NULL),
@@ -277,6 +277,14 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 		callbackURL = &newCallbackURL
 	}
 
+	// cancellation_note: only set when transitioning to cancelled and note is provided.
+	var cancellationNote *string
+	if newStatus == StatusCancelled && req.CancellationNote != nil {
+		cancellationNote = req.CancellationNote
+	} else {
+		cancellationNote = current.CancellationNote
+	}
+
 	now := time.Now().UTC()
 	var completedAt *time.Time
 	if newStatus == StatusCompleted {
@@ -294,7 +302,8 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 			agent_context=$9, metadata=$10,
 			visibility=$11, completion_mode=$12, completion_spec=$13,
 			reward_xp=$14, due_at=$15, callback_url=$16,
-			updated_at=$17, completed_at=$18
+			updated_at=$17, completed_at=$18,
+			cancellation_note=$19
 		WHERE id=$1`,
 		id,
 		titleNamePtr, newTitle, newDescription,
@@ -303,6 +312,7 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 		string(newVisibility), string(newMode), specJSON,
 		newRewardXP, newDueAt, callbackURL,
 		now, completedAt,
+		cancellationNote,
 	)
 	if err != nil {
 		if isUniqueViolation(err, "tickets_project_title_name_key") {
@@ -452,14 +462,15 @@ type scanner interface {
 func scanTicket(s scanner) (*Ticket, error) {
 	t := &Ticket{}
 	var (
-		titleName     *string
-		sourceBot     *string
-		domain        *string
-		agentCtxBytes []byte
-		metaBytes     []byte
-		specBytes     []byte
-		callbackURL   *string
-		tagsBytes     []byte
+		titleName        *string
+		sourceBot        *string
+		domain           *string
+		agentCtxBytes    []byte
+		metaBytes        []byte
+		specBytes        []byte
+		callbackURL      *string
+		tagsBytes        []byte
+		cancellationNote *string
 	)
 
 	err := s.Scan(
@@ -468,7 +479,7 @@ func scanTicket(s scanner) (*Ticket, error) {
 		&domain, &agentCtxBytes, &metaBytes,
 		&t.ProjectID, &t.ParentID, &t.Visibility, &t.CompletionMode,
 		&specBytes, &t.RewardXP, &t.DueAt, &callbackURL,
-		&t.CreatedAt, &t.UpdatedAt, &t.CompletedAt,
+		&t.CreatedAt, &t.UpdatedAt, &t.CompletedAt, &cancellationNote,
 		&tagsBytes,
 		&t.ChildCount,
 		&t.ProjectName, &t.WorkspaceName, &t.ParentTitle,
@@ -482,6 +493,9 @@ func scanTicket(s scanner) (*Ticket, error) {
 	}
 	if sourceBot != nil {
 		t.SourceBot = *sourceBot
+	}
+	if cancellationNote != nil {
+		t.CancellationNote = cancellationNote
 	}
 	if domain != nil {
 		t.Domain = Domain(*domain)

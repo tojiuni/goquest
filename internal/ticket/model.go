@@ -122,6 +122,8 @@ type Ticket struct {
 	WorkspaceName  string         `json:"workspace_name,omitempty"`
 	ProjectName    string         `json:"project_name,omitempty"`
 	ParentTitle    string         `json:"parent_title,omitempty"`
+	// CancellationNote is populated by contract-plane cascade_reject_ticket.
+	CancellationNote *string        `json:"cancellation_note,omitempty"`
 	// PublicToken is a one-time magic-link token included only in the CreateTicket response.
 	// It is not persisted in the tickets table; the underlying token lives in magic_tokens.
 	PublicToken    string         `json:"public_token,omitempty"`
@@ -184,7 +186,8 @@ type UpdateTicketReq struct {
 	// RefIDs replaces the ticket's full ref-doc set on Update.
 	// Semantics: nil (field omitted) = leave refs untouched;
 	// &[]string{} = clear all refs; &[]string{...} = replace with that ordered set.
-	RefIDs         *[]string       `json:"ref_ids,omitempty"`
+	RefIDs           *[]string       `json:"ref_ids,omitempty"`
+	CancellationNote *string         `json:"cancellation_note,omitempty"`
 }
 
 // VisibleTicketIDs carries the caller's SpiceDB-visible ticket ids, split by the
