@@ -207,6 +207,11 @@ type ListTicketsFilter struct {
 	Limit        int
 	Offset       int
 	VisibleFilter *VisibleTicketIDs
+	// SortField is one of: created_at, updated_at, due_at, priority, title,
+	// status, type, domain, assignee_id. Empty → created_at.
+	SortField string
+	// SortOrder is "asc" or "desc". Empty → desc.
+	SortOrder string
 }
 
 // Attempt records a user's answer submission for answer-mode tickets.

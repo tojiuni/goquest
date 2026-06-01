@@ -393,10 +393,11 @@ func (s *pgStore) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int
 		offset = 0
 	}
 
+	sortClause := SortClause(f.SortField, f.SortOrder)
 	listArgs := append(args, limit, offset)
 	rows, err := s.db.Query(ctx,
-		ticketSelectSQL+where+
-			fmt.Sprintf(ticketGroupBySQL+" ORDER BY t.created_at DESC LIMIT $%d OFFSET $%d", i, i+1),
+		ticketSelectSQL+where+ticketGroupBySQL+" "+sortClause+
+			fmt.Sprintf(" LIMIT $%d OFFSET $%d", i, i+1),
 		listArgs...,
 	)
 	if err != nil {

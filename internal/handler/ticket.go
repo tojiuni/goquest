@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -144,6 +145,15 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 	if q.Get("top_level_only") == "true" {
 		f.TopLevelOnly = true
 	}
+
+	sortField := q.Get("_sort")
+	sortOrder := strings.ToLower(q.Get("_order"))
+	if err := ticket.ValidateSortField(sortField); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid _sort field")
+		return
+	}
+	f.SortField = sortField
+	f.SortOrder = sortOrder
 
 	// Visibility: restrict to SpiceDB-visible tickets. Two LookupResources calls —
 	// project-visibility tickets need can_view_project, restricted need
