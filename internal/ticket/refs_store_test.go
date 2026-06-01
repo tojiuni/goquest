@@ -250,9 +250,11 @@ func TestRefs_ListRefIDsForTickets(t *testing.T) {
 	}
 }
 
-// makeTicketWithParent creates a ticket with an optional parent and returns the
+// seedTicketWithParent creates a ticket with an optional parent and returns the
 // full *Ticket (including the assigned ID). Used by TestListReturnsChildCount.
-func makeTicketWithParent(t *testing.T, store ticket.Store, title string, parentID *uuid.UUID) *ticket.Ticket {
+// It extends the simpler seedTicket (refs_service_test.go) with title and
+// parent support so child-count tests can build a real hierarchy.
+func seedTicketWithParent(t *testing.T, store ticket.Store, title string, parentID *uuid.UUID) *ticket.Ticket {
 	t.Helper()
 	tk := &ticket.Ticket{
 		ID:           uuid.New(),
@@ -276,13 +278,13 @@ func TestListReturnsChildCount(t *testing.T) {
 	_, store := setupTestDB(t)
 
 	// Root with two direct children; one child also has one grandchild.
-	root := makeTicketWithParent(t, store, "root", nil)
-	c1 := makeTicketWithParent(t, store, "c1", &root.ID)
-	_ = makeTicketWithParent(t, store, "c2", &root.ID)
-	_ = makeTicketWithParent(t, store, "gc1", &c1.ID)
+	root := seedTicketWithParent(t, store, "root", nil)
+	c1 := seedTicketWithParent(t, store, "c1", &root.ID)
+	_ = seedTicketWithParent(t, store, "c2", &root.ID)
+	_ = seedTicketWithParent(t, store, "gc1", &c1.ID)
 
 	// Leaf root: no children at all.
-	leafRoot := makeTicketWithParent(t, store, "leafRoot", nil)
+	leafRoot := seedTicketWithParent(t, store, "leafRoot", nil)
 
 	tickets, _, err := store.List(ctx, ticket.ListTicketsFilter{TopLevelOnly: true, Limit: 50})
 	if err != nil {
@@ -310,5 +312,14 @@ func TestListReturnsChildCount(t *testing.T) {
 	}
 	if subGot[c1.ID] != 1 {
 		t.Errorf("c1 (intermediate): want child_count=1, got %d", subGot[c1.ID])
+	}
+
+	// Also verify Get returns the same child_count (path uses ticketSelectSQL too).
+	rootGot, err := store.Get(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("get root: %v", err)
+	}
+	if rootGot.ChildCount != 2 {
+		t.Errorf("Get(root): want child_count=2, got %d", rootGot.ChildCount)
 	}
 }

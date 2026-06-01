@@ -115,8 +115,12 @@ func (s *pgStore) Get(ctx context.Context, id uuid.UUID) (*Ticket, error) {
 // Callers append a WHERE clause followed by ticketGroupBySQL.
 //
 // ticketGroupBySQL must list every non-aggregated column that comes from a
-// LEFT-JOINed table (currently p.name, w.name). Add to it whenever a new
-// non-aggregated joined column is added to ticketSelectSQL.
+// LEFT-JOINed table (currently p.name, w.name, pt.title). Add to it whenever
+// a new non-aggregated joined column is added to ticketSelectSQL. Columns from
+// an already-aggregated derived table (like cc.n from the per-parent
+// child_count subquery) are wrapped in MAX/SUM/etc. in the SELECT instead —
+// that satisfies the GROUP BY requirement without changing semantics, since the
+// subquery guarantees one row per parent_id.
 const ticketGroupBySQL = ` GROUP BY t.id, p.name, w.name, pt.title`
 const ticketSelectSQL = `
 	SELECT t.id, t.title_name, t.title, t.description, t.type, t.status, t.priority,
