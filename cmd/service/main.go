@@ -18,6 +18,7 @@ import (
 	"github.com/tojiuni/goquest/internal/apikey"
 
 	"github.com/tojiuni/goquest/internal/audit"
+	"github.com/tojiuni/goquest/internal/contract"
 	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/comment"
 	"github.com/tojiuni/goquest/internal/config"
@@ -170,6 +171,10 @@ func main() {
 	deviceStore := device.NewPGStore(pool)
 	deviceSvc := device.NewService(deviceStore)
 	deviceH := handler.NewDeviceHandler(deviceSvc)
+
+	contractClient := contract.NewClient(cfg.ContractPlaneURL, &http.Client{Timeout: 10 * time.Second})
+	contractSvc := contract.NewService(contractClient, sdbChecker, auditLogger)
+	contractH := handler.NewContractHandler(contractSvc)
 
 	// Adapter: apikey.Service implements VerifyAPIKey (string) but VerifyAPIKeyMeta
 	// returns *apikey.MetaInfo. Wrap it so the auth middleware can take a
@@ -348,6 +353,12 @@ func main() {
 
 			// ── Invitation accept (global, no workspace middleware) ─
 			r.Post("/invitations/{token}/accept", wsH.AcceptInvitation)
+
+			// ── Contracts proxy ────────────────────────────────────
+			r.Route("/contracts/{wf_id}", func(r chi.Router) {
+				r.Post("/approve", contractH.Approve)
+				r.Post("/abort", contractH.Abort)
+			})
 		})
 	})
 

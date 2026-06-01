@@ -3,6 +3,7 @@ package ticket
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"regexp"
@@ -428,6 +429,68 @@ func validateDomain(d Domain) error {
 		return fmt.Errorf("invalid domain: %s", d)
 	}
 	return nil
+}
+
+// --- Sort ---
+
+// ErrInvalidSortField is returned when a _sort query param names a column not
+// in the allowedSortFields whitelist.
+var ErrInvalidSortField = errors.New("invalid sort field")
+
+// allowedSortFields maps user-facing field names to their qualified SQL columns.
+var allowedSortFields = map[string]string{
+	"created_at":  "t.created_at",
+	"updated_at":  "t.updated_at",
+	"due_at":      "t.due_at",
+	"priority":    "t.priority",
+	"title":       "t.title",
+	"status":      "t.status",
+	"type":        "t.type",
+	"domain":      "t.domain",
+	"assignee_id": "t.assignee_id",
+}
+
+// ValidateSortField returns nil for empty (means "use default") or any field in
+// the whitelist, and ErrInvalidSortField otherwise.
+func ValidateSortField(name string) error {
+	if name == "" {
+		return nil
+	}
+	if _, ok := allowedSortFields[name]; !ok {
+		return ErrInvalidSortField
+	}
+	return nil
+}
+
+// SortClause builds the ORDER BY fragment for a List query.
+//
+// Priority ordering semantics: the CASE assigns urgent=0 (lowest integer), so
+// "urgent first" maps to ASC. Callers that want urgent tickets at the top
+// should pass order="asc" (or leave it empty — see below). Default for
+// priority is "asc" so the most critical items appear first; all other fields
+// default to DESC NULLS LAST (newest first).
+func SortClause(field, order string) string {
+	col, ok := allowedSortFields[field]
+	if !ok {
+		col = "t.created_at"
+	}
+
+	dir := "DESC"
+	if order == "asc" || order == "ASC" {
+		dir = "ASC"
+	}
+
+	if col == "t.priority" {
+		// urgent=0, high=1, normal=2, low=3 → ASC means urgent first.
+		// When no explicit order is given, default to ASC for priority so the
+		// most critical items surface at the top.
+		priorityDir := "ASC"
+		if order == "desc" || order == "DESC" {
+			priorityDir = "DESC"
+		}
+		return "ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 ELSE 4 END " + priorityDir
+	}
+	return "ORDER BY " + col + " " + dir + " NULLS LAST"
 }
 
 // metadataString extracts a non-empty string value from a metadata map.
