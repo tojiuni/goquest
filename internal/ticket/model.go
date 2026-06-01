@@ -113,6 +113,11 @@ type Ticket struct {
 	CallbackURL    string         `json:"callback_url,omitempty"`
 	Tags           []Tag          `json:"tags,omitempty"`
 	Refs           []string       `json:"ref_ids,omitempty"`
+	// ChildCount is the number of immediate child tickets (one level only),
+	// populated by store List/Get/ListSubtasks via a LEFT JOIN derived table.
+	// Always set (defaults to 0). UI uses this to decide whether to render an
+	// expander chevron.
+	ChildCount     int            `json:"child_count"`
 	// Denormalized read-only fields populated via JOIN in store queries.
 	WorkspaceName  string         `json:"workspace_name,omitempty"`
 	ProjectName    string         `json:"project_name,omitempty"`

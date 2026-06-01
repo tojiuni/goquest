@@ -249,3 +249,77 @@ func TestRefs_ListRefIDsForTickets(t *testing.T) {
 		t.Errorf("t2 should not be present (or be empty), got %v", m[t2])
 	}
 }
+
+// seedTicketWithParent creates a ticket with an optional parent and returns the
+// full *Ticket (including the assigned ID). Used by TestListReturnsChildCount.
+// It extends the simpler seedTicket (refs_service_test.go) with title and
+// parent support so child-count tests can build a real hierarchy.
+func seedTicketWithParent(t *testing.T, store ticket.Store, title string, parentID *uuid.UUID) *ticket.Ticket {
+	t.Helper()
+	tk := &ticket.Ticket{
+		ID:           uuid.New(),
+		Title:        title,
+		Type:         ticket.TypeTask,
+		Status:       ticket.StatusPending,
+		Priority:     ticket.PriorityNormal,
+		AssigneeType: ticket.AssigneeHuman,
+		RequesterID:  "test@example.com",
+		Visibility:   ticket.VisibilityProject,
+		ParentID:     parentID,
+	}
+	if err := store.Create(context.Background(), tk); err != nil {
+		t.Fatalf("seed ticket %q: %v", title, err)
+	}
+	return tk
+}
+
+func TestListReturnsChildCount(t *testing.T) {
+	ctx := context.Background()
+	_, store := setupTestDB(t)
+
+	// Root with two direct children; one child also has one grandchild.
+	root := seedTicketWithParent(t, store, "root", nil)
+	c1 := seedTicketWithParent(t, store, "c1", &root.ID)
+	_ = seedTicketWithParent(t, store, "c2", &root.ID)
+	_ = seedTicketWithParent(t, store, "gc1", &c1.ID)
+
+	// Leaf root: no children at all.
+	leafRoot := seedTicketWithParent(t, store, "leafRoot", nil)
+
+	tickets, _, err := store.List(ctx, ticket.ListTicketsFilter{TopLevelOnly: true, Limit: 50})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	got := map[uuid.UUID]int{}
+	for _, tk := range tickets {
+		got[tk.ID] = tk.ChildCount
+	}
+	if got[root.ID] != 2 {
+		t.Errorf("root: want child_count=2, got %d", got[root.ID])
+	}
+	if got[leafRoot.ID] != 0 {
+		t.Errorf("leafRoot: want child_count=0, got %d", got[leafRoot.ID])
+	}
+
+	// Intermediate node c1 — fetched via ListSubtasks should also carry child_count.
+	sub, err := store.ListSubtasks(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("subtasks: %v", err)
+	}
+	subGot := map[uuid.UUID]int{}
+	for _, tk := range sub {
+		subGot[tk.ID] = tk.ChildCount
+	}
+	if subGot[c1.ID] != 1 {
+		t.Errorf("c1 (intermediate): want child_count=1, got %d", subGot[c1.ID])
+	}
+
+	// Also verify Get returns the same child_count (path uses ticketSelectSQL too).
+	rootGot, err := store.Get(ctx, root.ID)
+	if err != nil {
+		t.Fatalf("get root: %v", err)
+	}
+	if rootGot.ChildCount != 2 {
+		t.Errorf("Get(root): want child_count=2, got %d", rootGot.ChildCount)
+	}
+}
