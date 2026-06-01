@@ -116,6 +116,7 @@ type Ticket struct {
 	// Denormalized read-only fields populated via JOIN in store queries.
 	WorkspaceName  string         `json:"workspace_name,omitempty"`
 	ProjectName    string         `json:"project_name,omitempty"`
+	ParentTitle    string         `json:"parent_title,omitempty"`
 	// PublicToken is a one-time magic-link token included only in the CreateTicket response.
 	// It is not persisted in the tickets table; the underlying token lives in magic_tokens.
 	PublicToken    string         `json:"public_token,omitempty"`

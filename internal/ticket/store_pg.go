@@ -117,7 +117,7 @@ func (s *pgStore) Get(ctx context.Context, id uuid.UUID) (*Ticket, error) {
 // ticketGroupBySQL must list every non-aggregated column that comes from a
 // LEFT-JOINed table (currently p.name, w.name). Add to it whenever a new
 // non-aggregated joined column is added to ticketSelectSQL.
-const ticketGroupBySQL = ` GROUP BY t.id, p.name, w.name`
+const ticketGroupBySQL = ` GROUP BY t.id, p.name, w.name, pt.title`
 const ticketSelectSQL = `
 	SELECT t.id, t.title_name, t.title, t.description, t.type, t.status, t.priority,
 	       t.assignee_type, t.assignee_id, t.requester_id, t.source_bot,
@@ -131,12 +131,14 @@ const ticketSelectSQL = `
 	         '[]'
 	       ) AS tags,
 	       COALESCE(p.name, '') AS project_name,
-	       COALESCE(w.name, '') AS workspace_name
+	       COALESCE(w.name, '') AS workspace_name,
+	       COALESCE(pt.title, '') AS parent_title
 	FROM tickets t
 	LEFT JOIN ticket_tags tt ON tt.ticket_id = t.id
 	LEFT JOIN tags tg        ON tg.id = tt.tag_id
 	LEFT JOIN projects p     ON p.id = t.project_id
 	LEFT JOIN workspaces w   ON w.id = p.workspace_id
+	LEFT JOIN tickets pt     ON pt.id = t.parent_id
 `
 
 func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq) (*Ticket, error) {
@@ -456,7 +458,7 @@ func scanTicket(s scanner) (*Ticket, error) {
 		&specBytes, &t.RewardXP, &t.DueAt, &callbackURL,
 		&t.CreatedAt, &t.UpdatedAt, &t.CompletedAt,
 		&tagsBytes,
-		&t.ProjectName, &t.WorkspaceName,
+		&t.ProjectName, &t.WorkspaceName, &t.ParentTitle,
 	)
 	if err != nil {
 		return nil, err
