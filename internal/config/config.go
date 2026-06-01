@@ -42,6 +42,9 @@ type Config struct {
 
 	// CORS
 	CORSOrigins []string
+
+	// Contract plane proxy
+	ContractPlaneURL string // env: CONTRACT_PLANE_URL
 }
 
 func Load() *Config {
@@ -78,6 +81,8 @@ func Load() *Config {
 		SpiceDBEnforce:  parseBool(os.Getenv("SPICEDB_ENFORCE"), false),
 
 		CORSOrigins: parseStringSlice(os.Getenv("CORS_ALLOWED_ORIGINS"), []string{"https://toji.homes", "https://www.toji.homes"}),
+
+		ContractPlaneURL: os.Getenv("CONTRACT_PLANE_URL"),
 	}
 }
 
