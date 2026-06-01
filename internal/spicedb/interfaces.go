@@ -2,9 +2,13 @@ package spicedb
 
 import (
 	"context"
+	"errors"
 
 	"github.com/google/uuid"
 )
+
+// ErrForbidden is returned when a permission check denies access.
+var ErrForbidden = errors.New("forbidden")
 
 // PermissionChecker checks fine-grained access.
 type PermissionChecker interface {
