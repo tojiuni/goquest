@@ -186,8 +186,19 @@ func (s *Service) Get(ctx context.Context, actorID, workspaceID, wfID string) (m
 // normalizeStateForIOS rewrites contract-plane's `state` field to the iOS
 // domain value when the workflow is blocked on a human gate.
 // iOS uses state=="gate_pending" as the predicate for showing ApproveBar.
+//
+// contract-plane labels the gate two different ways depending on origin:
+//   - helpdesk origin → gate_state="awaiting_admin" while at submission gate
+//   - bot/manual origin at plan gate → gate_state="running", stage="plan"
+//     (contract-plane never flips gate_state to awaiting_admin for plan-gate
+//      because that derivation only branches on the helpdesk path)
+//
+// Both shapes mean "user must press Approve/Abort". Cover both predicates.
 func normalizeStateForIOS(m map[string]any) {
-	if gs, _ := m["gate_state"].(string); gs == "awaiting_admin" {
+	gs, _ := m["gate_state"].(string)
+	st, _ := m["stage"].(string)
+	state, _ := m["state"].(string)
+	if gs == "awaiting_admin" || (st == "plan" && state == "running") {
 		m["state"] = "gate_pending"
 	}
 }
