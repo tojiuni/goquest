@@ -355,7 +355,9 @@ func main() {
 			r.Post("/invitations/{token}/accept", wsH.AcceptInvitation)
 
 			// ── Contracts proxy ────────────────────────────────────
+			r.Get("/contracts", contractH.List)
 			r.Route("/contracts/{wf_id}", func(r chi.Router) {
+				r.Get("/", contractH.Get)
 				r.Post("/approve", contractH.Approve)
 				r.Post("/abort", contractH.Abort)
 				r.Post("/reject", contractH.RejectPlan)

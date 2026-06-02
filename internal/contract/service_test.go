@@ -17,9 +17,14 @@ type fakeClient struct {
 	abortCalled            bool
 	submissionApproveCalled bool
 	rejectCalled           bool
+	listCalled             bool
+	getCalled              bool
 	lastApprover           string
 	lastStage              string
 	lastReason             string
+	lastQueue              string
+	lastLimit              int
+	lastWFID               string
 	err                    error
 	out                    map[string]any
 }
@@ -43,6 +48,17 @@ func (f *fakeClient) Reject(ctx context.Context, wf, approver, stage, reason str
 	f.lastApprover = approver
 	f.lastStage = stage
 	f.lastReason = reason
+	return f.out, f.err
+}
+func (f *fakeClient) List(ctx context.Context, queue string, limit int) (map[string]any, error) {
+	f.listCalled = true
+	f.lastQueue = queue
+	f.lastLimit = limit
+	return f.out, f.err
+}
+func (f *fakeClient) Get(ctx context.Context, wfID string) (map[string]any, error) {
+	f.getCalled = true
+	f.lastWFID = wfID
 	return f.out, f.err
 }
 
@@ -195,4 +211,74 @@ func TestService_RejectPlan_RecordsAuditAndProxies(t *testing.T) {
 	detail := rec["detail"].(map[string]any)
 	assert.Equal(t, "plan", detail["stage"])
 	assert.Equal(t, "budget exceeded", detail["reason"])
+}
+
+// ── List ──────────────────────────────────────────────────────────────────────
+
+func TestService_List_DeniesWithoutPermission(t *testing.T) {
+	svc := NewService(&fakeClient{}, &fakeChecker{allow: false}, &fakeAudit{})
+	_, err := svc.List(context.Background(), "user-1", "workspace-a", "running", 20)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, spicedb.ErrForbidden)
+}
+
+func TestService_List_TranslatesQueueAndProxies(t *testing.T) {
+	cases := []struct {
+		ios  string
+		want string
+	}{
+		{"gate_pending", "awaiting_plan"},
+		{"running", "running"},
+		{"recent", "terminal"},
+		{"", "all"},
+		{"unknown_value", "all"},
+		// Native passthrough for debugging.
+		{"awaiting_submission", "awaiting_submission"},
+		{"terminal", "terminal"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.ios, func(t *testing.T) {
+			cli := &fakeClient{out: map[string]any{"items": []any{}}}
+			svc := NewService(cli, &fakeChecker{allow: true}, &fakeAudit{})
+			_, err := svc.List(context.Background(), "user-1", "workspace-a", tc.ios, 25)
+			require.NoError(t, err)
+			assert.True(t, cli.listCalled)
+			assert.Equal(t, tc.want, cli.lastQueue)
+			assert.Equal(t, 25, cli.lastLimit)
+		})
+	}
+}
+
+func TestService_List_PropagatesUpstreamError(t *testing.T) {
+	cli := &fakeClient{err: errors.New("contract-plane: 500")}
+	svc := NewService(cli, &fakeChecker{allow: true}, &fakeAudit{})
+	_, err := svc.List(context.Background(), "user-1", "workspace-a", "running", 10)
+	require.Error(t, err)
+}
+
+// ── Get ───────────────────────────────────────────────────────────────────────
+
+func TestService_Get_DeniesWithoutPermission(t *testing.T) {
+	svc := NewService(&fakeClient{}, &fakeChecker{allow: false}, &fakeAudit{})
+	_, err := svc.Get(context.Background(), "user-1", "workspace-a", "wf1")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, spicedb.ErrForbidden)
+}
+
+func TestService_Get_Proxies(t *testing.T) {
+	cli := &fakeClient{out: map[string]any{"workflow_id": "wf1", "state": "running"}}
+	svc := NewService(cli, &fakeChecker{allow: true}, &fakeAudit{})
+	out, err := svc.Get(context.Background(), "user-1", "workspace-a", "wf1")
+	require.NoError(t, err)
+	assert.True(t, cli.getCalled)
+	assert.Equal(t, "wf1", cli.lastWFID)
+	assert.Equal(t, "wf1", out["workflow_id"])
+}
+
+func TestService_Get_PropagatesNotFound(t *testing.T) {
+	cli := &fakeClient{err: ErrNotFound}
+	svc := NewService(cli, &fakeChecker{allow: true}, &fakeAudit{})
+	_, err := svc.Get(context.Background(), "user-1", "workspace-a", "wf-missing")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotFound)
 }

@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/tojiuni/goquest/internal/auth"
+	"github.com/tojiuni/goquest/internal/contract"
 	"github.com/tojiuni/goquest/internal/spicedb"
 )
 
@@ -18,7 +20,16 @@ type ContractService interface {
 	SubmissionApprove(ctx context.Context, actor, workspaceID, wfID string) (map[string]any, error)
 	RejectSubmission(ctx context.Context, actor, workspaceID, wfID, reason string) (map[string]any, error)
 	RejectPlan(ctx context.Context, actor, workspaceID, wfID, reason string) (map[string]any, error)
+	List(ctx context.Context, actor, workspaceID, queue string, limit int) (map[string]any, error)
+	Get(ctx context.Context, actor, workspaceID, wfID string) (map[string]any, error)
 }
+
+// defaultListLimit caps results when the caller omits ?limit.
+const defaultListLimit = 50
+
+// maxListLimit caps the largest single-page response we'll fetch from
+// contract-plane, regardless of what the caller asks for.
+const maxListLimit = 200
 
 // ContractHandler exposes contract workflow HTTP endpoints.
 type ContractHandler struct {
@@ -110,6 +121,58 @@ func (h *ContractHandler) RejectSubmission(w http.ResponseWriter, r *http.Reques
 	}
 	out, err := h.svc.RejectSubmission(r.Context(), actor, workspace, wfID, body.Reason)
 	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// List handles GET /api/v1/contracts?state=<queue>&workspace_id=<ws>&limit=<N>.
+// state is iOS-facing — values: gate_pending, running, recent (mapped server-
+// side to contract-plane queue values). Returns the upstream envelope:
+// {"items": [...], "queue": "...", "count": N, "skipped": M}.
+func (h *ContractHandler) List(w http.ResponseWriter, r *http.Request) {
+	actor := auth.RequesterID(r)
+	if actor == "" {
+		writeError(w, http.StatusUnauthorized, "missing actor")
+		return
+	}
+	workspace := r.URL.Query().Get("workspace_id")
+	if workspace == "" {
+		writeError(w, http.StatusBadRequest, "workspace_id query param required")
+		return
+	}
+	queue := r.URL.Query().Get("state")
+	limit := defaultListLimit
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	if limit > maxListLimit {
+		limit = maxListLimit
+	}
+	out, err := h.svc.List(r.Context(), actor, workspace, queue, limit)
+	if err != nil {
+		h.writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// Get handles GET /api/v1/contracts/{wf_id}?workspace_id=<ws>.
+// Returns the upstream contract-plane detail JSON as-is.
+func (h *ContractHandler) Get(w http.ResponseWriter, r *http.Request) {
+	actor, workspace, wfID, ok := h.extractCommon(w, r)
+	if !ok {
+		return
+	}
+	out, err := h.svc.Get(r.Context(), actor, workspace, wfID)
+	if err != nil {
+		if errors.Is(err, contract.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "contract not found")
+			return
+		}
 		h.writeErr(w, err)
 		return
 	}
