@@ -115,6 +115,52 @@ func (s *Service) RejectPlan(ctx context.Context, actorID, workspaceID, wfID, re
 	return out, nil
 }
 
+// queueMap translates the iOS-facing queue/state name into the contract-plane
+// queue value. Unknown values fall back to "all".
+//
+// iOS semantics → contract-plane queue:
+//   - "gate_pending" → "awaiting_plan"  (workflows blocked on plan approval)
+//   - "running"      → "running"
+//   - "recent"       → "terminal"       (finished — completed/failed/canceled/etc.)
+//   - ""             → "all"
+func queueMap(iosQueue string) string {
+	switch iosQueue {
+	case "gate_pending":
+		return "awaiting_plan"
+	case "running":
+		return "running"
+	case "recent":
+		return "terminal"
+	case "awaiting_submission", "awaiting_plan", "terminal", "all":
+		// Allow callers to pass through native contract-plane values directly,
+		// useful for debugging / future iOS surfaces.
+		return iosQueue
+	case "":
+		return "all"
+	default:
+		return "all"
+	}
+}
+
+// List proxies to contract-plane GET /contracts after permission-checking the
+// caller against workspaceID. iosQueue is translated via queueMap.
+func (s *Service) List(ctx context.Context, actorID, workspaceID, iosQueue string, limit int) (map[string]any, error) {
+	if err := s.ensurePermitted(ctx, actorID, workspaceID); err != nil {
+		return nil, err
+	}
+	return s.client.List(ctx, queueMap(iosQueue), limit)
+}
+
+// Get proxies to contract-plane GET /contracts/{wfID} after permission-checking
+// the caller against workspaceID. Returns ErrNotFound from the underlying
+// client when contract-plane responds 404.
+func (s *Service) Get(ctx context.Context, actorID, workspaceID, wfID string) (map[string]any, error) {
+	if err := s.ensurePermitted(ctx, actorID, workspaceID); err != nil {
+		return nil, err
+	}
+	return s.client.Get(ctx, wfID)
+}
+
 func (s *Service) ensurePermitted(ctx context.Context, actorID, workspaceID string) error {
 	ok, err := s.checker.Check(ctx, spicedb.TypeWorkspace, workspaceID,
 		spicedb.PermContractApprove, actorID)

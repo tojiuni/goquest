@@ -120,3 +120,56 @@ func TestClient_Reject_PlanRoutes_ToContractsPath(t *testing.T) {
 	assert.Equal(t, "plan", seen.Body["stage"])
 	assert.Equal(t, "budget exceeded", seen.Body["reason"])
 }
+
+func TestClient_List_BuildsQueryAndDecodes(t *testing.T) {
+	var seen struct {
+		Path     string
+		Query    string
+		Method   string
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen.Path = r.URL.Path
+		seen.Query = r.URL.RawQuery
+		seen.Method = r.Method
+		_, _ = w.Write([]byte(`{"items":[{"workflow_id":"wf-1"}],"queue":"running","count":1}`))
+	}))
+	defer ts.Close()
+
+	c := NewClient(ts.URL, ts.Client())
+	out, err := c.List(context.Background(), "running", 25)
+	require.NoError(t, err)
+	assert.Equal(t, http.MethodGet, seen.Method)
+	assert.Equal(t, "/contracts", seen.Path)
+	assert.Contains(t, seen.Query, "queue=running")
+	assert.Contains(t, seen.Query, "limit=25")
+	items, _ := out["items"].([]any)
+	require.Len(t, items, 1)
+}
+
+func TestClient_Get_DecodesDetail(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/contracts/wf-xyz", r.URL.Path)
+		_, _ = w.Write([]byte(`{"workflow_id":"wf-xyz","state":"running","gate_state":"awaiting_admin"}`))
+	}))
+	defer ts.Close()
+
+	c := NewClient(ts.URL, ts.Client())
+	out, err := c.Get(context.Background(), "wf-xyz")
+	require.NoError(t, err)
+	assert.Equal(t, "wf-xyz", out["workflow_id"])
+	assert.Equal(t, "awaiting_admin", out["gate_state"])
+}
+
+func TestClient_Get_404ReturnsErrNotFound(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(404)
+		_, _ = w.Write([]byte(`{"detail":"workflow not found"}`))
+	}))
+	defer ts.Close()
+
+	c := NewClient(ts.URL, ts.Client())
+	_, err := c.Get(context.Background(), "wf-missing")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrNotFound)
+}
