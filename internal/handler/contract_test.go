@@ -187,12 +187,14 @@ func TestContractApprove_502_UpstreamError(t *testing.T) {
 	}
 }
 
-func TestContractApprove_400_MissingWorkspace(t *testing.T) {
-	svc := &fakeContractSvc{}
+func TestContractApprove_200_WorkspaceOptional(t *testing.T) {
+	// iOS Goquest sends approve with no workspace_id (the Contracts tab
+	// has no workspace context). Backend must accept and skip the SpiceDB
+	// workspace-scoped check.
+	svc := &fakeContractSvc{approveOut: map[string]any{"ok": true}}
 	h := handler.NewContractHandler(svc)
 	router := contractRouter(h)
 
-	// No workspace_id query param.
 	req := httptest.NewRequest(http.MethodPost,
 		"/api/v1/contracts/wf-123/approve",
 		http.NoBody)
@@ -201,8 +203,11 @@ func TestContractApprove_400_MissingWorkspace(t *testing.T) {
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if svc.lastWS != "" {
+		t.Fatalf("expected empty workspace forwarded to service, got %q", svc.lastWS)
 	}
 }
 
@@ -285,8 +290,8 @@ func TestContractAbort_502_UpstreamError(t *testing.T) {
 	}
 }
 
-func TestContractAbort_400_MissingWorkspace(t *testing.T) {
-	svc := &fakeContractSvc{}
+func TestContractAbort_200_WorkspaceOptional(t *testing.T) {
+	svc := &fakeContractSvc{abortOut: map[string]any{"ok": true}}
 	h := handler.NewContractHandler(svc)
 	router := contractRouter(h)
 
@@ -298,8 +303,11 @@ func TestContractAbort_400_MissingWorkspace(t *testing.T) {
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if svc.lastWS != "" {
+		t.Fatalf("expected empty workspace forwarded to service, got %q", svc.lastWS)
 	}
 }
 
