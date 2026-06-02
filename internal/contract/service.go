@@ -162,6 +162,12 @@ func (s *Service) Get(ctx context.Context, actorID, workspaceID, wfID string) (m
 }
 
 func (s *Service) ensurePermitted(ctx context.Context, actorID, workspaceID string) error {
+	// workspace-scoped check only when caller pinned a workspace. List/Get
+	// without workspace_id (iOS Contracts tab) trust the authenticated
+	// caller identity and let contract-plane return their visible set.
+	if workspaceID == "" {
+		return nil
+	}
 	ok, err := s.checker.Check(ctx, spicedb.TypeWorkspace, workspaceID,
 		spicedb.PermContractApprove, actorID)
 	if err != nil {

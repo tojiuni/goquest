@@ -575,8 +575,9 @@ func TestContractList_401_MissingActor(t *testing.T) {
 	}
 }
 
-func TestContractList_400_MissingWorkspace(t *testing.T) {
-	svc := &fakeContractSvc{}
+func TestContractList_200_WorkspaceOptional(t *testing.T) {
+	// iOS Contracts tab omits workspace_id; backend must still serve.
+	svc := &fakeContractSvc{listOut: map[string]any{"items": []any{}}}
 	h := handler.NewContractHandler(svc)
 	router := contractRouter(h)
 
@@ -587,8 +588,11 @@ func TestContractList_400_MissingWorkspace(t *testing.T) {
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if svc.lastWS != "" {
+		t.Fatalf("expected empty workspace forwarded to service, got %q", svc.lastWS)
 	}
 }
 
@@ -707,8 +711,9 @@ func TestContractGet_404_NotFound(t *testing.T) {
 	}
 }
 
-func TestContractGet_400_MissingWorkspace(t *testing.T) {
-	svc := &fakeContractSvc{}
+func TestContractGet_200_WorkspaceOptional(t *testing.T) {
+	// iOS detail screen omits workspace_id; backend must still serve.
+	svc := &fakeContractSvc{getOut: map[string]any{"workflow_id": "wf-xyz"}}
 	h := handler.NewContractHandler(svc)
 	router := contractRouter(h)
 
@@ -719,8 +724,11 @@ func TestContractGet_400_MissingWorkspace(t *testing.T) {
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if svc.lastWS != "" {
+		t.Fatalf("expected empty workspace forwarded to service, got %q", svc.lastWS)
 	}
 }
 

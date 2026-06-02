@@ -137,11 +137,10 @@ func (h *ContractHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "missing actor")
 		return
 	}
+	// workspace_id is optional on list: when omitted the service returns
+	// contracts the caller has access to across workspaces. iOS sends no
+	// workspace context on its Contracts tab; web includes one when present.
 	workspace := r.URL.Query().Get("workspace_id")
-	if workspace == "" {
-		writeError(w, http.StatusBadRequest, "workspace_id query param required")
-		return
-	}
 	queue := r.URL.Query().Get("state")
 	limit := defaultListLimit
 	if raw := r.URL.Query().Get("limit"); raw != "" {
@@ -161,12 +160,20 @@ func (h *ContractHandler) List(w http.ResponseWriter, r *http.Request) {
 }
 
 // Get handles GET /api/v1/contracts/{wf_id}?workspace_id=<ws>.
-// Returns the upstream contract-plane detail JSON as-is.
+// workspace_id is optional — when present the service enforces caller
+// access to that workspace. Returns the upstream contract-plane detail JSON.
 func (h *ContractHandler) Get(w http.ResponseWriter, r *http.Request) {
-	actor, workspace, wfID, ok := h.extractCommon(w, r)
-	if !ok {
+	actor := auth.RequesterID(r)
+	if actor == "" {
+		writeError(w, http.StatusUnauthorized, "missing actor")
 		return
 	}
+	wfID := chi.URLParam(r, "wf_id")
+	if wfID == "" {
+		writeError(w, http.StatusBadRequest, "wf_id required")
+		return
+	}
+	workspace := r.URL.Query().Get("workspace_id")
 	out, err := h.svc.Get(r.Context(), actor, workspace, wfID)
 	if err != nil {
 		if errors.Is(err, contract.ErrNotFound) {
