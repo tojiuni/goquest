@@ -192,6 +192,9 @@ func (h *ContractHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 // extractCommon pulls actor, workspace_id query param, and wf_id URL param from
 // the request. Writes an appropriate error and returns ok=false on failure.
+// workspace_id is optional — when present, the service enforces caller access
+// to that workspace; when omitted (iOS Contracts surface), the service skips
+// the workspace-scoped SpiceDB check and trusts the authenticated caller.
 func (h *ContractHandler) extractCommon(w http.ResponseWriter, r *http.Request) (actor, workspace, wfID string, ok bool) {
 	actor = auth.RequesterID(r)
 	if actor == "" {
@@ -199,10 +202,6 @@ func (h *ContractHandler) extractCommon(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	workspace = r.URL.Query().Get("workspace_id")
-	if workspace == "" {
-		writeError(w, http.StatusBadRequest, "workspace_id query param required")
-		return
-	}
 	wfID = chi.URLParam(r, "wf_id")
 	if wfID == "" {
 		writeError(w, http.StatusBadRequest, "wf_id required")
