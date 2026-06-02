@@ -128,9 +128,10 @@ func (h *ContractHandler) RejectSubmission(w http.ResponseWriter, r *http.Reques
 }
 
 // List handles GET /api/v1/contracts?state=<queue>&workspace_id=<ws>&limit=<N>.
-// state is iOS-facing — values: gate_pending, running, recent (mapped server-
-// side to contract-plane queue values). Returns the upstream envelope:
-// {"items": [...], "queue": "...", "count": N, "skipped": M}.
+// Accepts the queue selector via either `state` (web pattern) or `queue`
+// (iOS pattern) — iOS Goquest sends `queue=awaiting_plan|running|terminal`
+// directly while the web app sends `state=gate_pending|running|recent`.
+// Both map via queueMap; pass-through values are unchanged.
 func (h *ContractHandler) List(w http.ResponseWriter, r *http.Request) {
 	actor := auth.RequesterID(r)
 	if actor == "" {
@@ -141,7 +142,10 @@ func (h *ContractHandler) List(w http.ResponseWriter, r *http.Request) {
 	// contracts the caller has access to across workspaces. iOS sends no
 	// workspace context on its Contracts tab; web includes one when present.
 	workspace := r.URL.Query().Get("workspace_id")
-	queue := r.URL.Query().Get("state")
+	queue := r.URL.Query().Get("queue")
+	if queue == "" {
+		queue = r.URL.Query().Get("state")
+	}
 	limit := defaultListLimit
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
