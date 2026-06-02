@@ -144,21 +144,52 @@ func queueMap(iosQueue string) string {
 
 // List proxies to contract-plane GET /contracts after permission-checking the
 // caller against workspaceID. iosQueue is translated via queueMap.
+// Each item's `state` is normalized for the iOS Contracts surface — when the
+// upstream workflow is sitting on a human-approval gate (gate_state ==
+// "awaiting_admin"), the iOS-facing state becomes "gate_pending" so the
+// ApproveBar renders on the detail screen.
 func (s *Service) List(ctx context.Context, actorID, workspaceID, iosQueue string, limit int) (map[string]any, error) {
 	if err := s.ensurePermitted(ctx, actorID, workspaceID); err != nil {
 		return nil, err
 	}
-	return s.client.List(ctx, queueMap(iosQueue), limit)
+	out, err := s.client.List(ctx, queueMap(iosQueue), limit)
+	if err != nil {
+		return nil, err
+	}
+	if items, ok := out["items"].([]any); ok {
+		for _, it := range items {
+			if m, ok := it.(map[string]any); ok {
+				normalizeStateForIOS(m)
+			}
+		}
+	}
+	return out, nil
 }
 
 // Get proxies to contract-plane GET /contracts/{wfID} after permission-checking
 // the caller against workspaceID. Returns ErrNotFound from the underlying
-// client when contract-plane responds 404.
+// client when contract-plane responds 404. The response is run through
+// normalizeStateForIOS so detail screens see state=="gate_pending" when human
+// approval is pending.
 func (s *Service) Get(ctx context.Context, actorID, workspaceID, wfID string) (map[string]any, error) {
 	if err := s.ensurePermitted(ctx, actorID, workspaceID); err != nil {
 		return nil, err
 	}
-	return s.client.Get(ctx, wfID)
+	out, err := s.client.Get(ctx, wfID)
+	if err != nil {
+		return nil, err
+	}
+	normalizeStateForIOS(out)
+	return out, nil
+}
+
+// normalizeStateForIOS rewrites contract-plane's `state` field to the iOS
+// domain value when the workflow is blocked on a human gate.
+// iOS uses state=="gate_pending" as the predicate for showing ApproveBar.
+func normalizeStateForIOS(m map[string]any) {
+	if gs, _ := m["gate_state"].(string); gs == "awaiting_admin" {
+		m["state"] = "gate_pending"
+	}
 }
 
 func (s *Service) ensurePermitted(ctx context.Context, actorID, workspaceID string) error {
