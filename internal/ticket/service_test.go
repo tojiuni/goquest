@@ -143,9 +143,10 @@ func (m *mockWebhook) Send(_ context.Context, url string, _ any) error {
 }
 
 type mockNuclex struct {
-	completedCalls        int
-	failedCalls           int
-	pendingApprovalCalls  int
+	completedCalls       int
+	failedCalls          int
+	pendingApprovalCalls int
+	createdCalls         []ticket.Ticket
 }
 
 func (m *mockNuclex) EmitCompleted(_ context.Context, _ *ticket.Ticket) error {
@@ -158,6 +159,10 @@ func (m *mockNuclex) EmitFailed(_ context.Context, _ *ticket.Ticket) error {
 }
 func (m *mockNuclex) EmitPendingApproval(_ context.Context, _ *ticket.Ticket) error {
 	m.pendingApprovalCalls++
+	return nil
+}
+func (m *mockNuclex) EmitCreated(_ context.Context, t *ticket.Ticket) error {
+	m.createdCalls = append(m.createdCalls, *t)
 	return nil
 }
 
@@ -823,5 +828,26 @@ func TestService_Create_DuplicateTitleName(t *testing.T) {
 	}, "user1")
 	if !errors.Is(err, ticket.ErrDuplicateTitleName) {
 		t.Fatalf("expected ErrDuplicateTitleName, got %v", err)
+	}
+}
+
+func TestCreate_EmitsNuclexCreated(t *testing.T) {
+	store := &mockStore{}
+	pub := &mockPublisher{}
+	nux := &mockNuclex{}
+	svc := ticket.NewService(store, pub, nux, nil, nil, nil)
+
+	created, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title: "test nuclex created",
+		Type:  ticket.TypeTask,
+	}, "user1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(nux.createdCalls) != 1 {
+		t.Fatalf("expected 1 EmitCreated call, got %d", len(nux.createdCalls))
+	}
+	if nux.createdCalls[0].ID != created.ID {
+		t.Errorf("EmitCreated called with ticket ID %s, want %s", nux.createdCalls[0].ID, created.ID)
 	}
 }
