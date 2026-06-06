@@ -27,6 +27,7 @@ type NuclexEmitter interface {
 	EmitCompleted(ctx context.Context, t *Ticket) error
 	EmitFailed(ctx context.Context, t *Ticket) error
 	EmitPendingApproval(ctx context.Context, t *Ticket) error
+	EmitCreated(ctx context.Context, t *Ticket) error
 }
 
 // XPAwarder is called when a ticket is completed to grant XP.
@@ -166,6 +167,12 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 
 	if err := s.pub.PublishCreated(ctx, t); err != nil {
 		log.Printf("warn: publish created: %v", err)
+	}
+
+	if s.nuclex != nil {
+		if err := s.nuclex.EmitCreated(ctx, t); err != nil {
+			log.Printf("warn: nuclex emit created: %v", err)
+		}
 	}
 
 	if t.AssigneeType == AssigneeAgent {

@@ -38,6 +38,10 @@ func (e *NuclexEmitter) EmitPendingApproval(ctx context.Context, t *ticket.Ticke
 	return e.emit(ctx, t, "ticket.pending_approval", "warning", "notify_only")
 }
 
+func (e *NuclexEmitter) EmitCreated(ctx context.Context, t *ticket.Ticket) error {
+	return e.emit(ctx, t, "ticket.created", "info", "")
+}
+
 func (e *NuclexEmitter) emit(ctx context.Context, t *ticket.Ticket, eventType, severity, suggestedAction string) error {
 	ctx2 := map[string]any{
 		"ticket_id": t.ID.String(),
