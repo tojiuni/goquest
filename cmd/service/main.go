@@ -242,6 +242,7 @@ func main() {
 			// ── Legacy ticket routes (no project context) ──────────
 			r.Post("/tickets", ticketH.Create)
 			r.Get("/tickets", ticketH.List)
+			r.Get("/tickets/doc/{doc_id}", ticketH.GetDoc)
 			r.Route("/tickets/{id}", func(r chi.Router) {
 				// View-only floor for all /tickets/{id}/* routes. Manage-level checks for
 				// mutating routes (Update/Cancel/Approve) are deferred to a later phase.
