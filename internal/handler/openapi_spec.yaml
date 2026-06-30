@@ -1,0 +1,104 @@
+# Source of truth for the agent-facing ticket OpenAPI spec. Embedded by
+# openapi.go (go:embed) and served at /api/v1/openapi.{yaml,json}.
+openapi: 3.1.0
+info:
+  title: goquest tickets API
+  version: "1.0.0"
+  description: >
+    Agent-facing ticket operations. Authenticate with the X-API-Key header
+    (project-scoped). title_name is a human handle (e.g. goq-vault-portforward),
+    unique per project, matching ^[a-z][a-z0-9]*(-[a-z0-9]+)+$.
+servers:
+  - url: https://goquest.toji.homes/api/v1
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  schemas:
+    CreateTicketReq:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string }
+        title_name:
+          type: string
+          description: lowercase hyphen-separated handle, unique per project
+        description: { type: string }
+        type: { type: string, enum: [task, bug, feature, incident, request] }
+        priority: { type: string, enum: [urgent, high, normal, low] }
+        domain: { type: string, enum: [infra, data, code, monitor, knowledge, pm] }
+        project_id: { type: string, format: uuid }
+        workspace_name: { type: string }
+        workspace_slug: { type: string }
+        project_name: { type: string }
+        parent_id: { type: string, format: uuid }
+        tag_ids: { type: array, items: { type: string, format: uuid } }
+        tag_names:
+          type: array
+          items: { type: string }
+          description: tag names; missing tags are created in the project's workspace
+    Ticket:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        title_name: { type: string }
+        title: { type: string }
+        status: { type: string }
+        priority: { type: string }
+        domain: { type: string }
+        project_id: { type: string, format: uuid }
+security:
+  - ApiKeyAuth: []
+paths:
+  /tickets:
+    post:
+      summary: Create a ticket (idempotent on title_name within a project)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateTicketReq' }
+      responses:
+        '201': { description: created, content: { application/json: { schema: { $ref: '#/components/schemas/Ticket' } } } }
+        '200':
+          description: existing ticket replayed (header X-Idempotent-Replay=true)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Ticket' } } }
+        '400': { description: bad request }
+    get:
+      summary: List tickets
+      parameters:
+        - { name: project_id, in: query, schema: { type: string, format: uuid } }
+        - { name: title_name, in: query, schema: { type: string } }
+        - { name: tag, in: query, schema: { type: string }, description: repeatable tag-name filter (requires project_id) }
+        - { name: status, in: query, schema: { type: string } }
+        - { name: domain, in: query, schema: { type: string } }
+      responses:
+        '200': { description: ok }
+  /tickets/by-name/{title_name}:
+    get:
+      summary: Look up a ticket by title_name within a project
+      parameters:
+        - { name: title_name, in: path, required: true, schema: { type: string } }
+        - { name: workspace, in: query, schema: { type: string } }
+        - { name: workspace_slug, in: query, schema: { type: string } }
+        - { name: project, in: query, schema: { type: string } }
+      responses:
+        '200': { description: ok, content: { application/json: { schema: { $ref: '#/components/schemas/Ticket' } } } }
+        '400': { description: missing/unresolvable identifiers }
+        '404': { description: not found }
+  /tickets/{id}:
+    get:
+      summary: Get a ticket by UUID
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: ok }
+        '404': { description: not found }
+    patch:
+      summary: Update a ticket
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200': { description: ok }

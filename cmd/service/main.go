@@ -137,6 +137,10 @@ func main() {
 	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter, projectResolver, tagResolver, auditLogger)
 	requireTicketView := auth.RequireTicketView(svc, sdbChecker)
 	healthH := handler.NewHealthHandler(pool, rdb)
+	openapiH, err := handler.NewOpenAPIHandler()
+	if err != nil {
+		log.Fatalf("openapi: %v", err)
+	}
 	wsH := handler.NewWorkspaceHandler(wsSvc)
 	pjH := handler.NewProjectHandler(pjSvc)
 	tagH := handler.NewTagHandler(tagSvc)
@@ -216,6 +220,8 @@ func main() {
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Get("/health", healthH.Health)
 		r.Get("/health/deps", healthH.Deps)
+		r.Get("/openapi.json", openapiH.JSON)
+		r.Get("/openapi.yaml", openapiH.YAML)
 
 		// ── Public magic-link endpoints (Phase H3) ─────────────
 		// No JWT required — caller is anonymous and identifies themselves
