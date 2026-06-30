@@ -188,6 +188,13 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (*Ticket, error) {
 	return s.store.Get(ctx, id)
 }
 
+// GetByProjectAndTitleName resolves a ticket by its (project_id, title_name)
+// pair. Used by the create handler to replay an existing ticket idempotently
+// when a duplicate title_name is submitted.
+func (s *Service) GetByProjectAndTitleName(ctx context.Context, projectID uuid.UUID, titleName string) (*Ticket, error) {
+	return s.store.GetByProjectAndTitleName(ctx, projectID, titleName)
+}
+
 func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq) (*Ticket, error) {
 	if req.Title != nil && strings.TrimSpace(*req.Title) == "" {
 		return nil, fmt.Errorf("title cannot be empty")

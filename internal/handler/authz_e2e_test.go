@@ -130,8 +130,30 @@ func (s *memStore) ListAttempts(_ context.Context, _ uuid.UUID) ([]*ticket.Attem
 	return nil, nil
 }
 
-// remaining Store methods are unused by the read paths under test.
-func (s *memStore) Create(_ context.Context, _ *ticket.Ticket) error { return nil }
+// Create mirrors the PG store's partial-unique (project_id, title_name)
+// constraint just enough for the idempotency tests: a second create with a
+// title_name already present in the same project returns ErrDuplicateTitleName.
+// (Read-path tests seed via newMemStore and never call this with a colliding
+// pair, so behavior there is unchanged.)
+func (s *memStore) Create(_ context.Context, t *ticket.Ticket) error {
+	if t.TitleName != "" && t.ProjectID != nil {
+		for _, ex := range s.byID {
+			if ex.TitleName == t.TitleName && ex.ProjectID != nil && *ex.ProjectID == *t.ProjectID {
+				return ticket.ErrDuplicateTitleName
+			}
+		}
+	}
+	return nil
+}
+
+func (s *memStore) GetByProjectAndTitleName(_ context.Context, projectID uuid.UUID, titleName string) (*ticket.Ticket, error) {
+	for _, ex := range s.byID {
+		if ex.ProjectID != nil && *ex.ProjectID == projectID && ex.TitleName == titleName {
+			return ex, nil
+		}
+	}
+	return nil, ticket.ErrNotFound
+}
 func (s *memStore) Update(_ context.Context, _ uuid.UUID, _ ticket.UpdateTicketReq) (*ticket.Ticket, error) {
 	return nil, nil
 }

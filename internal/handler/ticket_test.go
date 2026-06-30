@@ -15,6 +15,7 @@ import (
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/project"
 	"github.com/tojiuni/goquest/internal/resolve"
+	"github.com/tojiuni/goquest/internal/ticket"
 )
 
 // stubResolver implements handler.ProjectResolver for testing.
@@ -169,6 +170,48 @@ func TestCreate_TagResolveInfraError_500(t *testing.T) {
 
 	if rr.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500; body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestCreate_DuplicateTitleNameReplays verifies idempotent create: POSTing a
+// title_name that already exists in the project returns 200 with the existing
+// ticket and the X-Idempotent-Replay header, instead of 409.
+func TestCreate_DuplicateTitleNameReplays(t *testing.T) {
+	pid := uuid.New()
+	existing := &ticket.Ticket{
+		ID:        uuid.New(),
+		TitleName: "goq-dedup-x",
+		Title:     "existing ticket",
+		ProjectID: &pid,
+		Status:    ticket.StatusPending,
+	}
+	store := newMemStore(existing)
+	svc := ticket.NewService(store, nil, nil, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, nil, nil, &stubResolver{}, nil, nil)
+
+	r := ticketRouter(h)
+	body, _ := json.Marshal(map[string]any{
+		"title":      "second attempt, same name",
+		"title_name": "goq-dedup-x",
+		"project_id": pid.String(),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/tickets", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("X-Idempotent-Replay"); got != "true" {
+		t.Errorf("X-Idempotent-Replay = %q, want \"true\"", got)
+	}
+	var gotTicket ticket.Ticket
+	if err := json.Unmarshal(rr.Body.Bytes(), &gotTicket); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if gotTicket.ID != existing.ID {
+		t.Errorf("replayed ticket id = %s, want existing %s", gotTicket.ID, existing.ID)
 	}
 }
 

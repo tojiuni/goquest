@@ -57,6 +57,18 @@ func createSubTicket(t *testing.T, ctx context.Context, store ticket.Store, pare
 	return tk
 }
 
+// TestGetByProjectAndTitleName_NotFound exercises the new lookup's miss path
+// against the real store (no project FK needed). The positive replay path is
+// covered hermetically at the handler level
+// (handler.TestCreate_DuplicateTitleNameReplays).
+func TestGetByProjectAndTitleName_NotFound(t *testing.T) {
+	ctx, store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	_, err := store.GetByProjectAndTitleName(ctx, uuid.New(), "goq-no-such-name")
+	require.ErrorIs(t, err, ticket.ErrNotFound)
+}
+
 func TestStoreGet_PopulatesParentTitle(t *testing.T) {
 	ctx, store, cleanup := newTestStore(t)
 	defer cleanup()

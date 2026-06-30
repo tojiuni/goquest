@@ -111,6 +111,27 @@ func (s *pgStore) Get(ctx context.Context, id uuid.UUID) (*Ticket, error) {
 	return t, nil
 }
 
+// GetByProjectAndTitleName returns the ticket uniquely identified by the
+// (project_id, title_name) pair — the partial-unique index
+// tickets_project_title_name_key. Mirrors Get's projection/scan, filtering on
+// the pair instead of id. Used for idempotent create replay.
+func (s *pgStore) GetByProjectAndTitleName(ctx context.Context, projectID uuid.UUID, titleName string) (*Ticket, error) {
+	row := s.db.QueryRow(ctx, ticketSelectSQL+"WHERE t.project_id = $1 AND t.title_name = $2"+ticketGroupBySQL, projectID, titleName)
+	t, err := scanTicket(row)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, fmt.Errorf("get ticket by project+title_name: %w", err)
+	}
+	refs, err := s.ListRefIDsForTickets(ctx, []uuid.UUID{t.ID})
+	if err != nil {
+		return nil, fmt.Errorf("load refs: %w", err)
+	}
+	t.Refs = refs[t.ID]
+	return t, nil
+}
+
 // ticketSelectSQL is the base SELECT with LEFT JOINs for tags, project, workspace.
 // Callers append a WHERE clause followed by ticketGroupBySQL.
 //

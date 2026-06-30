@@ -102,6 +102,16 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 	t, err := h.svc.Create(r.Context(), req, requesterID)
 	if err != nil {
 		if errors.Is(err, ticket.ErrDuplicateTitleName) {
+			// Idempotent replay: a duplicate title_name can only occur when
+			// project_id is set (per the partial-unique index), so look up the
+			// existing ticket and return it with a replay marker instead of 409.
+			if req.ProjectID != nil && req.TitleName != "" {
+				if existing, gerr := h.svc.GetByProjectAndTitleName(r.Context(), *req.ProjectID, req.TitleName); gerr == nil {
+					w.Header().Set("X-Idempotent-Replay", "true")
+					writeJSON(w, http.StatusOK, existing)
+					return
+				}
+			}
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
