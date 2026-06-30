@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/tojiuni/goquest/internal/audit"
 	"github.com/tojiuni/goquest/internal/auth"
+	"github.com/tojiuni/goquest/internal/project"
 	"github.com/tojiuni/goquest/internal/resolve"
 	"github.com/tojiuni/goquest/internal/spicedb"
 	"github.com/tojiuni/goquest/internal/ticket"
@@ -87,7 +88,12 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 		tagIDs, terr := h.tags.ResolveTagIDs(r.Context(), *req.ProjectID, requesterID, req.TagNames)
 		if terr != nil {
-			writeError(w, http.StatusBadRequest, "resolve tag_names: "+terr.Error())
+			switch {
+			case errors.Is(terr, project.ErrNotFound):
+				writeError(w, http.StatusBadRequest, "resolve tag_names: "+terr.Error())
+			default:
+				writeError(w, http.StatusInternalServerError, "resolve tag_names: "+terr.Error())
+			}
 			return
 		}
 		req.TagIDs = dedupeTagIDs(append(req.TagIDs, tagIDs...))

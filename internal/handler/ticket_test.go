@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/tojiuni/goquest/internal/handler"
+	"github.com/tojiuni/goquest/internal/project"
 	"github.com/tojiuni/goquest/internal/resolve"
 )
 
@@ -105,10 +106,70 @@ func TestTicketCreate_ResolveGenericError_500(t *testing.T) {
 }
 
 // stubTagResolver implements handler.TagResolver for testing.
-type stubTagResolver struct{ ids []uuid.UUID }
+type stubTagResolver struct {
+	ids []uuid.UUID
+	err error
+}
 
 func (s stubTagResolver) ResolveTagIDs(_ context.Context, _ uuid.UUID, _ string, _ []string) ([]uuid.UUID, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
 	return s.ids, nil
+}
+
+// tagNamesRefBody returns a JSON body with a resolvable workspace/project ref
+// plus tag_names — this reaches the tag-resolution branch (after the project is
+// resolved) so the test exercises ResolveTagIDs error mapping.
+func tagNamesRefBody(t *testing.T) *bytes.Reader {
+	t.Helper()
+	b, _ := json.Marshal(map[string]any{
+		"workspace_name": "my-workspace",
+		"project_name":   "my-project",
+		"title":          "test ticket",
+		"tag_names":      []string{"infra"},
+	})
+	return bytes.NewReader(b)
+}
+
+// TestCreate_TagResolveProjectNotFound_400 verifies that an input-class error
+// from the tag resolver (the project disappeared between resolution and tag
+// lookup) maps to 400, mirroring the project-resolver branch.
+func TestCreate_TagResolveProjectNotFound_400(t *testing.T) {
+	pid := uuid.New()
+	resolver := &stubResolver{id: &pid}
+	tags := stubTagResolver{err: project.ErrNotFound}
+	h := handler.NewTicketHandler(nil, nil, nil, resolver, tags, nil)
+
+	r := ticketRouter(h)
+	req := httptest.NewRequest(http.MethodPost, "/tickets", tagNamesRefBody(t))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400; body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestCreate_TagResolveInfraError_500 verifies that an unexpected (infra) error
+// from the tag resolver maps to 500, not 400 — a tag-store DB failure is not the
+// caller's fault.
+func TestCreate_TagResolveInfraError_500(t *testing.T) {
+	pid := uuid.New()
+	resolver := &stubResolver{id: &pid}
+	tags := stubTagResolver{err: errors.New("db down")}
+	h := handler.NewTicketHandler(nil, nil, nil, resolver, tags, nil)
+
+	r := ticketRouter(h)
+	req := httptest.NewRequest(http.MethodPost, "/tickets", tagNamesRefBody(t))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500; body: %s", rr.Code, rr.Body.String())
+	}
 }
 
 // TestCreate_TagNamesRequiresProject verifies that supplying tag_names without
