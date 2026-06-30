@@ -50,3 +50,31 @@ func (svc *Service) Delete(ctx context.Context, id uuid.UUID) error {
 func (svc *Service) ListByWorkspace(ctx context.Context, workspaceID uuid.UUID) ([]*Tag, error) {
 	return svc.store.ListByWorkspace(ctx, workspaceID)
 }
+
+// GetOrCreate returns the workspace tag whose name matches (case-insensitive),
+// creating it when absent. A concurrent creator losing the unique-index race
+// (tags_workspace_lower_name_key) is absorbed by re-reading the now-present row.
+func (svc *Service) GetOrCreate(ctx context.Context, workspaceID uuid.UUID, creatorID, name string) (*Tag, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, errors.New("tag name is required")
+	}
+	existing, err := svc.store.GetByName(ctx, workspaceID, name)
+	if err == nil {
+		return existing, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	created, cerr := svc.Create(ctx, workspaceID, creatorID, CreateReq{Name: name})
+	if cerr == nil {
+		return created, nil
+	}
+	if !errors.Is(cerr, ErrDuplicateName) {
+		return nil, cerr
+	}
+	// Lost the unique-index race: another creator inserted the same name. Re-read.
+	if reread, rerr := svc.store.GetByName(ctx, workspaceID, name); rerr == nil {
+		return reread, nil
+	}
+	return nil, cerr
+}

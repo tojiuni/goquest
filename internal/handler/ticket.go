@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/tojiuni/goquest/internal/audit"
 	"github.com/tojiuni/goquest/internal/auth"
+	"github.com/tojiuni/goquest/internal/project"
 	"github.com/tojiuni/goquest/internal/resolve"
 	"github.com/tojiuni/goquest/internal/spicedb"
 	"github.com/tojiuni/goquest/internal/ticket"
@@ -24,11 +25,19 @@ type ProjectResolver interface {
 	ResolveProjectID(ctx context.Context, ref resolve.Ref) (*uuid.UUID, error)
 }
 
+// TagResolver resolves tag names to tag UUIDs within a project's workspace,
+// creating missing tags. A nil TagResolver on the handler means tag_names is
+// ignored (parity with the nil-able audit logger).
+type TagResolver interface {
+	ResolveTagIDs(ctx context.Context, projectID uuid.UUID, creatorID string, names []string) ([]uuid.UUID, error)
+}
+
 type TicketHandler struct {
 	svc      *ticket.Service
 	checker  spicedb.PermissionChecker
 	writer   spicedb.RelationshipWriter
 	resolver ProjectResolver
+	tags     TagResolver
 	audit    audit.Logger
 }
 
@@ -36,8 +45,8 @@ type TicketHandler struct {
 // optional: if nil, audit calls are silently skipped (each call site guards
 // with `if h.audit != nil`). This keeps unit tests that don't care about audit
 // from needing a fake logger.
-func NewTicketHandler(svc *ticket.Service, checker spicedb.PermissionChecker, writer spicedb.RelationshipWriter, resolver ProjectResolver, auditLogger audit.Logger) *TicketHandler {
-	return &TicketHandler{svc: svc, checker: checker, writer: writer, resolver: resolver, audit: auditLogger}
+func NewTicketHandler(svc *ticket.Service, checker spicedb.PermissionChecker, writer spicedb.RelationshipWriter, resolver ProjectResolver, tags TagResolver, auditLogger audit.Logger) *TicketHandler {
+	return &TicketHandler{svc: svc, checker: checker, writer: writer, resolver: resolver, tags: tags, audit: auditLogger}
 }
 
 func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -71,6 +80,25 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	requesterID := auth.RequesterID(r)
+
+	if len(req.TagNames) > 0 {
+		if h.tags == nil || req.ProjectID == nil {
+			writeError(w, http.StatusBadRequest, "tag_names requires a resolvable project")
+			return
+		}
+		tagIDs, terr := h.tags.ResolveTagIDs(r.Context(), *req.ProjectID, requesterID, req.TagNames)
+		if terr != nil {
+			switch {
+			case errors.Is(terr, project.ErrNotFound):
+				writeError(w, http.StatusBadRequest, "resolve tag_names: "+terr.Error())
+			default:
+				writeError(w, http.StatusInternalServerError, "resolve tag_names: "+terr.Error())
+			}
+			return
+		}
+		req.TagIDs = dedupeTagIDs(append(req.TagIDs, tagIDs...))
+	}
+
 	t, err := h.svc.Create(r.Context(), req, requesterID)
 	if err != nil {
 		if errors.Is(err, ticket.ErrDuplicateTitleName) {
@@ -636,6 +664,19 @@ func parseIntQuery(s string, def int) int {
 		return def
 	}
 	return v
+}
+
+func dedupeTagIDs(ids []uuid.UUID) []uuid.UUID {
+	seen := map[uuid.UUID]struct{}{}
+	out := make([]uuid.UUID, 0, len(ids))
+	for _, id := range ids {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

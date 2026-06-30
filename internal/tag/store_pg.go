@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -22,6 +23,10 @@ func (s *pgStore) Create(ctx context.Context, t *Tag) error {
 		t.ID, t.WorkspaceID, t.Name, t.Color, t.CreatedBy, t.CreatedAt,
 	)
 	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "tags_workspace_lower_name_key" {
+			return ErrDuplicateName
+		}
 		return fmt.Errorf("create tag: %w", err)
 	}
 	return nil
@@ -75,6 +80,13 @@ func (s *pgStore) ListByWorkspace(ctx context.Context, workspaceID uuid.UUID) ([
 	return list, rows.Err()
 }
 
+func (s *pgStore) GetByName(ctx context.Context, workspaceID uuid.UUID, name string) (*Tag, error) {
+	row := s.db.QueryRow(ctx, `
+		SELECT id, workspace_id, name, color, created_by, created_at
+		FROM tags WHERE workspace_id=$1 AND LOWER(name)=LOWER($2)`, workspaceID, name)
+	return scanTag(row)
+}
+
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanTag(s rowScanner) (*Tag, error) {
@@ -90,3 +102,6 @@ func scanTag(s rowScanner) (*Tag, error) {
 }
 
 var ErrNotFound = errors.New("tag: not found")
+
+// ErrDuplicateName indicates a unique-index violation on (workspace_id, lower(name)).
+var ErrDuplicateName = errors.New("tag name already exists in this workspace")
