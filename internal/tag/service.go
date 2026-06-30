@@ -69,7 +69,10 @@ func (svc *Service) GetOrCreate(ctx context.Context, workspaceID uuid.UUID, crea
 	if cerr == nil {
 		return created, nil
 	}
-	// Lost the race: another creator inserted the same name. Re-read.
+	if !errors.Is(cerr, ErrDuplicateName) {
+		return nil, cerr
+	}
+	// Lost the unique-index race: another creator inserted the same name. Re-read.
 	if reread, rerr := svc.store.GetByName(ctx, workspaceID, name); rerr == nil {
 		return reread, nil
 	}

@@ -3,6 +3,7 @@ package tag
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -15,6 +16,9 @@ type mockStore struct {
 	// failCreateOnce: simulate a concurrent insert losing the race (unique
 	// violation) the first time Create is called, then succeed-by-existing.
 	failCreateOnce bool
+	// createErr: when set (and failCreateOnce is false), Create returns this
+	// generic, non-race error instead of inserting.
+	createErr error
 }
 
 func newMockStore() *mockStore { return &mockStore{tags: map[uuid.UUID]*Tag{}} }
@@ -26,7 +30,10 @@ func (m *mockStore) Create(ctx context.Context, t *Tag) error {
 		// Simulate the row already existing (racer committed first).
 		existing := &Tag{ID: uuid.New(), WorkspaceID: t.WorkspaceID, Name: t.Name}
 		m.tags[existing.ID] = existing
-		return errors.New("ERROR: duplicate key value violates unique constraint \"tags_workspace_lower_name_key\" (SQLSTATE 23505)")
+		return ErrDuplicateName
+	}
+	if m.createErr != nil {
+		return m.createErr
 	}
 	m.tags[t.ID] = t
 	return nil
@@ -52,30 +59,11 @@ func (m *mockStore) ListByWorkspace(ctx context.Context, workspaceID uuid.UUID) 
 }
 func (m *mockStore) GetByName(ctx context.Context, workspaceID uuid.UUID, name string) (*Tag, error) {
 	for _, t := range m.tags {
-		if t.WorkspaceID == workspaceID && equalFold(t.Name, name) {
+		if t.WorkspaceID == workspaceID && strings.EqualFold(t.Name, name) {
 			return t, nil
 		}
 	}
 	return nil, ErrNotFound
-}
-
-func equalFold(a, b string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		ca, cb := a[i], b[i]
-		if 'A' <= ca && ca <= 'Z' {
-			ca += 'a' - 'A'
-		}
-		if 'A' <= cb && cb <= 'Z' {
-			cb += 'a' - 'A'
-		}
-		if ca != cb {
-			return false
-		}
-	}
-	return true
 }
 
 func TestGetOrCreate_CreatesWhenMissing(t *testing.T) {
@@ -128,5 +116,18 @@ func TestGetOrCreate_AbsorbsRace(t *testing.T) {
 	}
 	if got.Name != "data" {
 		t.Fatalf("expected re-read tag 'data', got %q", got.Name)
+	}
+}
+
+func TestGetOrCreate_PropagatesCreateError(t *testing.T) {
+	st := newMockStore()
+	wantErr := errors.New("db down")
+	st.createErr = wantErr
+	svc := NewService(st)
+	ws := uuid.New()
+
+	_, err := svc.GetOrCreate(context.Background(), ws, "creator", "infra")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("expected GetOrCreate to propagate create error, got: %v", err)
 	}
 }
