@@ -183,6 +183,28 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 	if q.Get("top_level_only") == "true" {
 		f.TopLevelOnly = true
 	}
+	if tn := q.Get("title_name"); tn != "" {
+		f.TitleName = &tn
+	}
+	if tagNames := q["tag"]; len(tagNames) > 0 {
+		// Tag filtering scopes by workspace, derived from project_id. get-or-create
+		// is acceptable for a filter: an unknown tag name yields zero matches.
+		if h.tags == nil || f.ProjectID == nil {
+			writeError(w, http.StatusBadRequest, "tag filter requires project_id")
+			return
+		}
+		tagIDs, terr := h.tags.ResolveTagIDs(r.Context(), *f.ProjectID, auth.RequesterID(r), tagNames)
+		if terr != nil {
+			switch {
+			case errors.Is(terr, project.ErrNotFound):
+				writeError(w, http.StatusBadRequest, "resolve tag filter: "+terr.Error())
+			default:
+				writeError(w, http.StatusInternalServerError, "resolve tag filter: "+terr.Error())
+			}
+			return
+		}
+		f.TagIDs = tagIDs
+	}
 
 	sortField := q.Get("_sort")
 	sortOrder := strings.ToLower(q.Get("_order"))

@@ -213,6 +213,7 @@ type ListTicketsFilter struct {
 	ParentID     *uuid.UUID
 	TopLevelOnly bool
 	TagIDs       []uuid.UUID
+	TitleName    *string
 	Limit        int
 	Offset       int
 	VisibleFilter *VisibleTicketIDs

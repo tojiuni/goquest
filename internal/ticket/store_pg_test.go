@@ -69,6 +69,40 @@ func TestGetByProjectAndTitleName_NotFound(t *testing.T) {
 	require.ErrorIs(t, err, ticket.ErrNotFound)
 }
 
+// TestList_FilterByTitleName exercises the new title_name list filter against
+// the real store. Uses a unique title_name so the assertion is robust to other
+// rows the shared test DB may contain. (Tag-id filtering is covered by the
+// handler resolve path; its store clause mirrors this one.)
+func TestList_FilterByTitleName(t *testing.T) {
+	ctx, store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	mk := func(name string) *ticket.Ticket {
+		tk := &ticket.Ticket{
+			ID:           uuid.New(),
+			Title:        name,
+			TitleName:    name,
+			Type:         ticket.TypeTask,
+			Status:       ticket.StatusPending,
+			Priority:     ticket.PriorityNormal,
+			AssigneeType: ticket.AssigneeHuman,
+			RequesterID:  "test@example.com",
+			Visibility:   ticket.VisibilityProject,
+		}
+		require.NoError(t, store.Create(ctx, tk))
+		return tk
+	}
+	a := mk("goq-list-filter-a")
+	mk("goq-list-filter-b")
+
+	name := "goq-list-filter-a"
+	got, total, err := store.List(ctx, ticket.ListTicketsFilter{TitleName: &name})
+	require.NoError(t, err)
+	require.Equal(t, 1, total)
+	require.Len(t, got, 1)
+	assert.Equal(t, a.ID, got[0].ID)
+}
+
 func TestStoreGet_PopulatesParentTitle(t *testing.T) {
 	ctx, store, cleanup := newTestStore(t)
 	defer cleanup()

@@ -408,6 +408,18 @@ func (s *pgStore) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int
 	if f.TopLevelOnly {
 		where += " AND t.parent_id IS NULL"
 	}
+	if f.TitleName != nil {
+		where += fmt.Sprintf(" AND t.title_name=$%d", i)
+		args = append(args, *f.TitleName)
+		i++
+	}
+	if len(f.TagIDs) > 0 {
+		// Subquery (not a join predicate) keeps GROUP BY t.id intact and matches
+		// tickets carrying ANY of the requested tags.
+		where += fmt.Sprintf(" AND t.id IN (SELECT ticket_id FROM ticket_tags WHERE tag_id = ANY($%d))", i)
+		args = append(args, f.TagIDs)
+		i++
+	}
 	if f.VisibleFilter != nil {
 		// enforce mode: restrict to SpiceDB-visible tickets, honoring per-ticket
 		// visibility. Empty (non-nil) slices → ANY('{}') is false → ticket excluded.
