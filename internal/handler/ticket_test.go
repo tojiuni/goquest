@@ -106,6 +106,61 @@ func TestTicketCreate_ResolveGenericError_500(t *testing.T) {
 	}
 }
 
+func byNameRouter(h *handler.TicketHandler) http.Handler {
+	r := chi.NewRouter()
+	r.Get("/tickets/by-name/{title_name}", h.GetByName)
+	return r
+}
+
+// TestGetByName_OK: GET /tickets/by-name/{title_name} resolves the project from
+// workspace+project query params and returns the matching ticket (200).
+func TestGetByName_OK(t *testing.T) {
+	pid := uuid.New()
+	tk := &ticket.Ticket{
+		ID:        uuid.New(),
+		TitleName: "goq-byname-x",
+		Title:     "by-name target",
+		ProjectID: &pid,
+		Status:    ticket.StatusPending,
+	}
+	store := newMemStore(tk)
+	svc := ticket.NewService(store, nil, nil, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, nil, nil, &stubResolver{id: &pid}, nil, nil)
+
+	r := byNameRouter(h)
+	req := httptest.NewRequest(http.MethodGet, "/tickets/by-name/goq-byname-x?workspace=w&project=p", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	var got ticket.Ticket
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if got.ID != tk.ID {
+		t.Errorf("ticket id = %s, want %s", got.ID, tk.ID)
+	}
+}
+
+// TestGetByName_MissingProject_400: when the resolver yields no project id (no
+// workspace/project given), the route rejects with 400.
+func TestGetByName_MissingProject_400(t *testing.T) {
+	store := newMemStore()
+	svc := ticket.NewService(store, nil, nil, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, nil, nil, &stubResolver{}, nil, nil)
+
+	r := byNameRouter(h)
+	req := httptest.NewRequest(http.MethodGet, "/tickets/by-name/goq-byname-x", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rr.Code, rr.Body.String())
+	}
+}
+
 // stubTagResolver implements handler.TagResolver for testing.
 type stubTagResolver struct {
 	ids []uuid.UUID

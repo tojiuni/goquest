@@ -137,6 +137,37 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, t)
 }
 
+// GetByName resolves a ticket by its human-readable title_name within a project
+// identified by workspace + project names (no UUIDs required).
+func (h *TicketHandler) GetByName(w http.ResponseWriter, r *http.Request) {
+	titleName := chi.URLParam(r, "title_name")
+	if titleName == "" {
+		writeError(w, http.StatusBadRequest, "title_name is required")
+		return
+	}
+	q := r.URL.Query()
+	ref := resolve.Ref{
+		WorkspaceSlug: q.Get("workspace_slug"),
+		WorkspaceName: q.Get("workspace"),
+		ProjectName:   q.Get("project"),
+	}
+	pid, rerr := h.resolver.ResolveProjectID(r.Context(), ref)
+	if rerr != nil {
+		writeError(w, http.StatusBadRequest, rerr.Error())
+		return
+	}
+	if pid == nil {
+		writeError(w, http.StatusBadRequest, "workspace and project are required")
+		return
+	}
+	t, err := h.svc.GetByProjectAndTitleName(r.Context(), *pid, titleName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "ticket not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
 func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	f := ticket.ListTicketsFilter{

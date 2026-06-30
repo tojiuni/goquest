@@ -244,6 +244,7 @@ func main() {
 			r.Post("/tickets", ticketH.Create)
 			r.Get("/tickets", ticketH.List)
 			r.Get("/tickets/doc/{doc_id}", ticketH.GetDoc)
+			r.Get("/tickets/by-name/{title_name}", ticketH.GetByName)
 			r.Route("/tickets/{id}", func(r chi.Router) {
 				// View-only floor for all /tickets/{id}/* routes. Manage-level checks for
 				// mutating routes (Update/Cancel/Approve) are deferred to a later phase.
