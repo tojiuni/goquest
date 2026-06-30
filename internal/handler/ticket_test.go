@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -60,7 +61,7 @@ func nameRefBody(t *testing.T) *bytes.Reader {
 
 func TestTicketCreate_ResolveWorkspaceNotFound_400(t *testing.T) {
 	resolver := &stubResolver{err: resolve.ErrWorkspaceNotFound}
-	h := handler.NewTicketHandler(nil, nil, nil, resolver, nil)
+	h := handler.NewTicketHandler(nil, nil, nil, resolver, nil, nil)
 
 	r := ticketRouter(h)
 	req := httptest.NewRequest(http.MethodPost, "/tickets", nameRefBody(t))
@@ -75,7 +76,7 @@ func TestTicketCreate_ResolveWorkspaceNotFound_400(t *testing.T) {
 
 func TestTicketCreate_ResolveIncompleteRef_400(t *testing.T) {
 	resolver := &stubResolver{err: resolve.ErrIncompleteRef}
-	h := handler.NewTicketHandler(nil, nil, nil, resolver, nil)
+	h := handler.NewTicketHandler(nil, nil, nil, resolver, nil, nil)
 
 	r := ticketRouter(h)
 	req := httptest.NewRequest(http.MethodPost, "/tickets", nameRefBody(t))
@@ -90,7 +91,7 @@ func TestTicketCreate_ResolveIncompleteRef_400(t *testing.T) {
 
 func TestTicketCreate_ResolveGenericError_500(t *testing.T) {
 	resolver := &stubResolver{err: errors.New("db down")}
-	h := handler.NewTicketHandler(nil, nil, nil, resolver, nil)
+	h := handler.NewTicketHandler(nil, nil, nil, resolver, nil, nil)
 
 	r := ticketRouter(h)
 	req := httptest.NewRequest(http.MethodPost, "/tickets", nameRefBody(t))
@@ -100,5 +101,37 @@ func TestTicketCreate_ResolveGenericError_500(t *testing.T) {
 
 	if rr.Code != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500; body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// stubTagResolver implements handler.TagResolver for testing.
+type stubTagResolver struct{ ids []uuid.UUID }
+
+func (s stubTagResolver) ResolveTagIDs(_ context.Context, _ uuid.UUID, _ string, _ []string) ([]uuid.UUID, error) {
+	return s.ids, nil
+}
+
+// TestCreate_TagNamesRequiresProject verifies that supplying tag_names without
+// a resolvable project (no project_id and no workspace_name/project_name ref)
+// is rejected with 400, even when a TagResolver is wired in.
+func TestCreate_TagNamesRequiresProject(t *testing.T) {
+	resolver := &stubResolver{}
+	h := handler.NewTicketHandler(nil, nil, nil, resolver, stubTagResolver{}, nil)
+
+	r := ticketRouter(h)
+	body, _ := json.Marshal(map[string]any{
+		"title":     "test ticket",
+		"tag_names": []string{"infra"},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/tickets", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body: %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "tag_names requires a resolvable project") {
+		t.Errorf("body = %s, want it to mention %q", rr.Body.String(), "tag_names requires a resolvable project")
 	}
 }

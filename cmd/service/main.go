@@ -129,11 +129,12 @@ func main() {
 	tmplH := handler.NewTemplateHandler(tmplSvc, svc)
 
 	projectResolver := resolve.New(wsStore, pjStore)
+	tagResolver := resolve.NewTagResolver(pjStore, tagSvc)
 	// auditLogger must be constructed before ticketH so ref add/remove handlers
 	// can record audit entries. The audit handler (auditH) reuses the same logger
 	// further down.
 	auditLogger := audit.New(pool)
-	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter, projectResolver, auditLogger)
+	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter, projectResolver, tagResolver, auditLogger)
 	requireTicketView := auth.RequireTicketView(svc, sdbChecker)
 	healthH := handler.NewHealthHandler(pool, rdb)
 	wsH := handler.NewWorkspaceHandler(wsSvc)

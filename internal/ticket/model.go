@@ -163,6 +163,7 @@ type CreateTicketReq struct {
 	DueAt          *time.Time     `json:"due_at,omitempty"`
 	CallbackURL    string         `json:"callback_url,omitempty"`
 	TagIDs         []uuid.UUID    `json:"tag_ids,omitempty"`
+	TagNames       []string       `json:"tag_names,omitempty"`
 	RefIDs         []string       `json:"ref_ids,omitempty"`
 }
 
