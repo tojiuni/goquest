@@ -75,6 +75,13 @@ func (s *pgStore) ListByWorkspace(ctx context.Context, workspaceID uuid.UUID) ([
 	return list, rows.Err()
 }
 
+func (s *pgStore) GetByName(ctx context.Context, workspaceID uuid.UUID, name string) (*Tag, error) {
+	row := s.db.QueryRow(ctx, `
+		SELECT id, workspace_id, name, color, created_by, created_at
+		FROM tags WHERE workspace_id=$1 AND LOWER(name)=LOWER($2)`, workspaceID, name)
+	return scanTag(row)
+}
+
 type rowScanner interface{ Scan(dest ...any) error }
 
 func scanTag(s rowScanner) (*Tag, error) {

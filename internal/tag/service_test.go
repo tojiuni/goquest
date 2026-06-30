@@ -1,117 +1,132 @@
-package tag_test
+package tag
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/tojiuni/goquest/internal/tag"
 )
 
-// --- mock ---
-
+// mockStore implements Store for unit tests.
 type mockStore struct {
-	created *tag.Tag
-	tags    []*tag.Tag
-	err     error
+	tags        map[uuid.UUID]*Tag
+	createCalls int
+	// failCreateOnce: simulate a concurrent insert losing the race (unique
+	// violation) the first time Create is called, then succeed-by-existing.
+	failCreateOnce bool
 }
 
-func (m *mockStore) Create(_ context.Context, t *tag.Tag) error {
-	if m.err != nil {
-		return m.err
+func newMockStore() *mockStore { return &mockStore{tags: map[uuid.UUID]*Tag{}} }
+
+func (m *mockStore) Create(ctx context.Context, t *Tag) error {
+	m.createCalls++
+	if m.failCreateOnce {
+		m.failCreateOnce = false
+		// Simulate the row already existing (racer committed first).
+		existing := &Tag{ID: uuid.New(), WorkspaceID: t.WorkspaceID, Name: t.Name}
+		m.tags[existing.ID] = existing
+		return errors.New("ERROR: duplicate key value violates unique constraint \"tags_workspace_lower_name_key\" (SQLSTATE 23505)")
 	}
-	m.created = t
+	m.tags[t.ID] = t
 	return nil
 }
-
-func (m *mockStore) Get(_ context.Context, _ uuid.UUID) (*tag.Tag, error) {
-	if m.err != nil {
-		return nil, m.err
+func (m *mockStore) Get(ctx context.Context, id uuid.UUID) (*Tag, error) {
+	if t, ok := m.tags[id]; ok {
+		return t, nil
 	}
-	if len(m.tags) > 0 {
-		return m.tags[0], nil
+	return nil, ErrNotFound
+}
+func (m *mockStore) Update(ctx context.Context, id uuid.UUID, req UpdateReq) (*Tag, error) {
+	return nil, errors.New("not used")
+}
+func (m *mockStore) Delete(ctx context.Context, id uuid.UUID) error { return nil }
+func (m *mockStore) ListByWorkspace(ctx context.Context, workspaceID uuid.UUID) ([]*Tag, error) {
+	var out []*Tag
+	for _, t := range m.tags {
+		if t.WorkspaceID == workspaceID {
+			out = append(out, t)
+		}
 	}
-	return nil, tag.ErrNotFound
+	return out, nil
+}
+func (m *mockStore) GetByName(ctx context.Context, workspaceID uuid.UUID, name string) (*Tag, error) {
+	for _, t := range m.tags {
+		if t.WorkspaceID == workspaceID && equalFold(t.Name, name) {
+			return t, nil
+		}
+	}
+	return nil, ErrNotFound
 }
 
-func (m *mockStore) Update(_ context.Context, _ uuid.UUID, _ tag.UpdateReq) (*tag.Tag, error) {
-	if m.err != nil {
-		return nil, m.err
+func equalFold(a, b string) bool {
+	if len(a) != len(b) {
+		return false
 	}
-	if len(m.tags) > 0 {
-		return m.tags[0], nil
+	for i := range a {
+		ca, cb := a[i], b[i]
+		if 'A' <= ca && ca <= 'Z' {
+			ca += 'a' - 'A'
+		}
+		if 'A' <= cb && cb <= 'Z' {
+			cb += 'a' - 'A'
+		}
+		if ca != cb {
+			return false
+		}
 	}
-	return nil, tag.ErrNotFound
+	return true
 }
 
-func (m *mockStore) Delete(_ context.Context, _ uuid.UUID) error { return m.err }
+func TestGetOrCreate_CreatesWhenMissing(t *testing.T) {
+	st := newMockStore()
+	svc := NewService(st)
+	ws := uuid.New()
 
-func (m *mockStore) ListByWorkspace(_ context.Context, _ uuid.UUID) ([]*tag.Tag, error) {
-	return m.tags, m.err
-}
-
-// --- tests ---
-
-func TestTagService_Create_OK(t *testing.T) {
-	svc := tag.NewService(&mockStore{})
-	wsID := uuid.New()
-
-	got, err := svc.Create(context.Background(), wsID, "user1", tag.CreateReq{Name: "backend"})
+	got, err := svc.GetOrCreate(context.Background(), ws, "creator", "infra")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("GetOrCreate: %v", err)
 	}
-	if got.Name != "backend" {
-		t.Errorf("name = %q, want %q", got.Name, "backend")
+	if got.Name != "infra" || got.WorkspaceID != ws {
+		t.Fatalf("unexpected tag: %+v", got)
 	}
-	if got.Color == "" {
-		t.Error("expected default color to be set")
-	}
-	if got.WorkspaceID != wsID {
-		t.Error("workspace_id mismatch")
+	if st.createCalls != 1 {
+		t.Fatalf("expected 1 create call, got %d", st.createCalls)
 	}
 }
 
-func TestTagService_Create_DefaultColor(t *testing.T) {
-	svc := tag.NewService(&mockStore{})
-	got, err := svc.Create(context.Background(), uuid.New(), "u", tag.CreateReq{Name: "ops"})
-	if err != nil {
+func TestGetOrCreate_ReturnsExistingCaseInsensitive(t *testing.T) {
+	st := newMockStore()
+	svc := NewService(st)
+	ws := uuid.New()
+	if _, err := svc.GetOrCreate(context.Background(), ws, "creator", "Infra"); err != nil {
 		t.Fatal(err)
 	}
-	if got.Color != "#1677ff" {
-		t.Errorf("default color = %q, want #1677ff", got.Color)
-	}
-}
+	st.createCalls = 0
 
-func TestTagService_Create_CustomColor(t *testing.T) {
-	svc := tag.NewService(&mockStore{})
-	got, err := svc.Create(context.Background(), uuid.New(), "u", tag.CreateReq{Name: "ops", Color: "#ff0000"})
+	got, err := svc.GetOrCreate(context.Background(), ws, "creator", "infra")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("GetOrCreate: %v", err)
 	}
-	if got.Color != "#ff0000" {
-		t.Errorf("color = %q, want #ff0000", got.Color)
+	if got.Name != "Infra" {
+		t.Fatalf("expected existing tag 'Infra', got %q", got.Name)
 	}
-}
-
-func TestTagService_Create_EmptyNameRejected(t *testing.T) {
-	svc := tag.NewService(&mockStore{})
-	_, err := svc.Create(context.Background(), uuid.New(), "u", tag.CreateReq{Name: "  "})
-	if err == nil {
-		t.Fatal("expected error for blank name")
+	if st.createCalls != 0 {
+		t.Fatalf("expected no create call, got %d", st.createCalls)
 	}
 }
 
-func TestTagService_ListByWorkspace(t *testing.T) {
-	existing := []*tag.Tag{
-		{ID: uuid.New(), Name: "a"},
-		{ID: uuid.New(), Name: "b"},
-	}
-	svc := tag.NewService(&mockStore{tags: existing})
-	list, err := svc.ListByWorkspace(context.Background(), uuid.New())
+func TestGetOrCreate_AbsorbsRace(t *testing.T) {
+	st := newMockStore()
+	st.failCreateOnce = true
+	svc := NewService(st)
+	ws := uuid.New()
+
+	got, err := svc.GetOrCreate(context.Background(), ws, "creator", "data")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("expected race to be absorbed, got error: %v", err)
 	}
-	if len(list) != 2 {
-		t.Errorf("len = %d, want 2", len(list))
+	if got.Name != "data" {
+		t.Fatalf("expected re-read tag 'data', got %q", got.Name)
 	}
 }

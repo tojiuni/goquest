@@ -12,4 +12,5 @@ type Store interface {
 	Update(ctx context.Context, id uuid.UUID, req UpdateReq) (*Tag, error)
 	Delete(ctx context.Context, id uuid.UUID) error
 	ListByWorkspace(ctx context.Context, workspaceID uuid.UUID) ([]*Tag, error)
+	GetByName(ctx context.Context, workspaceID uuid.UUID, name string) (*Tag, error)
 }
