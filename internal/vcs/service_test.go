@@ -142,13 +142,25 @@ func TestProcessPRMergedCompletes(t *testing.T) {
 	tickets := &fakeTickets{byName: map[string]*ticket.Ticket{"goq-foo": tk}}
 	svc := NewService(st, tickets, &fakeComments{})
 	err := svc.Process(context.Background(), "github", VcsEvent{
-		Kind: PRMerged, Repo: "tojiuni/goquest", Branch: "feature/goq-foo",
+		Kind: PRMerged, Repo: "tojiuni/goquest", Branch: "feature/goq-foo", PRBaseRef: "main",
 		PRNumber: 12, PRTitle: "goq-foo done", PRMerged: true, URL: "https://gh/pr/12"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if tk.Status != ticket.StatusCompleted {
 		t.Fatalf("PR merge did not complete ticket: %s", tk.Status)
+	}
+	var prLink *VcsLink
+	for _, l := range st.links {
+		if l.Kind == KindPR {
+			prLink = l
+		}
+	}
+	if prLink == nil {
+		t.Fatalf("expected a PR link, got %+v", st.links)
+	}
+	if prLink.SourceBranch != "feature/goq-foo" || prLink.TargetBranch != "main" {
+		t.Fatalf("bad PR link branches: %+v", prLink)
 	}
 }
 

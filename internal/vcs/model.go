@@ -47,6 +47,7 @@ type VcsEvent struct {
 	PRBody    string
 	PRState   string
 	PRMerged  bool
+	PRBaseRef string // PR base/target branch (head/source ref is carried in Branch)
 	URL       string
 	Actor     string
 }
@@ -74,6 +75,8 @@ type VcsLink struct {
 	URL          string    `json:"url"`
 	State        LinkState `json:"state"`
 	Title        string    `json:"title"`
+	SourceBranch string    `json:"source_branch,omitempty"`
+	TargetBranch string    `json:"target_branch,omitempty"`
 	Actor        string    `json:"actor"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
