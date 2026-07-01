@@ -67,12 +67,12 @@ func (s *pgStore) ListRepos(ctx context.Context) ([]*VcsRepo, error) {
 	return out, rows.Err()
 }
 
-const linkCols = `id, ticket_id, provider, repo_full_name, kind, external_ref, url, state, title, actor, created_at, updated_at`
+const linkCols = `id, ticket_id, provider, repo_full_name, kind, external_ref, url, state, title, source_branch, target_branch, actor, created_at, updated_at`
 
 func scanLink(row rowScanner) (*VcsLink, error) {
 	var l VcsLink
 	if err := row.Scan(&l.ID, &l.TicketID, &l.Provider, &l.RepoFullName, &l.Kind, &l.ExternalRef,
-		&l.URL, &l.State, &l.Title, &l.Actor, &l.CreatedAt, &l.UpdatedAt); err != nil {
+		&l.URL, &l.State, &l.Title, &l.SourceBranch, &l.TargetBranch, &l.Actor, &l.CreatedAt, &l.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -86,13 +86,15 @@ func (s *pgStore) UpsertLink(ctx context.Context, l *VcsLink) (*VcsLink, error) 
 		l.ID = uuid.New()
 	}
 	return scanLink(s.db.QueryRow(ctx, `
-		INSERT INTO vcs_links (id, ticket_id, provider, repo_full_name, kind, external_ref, url, state, title, actor)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		INSERT INTO vcs_links (id, ticket_id, provider, repo_full_name, kind, external_ref, url, state, title, source_branch, target_branch, actor)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		ON CONFLICT (ticket_id, provider, repo_full_name, kind, external_ref) DO UPDATE SET
 			url = EXCLUDED.url, state = EXCLUDED.state, title = EXCLUDED.title,
+			source_branch = EXCLUDED.source_branch, target_branch = EXCLUDED.target_branch,
 			actor = EXCLUDED.actor, updated_at = now()
 		RETURNING `+linkCols,
-		l.ID, l.TicketID, l.Provider, l.RepoFullName, l.Kind, l.ExternalRef, l.URL, l.State, l.Title, l.Actor))
+		l.ID, l.TicketID, l.Provider, l.RepoFullName, l.Kind, l.ExternalRef, l.URL, l.State, l.Title,
+		l.SourceBranch, l.TargetBranch, l.Actor))
 }
 
 func (s *pgStore) GetBranchLink(ctx context.Context, provider, repoFullName, branch string) (*VcsLink, error) {

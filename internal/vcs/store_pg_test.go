@@ -62,12 +62,17 @@ func TestUpsertLinkIdempotent(t *testing.T) {
 	ctx := context.Background()
 	tid := makeFixtureTicket(t, pool)
 
-	l := &VcsLink{TicketID: tid, Provider: "github", RepoFullName: "o/r", Kind: KindPR, ExternalRef: "12", State: StateOpen}
+	l := &VcsLink{TicketID: tid, Provider: "github", RepoFullName: "o/r", Kind: KindPR, ExternalRef: "12", State: StateOpen,
+		SourceBranch: "feature/goq-foo", TargetBranch: "main"}
 	first, err := s.UpsertLink(ctx, l)
 	if err != nil {
 		t.Fatal(err)
 	}
-	l2 := &VcsLink{TicketID: tid, Provider: "github", RepoFullName: "o/r", Kind: KindPR, ExternalRef: "12", State: StateMerged}
+	if first.SourceBranch != "feature/goq-foo" || first.TargetBranch != "main" {
+		t.Fatalf("branches not persisted: %+v", first)
+	}
+	l2 := &VcsLink{TicketID: tid, Provider: "github", RepoFullName: "o/r", Kind: KindPR, ExternalRef: "12", State: StateMerged,
+		SourceBranch: "feature/goq-foo", TargetBranch: "develop"}
 	second, err := s.UpsertLink(ctx, l2)
 	if err != nil {
 		t.Fatal(err)
@@ -77,5 +82,8 @@ func TestUpsertLinkIdempotent(t *testing.T) {
 	}
 	if second.State != StateMerged {
 		t.Fatalf("state not updated: %s", second.State)
+	}
+	if second.TargetBranch != "develop" {
+		t.Fatalf("target_branch not updated on redelivery: %+v", second)
 	}
 }

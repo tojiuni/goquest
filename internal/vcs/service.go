@@ -55,6 +55,10 @@ func (s *Service) Process(ctx context.Context, provider string, ev VcsEvent) err
 			TicketID: t.ID, Provider: provider, RepoFullName: ev.Repo,
 			Kind: kind, ExternalRef: ref, URL: ev.URL, State: state, Title: title, Actor: ev.Actor,
 		}
+		if kind == KindPR {
+			link.SourceBranch = ev.Branch
+			link.TargetBranch = ev.PRBaseRef
+		}
 		if _, err := s.store.UpsertLink(ctx, link); err != nil {
 			return err
 		}

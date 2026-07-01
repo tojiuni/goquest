@@ -30,7 +30,7 @@ func TestGitHubVerify(t *testing.T) {
 }
 
 func TestGitHubParsePullRequestMerged(t *testing.T) {
-	body := `{"action":"closed","pull_request":{"number":12,"title":"goq-foo done","body":"closes goq-foo","state":"closed","merged":true,"html_url":"https://gh/pr/12","head":{"ref":"feature/goq-foo"}},"repository":{"full_name":"tojiuni/goquest"},"sender":{"login":"alice"}}`
+	body := `{"action":"closed","pull_request":{"number":12,"title":"goq-foo done","body":"closes goq-foo","state":"closed","merged":true,"html_url":"https://gh/pr/12","head":{"ref":"feature/goq-foo"},"base":{"ref":"main"}},"repository":{"full_name":"tojiuni/goquest"},"sender":{"login":"alice"}}`
 	evs, err := NewGitHub().Parse("pull_request", []byte(body))
 	if err != nil {
 		t.Fatal(err)
@@ -41,6 +41,9 @@ func TestGitHubParsePullRequestMerged(t *testing.T) {
 	e := evs[0]
 	if e.Repo != "tojiuni/goquest" || e.PRNumber != 12 || e.Branch != "feature/goq-foo" || !e.PRMerged {
 		t.Fatalf("bad event: %+v", e)
+	}
+	if e.PRBaseRef != "main" {
+		t.Fatalf("bad PRBaseRef: %+v", e)
 	}
 }
 

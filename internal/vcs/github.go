@@ -105,6 +105,9 @@ func (*GitHub) Parse(eventType string, body []byte) ([]VcsEvent, error) {
 				Head    struct {
 					Ref string `json:"ref"`
 				} `json:"head"`
+				Base struct {
+					Ref string `json:"ref"`
+				} `json:"base"`
 			} `json:"pull_request"`
 			Repository struct {
 				FullName string `json:"full_name"`
@@ -130,7 +133,7 @@ func (*GitHub) Parse(eventType string, body []byte) ([]VcsEvent, error) {
 		return []VcsEvent{{
 			Kind: kind, Repo: p.Repository.FullName, Branch: p.PullRequest.Head.Ref,
 			PRNumber: p.PullRequest.Number, PRTitle: p.PullRequest.Title, PRBody: p.PullRequest.Body,
-			PRState: p.PullRequest.State, PRMerged: p.PullRequest.Merged,
+			PRState: p.PullRequest.State, PRMerged: p.PullRequest.Merged, PRBaseRef: p.PullRequest.Base.Ref,
 			URL: p.PullRequest.HTMLURL, Actor: p.Sender.Login,
 		}}, nil
 	}
