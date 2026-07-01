@@ -7,27 +7,61 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/tojiuni/goquest/internal/migrate"
+	"github.com/tojiuni/goquest/internal/ticket"
 )
 
+// testPool connects to the integration database named by GOQUEST_TEST_DATABASE_URL
+// (the same env var the other PG integration tests use). It runs migrations so
+// the vcs_* and tickets tables exist, then returns a ready pool.
 func testPool(t *testing.T) *pgxpool.Pool {
-	dsn := os.Getenv("TEST_DATABASE_URL")
+	dsn := os.Getenv("GOQUEST_TEST_DATABASE_URL")
 	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set")
+		t.Skip("GOQUEST_TEST_DATABASE_URL not set; skipping PG integration test")
 	}
-	pool, err := pgxpool.New(context.Background(), dsn)
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
-		t.Fatalf("connect: %v", err)
+		t.Skipf("connect test DB (%s): %v", dsn, err)
+	}
+	if err := migrate.Run(ctx, pool); err != nil {
+		pool.Close()
+		t.Fatalf("migrate: %v", err)
 	}
 	t.Cleanup(pool.Close)
 	return pool
+}
+
+// makeFixtureTicket seeds a real tickets row so vcs_links.ticket_id → tickets(id)
+// is satisfied, then registers cleanup (CASCADE also removes any linked vcs_links).
+func makeFixtureTicket(t *testing.T, pool *pgxpool.Pool) uuid.UUID {
+	t.Helper()
+	tk := &ticket.Ticket{
+		ID:           uuid.New(),
+		Title:        "vcs-link-test",
+		Type:         ticket.TypeTask,
+		Status:       ticket.StatusPending,
+		Priority:     ticket.PriorityNormal,
+		AssigneeType: ticket.AssigneeHuman,
+		RequesterID:  "test@example.com",
+		Visibility:   ticket.VisibilityProject,
+	}
+	if err := ticket.NewPGStore(pool).Create(context.Background(), tk); err != nil {
+		t.Fatalf("seed ticket: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM tickets WHERE id=$1`, tk.ID)
+	})
+	return tk.ID
 }
 
 func TestUpsertLinkIdempotent(t *testing.T) {
 	pool := testPool(t)
 	s := NewPGStore(pool)
 	ctx := context.Background()
-	tid := uuid.New()
-	// (test assumes a tickets row exists or FK deferred; if FK blocks, insert a fixture ticket first.)
+	tid := makeFixtureTicket(t, pool)
+
 	l := &VcsLink{TicketID: tid, Provider: "github", RepoFullName: "o/r", Kind: KindPR, ExternalRef: "12", State: StateOpen}
 	first, err := s.UpsertLink(ctx, l)
 	if err != nil {
