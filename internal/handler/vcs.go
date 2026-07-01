@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 
 	"github.com/tojiuni/goquest/internal/resolve"
@@ -39,7 +40,8 @@ func (h *VCSHandler) GitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	if h.svc != nil {
 		for _, ev := range events {
 			if perr := h.svc.Process(r.Context(), h.gh.Name(), ev); perr != nil {
-				// log and continue; a failed link should not 500 the webhook
+				// a failed link should not 500 the webhook
+				log.Printf("vcs webhook Process %s/%s: %v (continuing)", h.gh.Name(), ev.Kind, perr)
 				continue
 			}
 		}
