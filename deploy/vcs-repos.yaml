@@ -1,0 +1,57 @@
+# goquest VCS repo connection manifest — declarative source of truth for which
+# git repositories auto-link to goquest tickets (branches / commits / PRs whose
+# text contains a ticket title_name).
+#
+# Apply (idempotent) with the reconcile tool:
+#   go run ./cmd/vcs-reconcile --manifest deploy/vcs-repos.yaml
+# Env required:
+#   GOQUEST_URL      base URL of the goquest API (e.g. http://goquest-service.goquest.svc.cluster.local:8080)
+#   GOQUEST_TOKEN    goquest API key (X-API-Key)
+#   WEBHOOK_SECRET   HMAC secret configured as VCS_GITHUB_WEBHOOK_SECRET on the server
+#   GITHUB_TOKEN_<OWNER>   GitHub token per repo owner, owner upper-cased with '-'->'_'
+#                          (e.g. GITHUB_TOKEN_TOJIUNI, GITHUB_TOKEN_LYCKABC)
+#
+# The tool, per repo: ensures the project exists (creates it if missing),
+# registers the repo->project mapping in goquest, and ensures a GitHub webhook
+# to webhook_url with the events below. Re-running only fills gaps.
+
+webhook_url: https://goquest.toji.homes/api/v1/vcs/webhooks/github
+events: [push, pull_request, create, delete]
+
+defaults:
+  workspace: toji-1604dd
+  auto_transition: true
+  merge_target: completed
+
+# repo: "owner/name" as on GitHub. project: goquest project the repo links into
+# (title_names in that repo's branches/PRs match tickets in this project).
+# Override workspace/auto_transition/merge_target per repo when needed.
+repos:
+  - repo: tojiuni/goquest
+    project: goquest
+  - repo: tojiuni/goquest-mcp
+    project: goquest
+  - repo: tojiuni/cogito
+    project: cogito
+  - repo: tojiuni/toji-ci
+    project: toji-ci
+  - repo: tojiuni/administration
+    project: administration
+  - repo: tojiuni/brain
+    project: brain
+  - repo: tojiuni/toji
+    project: toji
+  - repo: tojiuni/geneso
+    project: geneso
+  - repo: tojiuni/marketing
+    project: marketing
+  - repo: tojiuni/gardener_gopedia
+    project: gardener
+  - repo: tojiuni/whoami
+    project: whoami
+  - repo: tojiuni/neunexus
+    project: neunexus
+  - repo: Lyckabc/toji-homes
+    project: toji-homes
+  - repo: Lyckabc/whoami-ui
+    project: whoami-ui
