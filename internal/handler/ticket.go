@@ -18,6 +18,7 @@ import (
 	"github.com/tojiuni/goquest/internal/resolve"
 	"github.com/tojiuni/goquest/internal/spicedb"
 	"github.com/tojiuni/goquest/internal/ticket"
+	"github.com/tojiuni/goquest/internal/vcs"
 )
 
 // ProjectResolver resolves a name-based project reference to a project UUID.
@@ -32,6 +33,21 @@ type TagResolver interface {
 	ResolveTagIDs(ctx context.Context, projectID uuid.UUID, creatorID string, names []string) ([]uuid.UUID, error)
 }
 
+// LinksProvider supplies a ticket's VCS links (implemented by *vcs.Service).
+// Declared here rather than in internal/ticket to avoid a ticket->vcs import
+// cycle: internal/vcs already depends on internal/ticket.
+type LinksProvider interface {
+	LinksForTicket(ctx context.Context, ticketID uuid.UUID) ([]vcs.VcsLink, error)
+}
+
+// ticketWithLinks is the GET response shape: the ticket's own JSON fields
+// (promoted) plus vcs_links. Kept in the handler package to avoid a
+// ticket->vcs import cycle.
+type ticketWithLinks struct {
+	*ticket.Ticket
+	VcsLinks []vcs.VcsLink `json:"vcs_links,omitempty"`
+}
+
 type TicketHandler struct {
 	svc      *ticket.Service
 	checker  spicedb.PermissionChecker
@@ -39,14 +55,15 @@ type TicketHandler struct {
 	resolver ProjectResolver
 	tags     TagResolver
 	audit    audit.Logger
+	links    LinksProvider
 }
 
-// NewTicketHandler wires the ticket HTTP handlers. The audit parameter is
-// optional: if nil, audit calls are silently skipped (each call site guards
-// with `if h.audit != nil`). This keeps unit tests that don't care about audit
-// from needing a fake logger.
-func NewTicketHandler(svc *ticket.Service, checker spicedb.PermissionChecker, writer spicedb.RelationshipWriter, resolver ProjectResolver, tags TagResolver, auditLogger audit.Logger) *TicketHandler {
-	return &TicketHandler{svc: svc, checker: checker, writer: writer, resolver: resolver, tags: tags, audit: auditLogger}
+// NewTicketHandler wires the ticket HTTP handlers. The audit and links
+// parameters are optional: if nil, audit calls / vcs_links embedding are
+// silently skipped (each call site guards with a nil check). This keeps unit
+// tests that don't care about audit or vcs from needing a fake.
+func NewTicketHandler(svc *ticket.Service, checker spicedb.PermissionChecker, writer spicedb.RelationshipWriter, resolver ProjectResolver, tags TagResolver, auditLogger audit.Logger, links LinksProvider) *TicketHandler {
+	return &TicketHandler{svc: svc, checker: checker, writer: writer, resolver: resolver, tags: tags, audit: auditLogger, links: links}
 }
 
 func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
@@ -165,7 +182,11 @@ func (h *TicketHandler) GetByName(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "ticket not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, t)
+	var links []vcs.VcsLink
+	if h.links != nil {
+		links, _ = h.links.LinksForTicket(r.Context(), t.ID)
+	}
+	writeJSON(w, http.StatusOK, ticketWithLinks{Ticket: t, VcsLinks: links})
 }
 
 func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -295,7 +316,11 @@ func (h *TicketHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "ticket context missing (RequireTicketView not applied)")
 		return
 	}
-	writeJSON(w, http.StatusOK, t)
+	var links []vcs.VcsLink
+	if h.links != nil {
+		links, _ = h.links.LinksForTicket(r.Context(), t.ID)
+	}
+	writeJSON(w, http.StatusOK, ticketWithLinks{Ticket: t, VcsLinks: links})
 }
 
 func (h *TicketHandler) Update(w http.ResponseWriter, r *http.Request) {

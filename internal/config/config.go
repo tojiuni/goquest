@@ -29,6 +29,9 @@ type Config struct {
 	SMTPPassword string
 	SMTPFrom     string
 
+	// VCS webhook (Task 5)
+	VCSGitHubWebhookSecret string
+
 	GoquestServiceURL  string
 	GoquestAPIKey      string
 	DefaultProjectID   string
@@ -69,6 +72,8 @@ func Load() *Config {
 		SMTPUser:     os.Getenv("SMTP_USER"),
 		SMTPPassword: os.Getenv("SMTP_PASSWORD"),
 		SMTPFrom:     envOrDefault("SMTP_FROM", "Goquest <noreply@toji.homes>"),
+
+		VCSGitHubWebhookSecret: os.Getenv("VCS_GITHUB_WEBHOOK_SECRET"),
 
 		GoquestServiceURL:  os.Getenv("GOQUEST_SERVICE_URL"),
 		GoquestAPIKey:      os.Getenv("GOQUEST_API_KEY"),

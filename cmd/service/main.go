@@ -18,10 +18,10 @@ import (
 	"github.com/tojiuni/goquest/internal/apikey"
 
 	"github.com/tojiuni/goquest/internal/audit"
-	"github.com/tojiuni/goquest/internal/contract"
 	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/comment"
 	"github.com/tojiuni/goquest/internal/config"
+	"github.com/tojiuni/goquest/internal/contract"
 	"github.com/tojiuni/goquest/internal/device"
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/integration"
@@ -39,6 +39,7 @@ import (
 	"github.com/tojiuni/goquest/internal/tag"
 	"github.com/tojiuni/goquest/internal/template"
 	"github.com/tojiuni/goquest/internal/ticket"
+	"github.com/tojiuni/goquest/internal/vcs"
 	"github.com/tojiuni/goquest/internal/webhook"
 	"github.com/tojiuni/goquest/internal/workspace"
 	"github.com/tojiuni/goquest/internal/xp"
@@ -130,11 +131,25 @@ func main() {
 
 	projectResolver := resolve.New(wsStore, pjStore)
 	tagResolver := resolve.NewTagResolver(pjStore, tagSvc)
+
+	commentStore := comment.NewPGStore(pool)
+	commentSvc := comment.NewService(commentStore)
+	// Phase H3: customer-token contexts (magic-link) MUST NOT see internal comments.
+	commentH := handler.NewCommentHandler(commentSvc, func(r *http.Request) bool {
+		return !auth.IsCustomerRequest(r)
+	})
+
+	// vcsSvc must be constructed before ticketH, which takes it as the
+	// ticket-GET links provider (embeds vcs_links without ticket->vcs import).
+	vcsStore := vcs.NewPGStore(pool)
+	vcsSvc := vcs.NewService(vcsStore, svc, commentSvc)
+	vcsH := handler.NewVCSHandler(vcsSvc, vcs.NewGitHub(), projectResolver, cfg.VCSGitHubWebhookSecret)
+
 	// auditLogger must be constructed before ticketH so ref add/remove handlers
 	// can record audit entries. The audit handler (auditH) reuses the same logger
 	// further down.
 	auditLogger := audit.New(pool)
-	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter, projectResolver, tagResolver, auditLogger)
+	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter, projectResolver, tagResolver, auditLogger, vcsSvc)
 	requireTicketView := auth.RequireTicketView(svc, sdbChecker)
 	healthH := handler.NewHealthHandler(pool, rdb)
 	openapiH, err := handler.NewOpenAPIHandler()
@@ -145,13 +160,6 @@ func main() {
 	pjH := handler.NewProjectHandler(pjSvc)
 	tagH := handler.NewTagHandler(tagSvc)
 	xpH := handler.NewXPHandler(xpSvc)
-
-	commentStore := comment.NewPGStore(pool)
-	commentSvc := comment.NewService(commentStore)
-	// Phase H3: customer-token contexts (magic-link) MUST NOT see internal comments.
-	commentH := handler.NewCommentHandler(commentSvc, func(r *http.Request) bool {
-		return !auth.IsCustomerRequest(r)
-	})
 
 	macroStore := macro.NewPGStore(pool)
 	macroSvc := macro.NewService(macroStore)
@@ -229,6 +237,9 @@ func main() {
 		r.Post("/auth/magic-link/request", magicH.Request)
 		r.Post("/auth/magic-link/exchange", magicH.Exchange)
 
+		// ── Public VCS webhook — HMAC-verified, not API-key gated ──
+		r.Post("/vcs/webhooks/github", vcsH.GitHubWebhook)
+
 		r.Group(func(r chi.Router) {
 			// API key check runs before JWT so agents can use X-API-Key header.
 			// APIKeyMiddlewareRich also stores APIKeyMeta in the context so per-route
@@ -247,6 +258,9 @@ func main() {
 			r.Delete("/devices/{id}", deviceH.Delete)
 
 			// ── Legacy ticket routes (no project context) ──────────
+			r.Post("/vcs/repos", vcsH.RegisterRepo)
+			r.Get("/vcs/repos", vcsH.ListRepos)
+
 			r.Post("/tickets", ticketH.Create)
 			r.Get("/tickets", ticketH.List)
 			r.Get("/tickets/doc/{doc_id}", ticketH.GetDoc)
