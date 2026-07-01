@@ -61,6 +61,7 @@ cd /workspace/repos/goquest-mcp && git init -q
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@types/node": "^20.14.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   }
@@ -75,6 +76,7 @@ cd /workspace/repos/goquest-mcp && git init -q
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -906,11 +908,20 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  process.stderr.write(`fatal: ${String(e)}\n`);
-  process.exit(1);
-});
+// Only run the server when executed directly — NOT when imported (the smoke
+// test imports buildServer, and running main() on import would spin up a real
+// stdio server that hangs under a kept-open stdin.
+import { realpathSync } from "node:fs";
+const entry = process.argv[1] ? realpathSync(process.argv[1]) : "";
+if (entry && import.meta.url === `file://${entry}`) {
+  main().catch((e) => {
+    process.stderr.write(`fatal: ${String(e)}\n`);
+    process.exit(1);
+  });
+}
 ```
+
+> The entrypoint guard is the Node/ESM equivalent of `require.main === module`. `realpathSync` normalises symlinks so the comparison holds when tsx runs the `.ts` file directly.
 
 - [ ] **Step 2: Write the smoke test `scripts/mcp-smoke-test.ts`**
 
