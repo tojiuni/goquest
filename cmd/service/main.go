@@ -38,6 +38,7 @@ import (
 	"github.com/tojiuni/goquest/internal/sse"
 	"github.com/tojiuni/goquest/internal/tag"
 	"github.com/tojiuni/goquest/internal/template"
+	"github.com/tojiuni/goquest/internal/vcs"
 	"github.com/tojiuni/goquest/internal/ticket"
 	"github.com/tojiuni/goquest/internal/webhook"
 	"github.com/tojiuni/goquest/internal/workspace"
@@ -153,6 +154,10 @@ func main() {
 		return !auth.IsCustomerRequest(r)
 	})
 
+	vcsStore := vcs.NewPGStore(pool)
+	vcsSvc := vcs.NewService(vcsStore, svc, commentSvc)
+	vcsH := handler.NewVCSHandler(vcsSvc, vcs.NewGitHub(), projectResolver, cfg.VCSGitHubWebhookSecret)
+
 	macroStore := macro.NewPGStore(pool)
 	macroSvc := macro.NewService(macroStore)
 	macroH := handler.NewMacroHandler(macroSvc)
@@ -229,6 +234,9 @@ func main() {
 		r.Post("/auth/magic-link/request", magicH.Request)
 		r.Post("/auth/magic-link/exchange", magicH.Exchange)
 
+		// ── Public VCS webhook — HMAC-verified, not API-key gated ──
+		r.Post("/vcs/webhooks/github", vcsH.GitHubWebhook)
+
 		r.Group(func(r chi.Router) {
 			// API key check runs before JWT so agents can use X-API-Key header.
 			// APIKeyMiddlewareRich also stores APIKeyMeta in the context so per-route
@@ -247,6 +255,9 @@ func main() {
 			r.Delete("/devices/{id}", deviceH.Delete)
 
 			// ── Legacy ticket routes (no project context) ──────────
+			r.Post("/vcs/repos", vcsH.RegisterRepo)
+			r.Get("/vcs/repos", vcsH.ListRepos)
+
 			r.Post("/tickets", ticketH.Create)
 			r.Get("/tickets", ticketH.List)
 			r.Get("/tickets/doc/{doc_id}", ticketH.GetDoc)
