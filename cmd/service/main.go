@@ -131,11 +131,25 @@ func main() {
 
 	projectResolver := resolve.New(wsStore, pjStore)
 	tagResolver := resolve.NewTagResolver(pjStore, tagSvc)
+
+	commentStore := comment.NewPGStore(pool)
+	commentSvc := comment.NewService(commentStore)
+	// Phase H3: customer-token contexts (magic-link) MUST NOT see internal comments.
+	commentH := handler.NewCommentHandler(commentSvc, func(r *http.Request) bool {
+		return !auth.IsCustomerRequest(r)
+	})
+
+	// vcsSvc must be constructed before ticketH, which takes it as the
+	// ticket-GET links provider (embeds vcs_links without ticket->vcs import).
+	vcsStore := vcs.NewPGStore(pool)
+	vcsSvc := vcs.NewService(vcsStore, svc, commentSvc)
+	vcsH := handler.NewVCSHandler(vcsSvc, vcs.NewGitHub(), projectResolver, cfg.VCSGitHubWebhookSecret)
+
 	// auditLogger must be constructed before ticketH so ref add/remove handlers
 	// can record audit entries. The audit handler (auditH) reuses the same logger
 	// further down.
 	auditLogger := audit.New(pool)
-	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter, projectResolver, tagResolver, auditLogger)
+	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter, projectResolver, tagResolver, auditLogger, vcsSvc)
 	requireTicketView := auth.RequireTicketView(svc, sdbChecker)
 	healthH := handler.NewHealthHandler(pool, rdb)
 	openapiH, err := handler.NewOpenAPIHandler()
@@ -146,17 +160,6 @@ func main() {
 	pjH := handler.NewProjectHandler(pjSvc)
 	tagH := handler.NewTagHandler(tagSvc)
 	xpH := handler.NewXPHandler(xpSvc)
-
-	commentStore := comment.NewPGStore(pool)
-	commentSvc := comment.NewService(commentStore)
-	// Phase H3: customer-token contexts (magic-link) MUST NOT see internal comments.
-	commentH := handler.NewCommentHandler(commentSvc, func(r *http.Request) bool {
-		return !auth.IsCustomerRequest(r)
-	})
-
-	vcsStore := vcs.NewPGStore(pool)
-	vcsSvc := vcs.NewService(vcsStore, svc, commentSvc)
-	vcsH := handler.NewVCSHandler(vcsSvc, vcs.NewGitHub(), projectResolver, cfg.VCSGitHubWebhookSecret)
 
 	macroStore := macro.NewPGStore(pool)
 	macroSvc := macro.NewService(macroStore)
