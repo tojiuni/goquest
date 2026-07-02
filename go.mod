@@ -40,7 +40,7 @@ require (
 	github.com/jzelinskie/stringz v0.0.3 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
-	github.com/tojiuni/lymphhub v0.0.0-00010101000000-000000000000
+	github.com/tojiuni/lymphhub v0.0.0-20260702234828-37e8aa5a998d
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
@@ -51,5 +51,3 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
-
-replace github.com/tojiuni/lymphhub => /workspace/repos/lymphhub/.worktrees/cli-sso
