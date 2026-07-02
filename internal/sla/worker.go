@@ -19,7 +19,7 @@ type OverdueScanner interface {
 
 // TicketUpdater transitions a ticket to a new status.
 type TicketUpdater interface {
-	Update(ctx context.Context, id uuid.UUID, req ticket.UpdateTicketReq) (*ticket.Ticket, error)
+	Update(ctx context.Context, id uuid.UUID, req ticket.UpdateTicketReq, actor string) (*ticket.Ticket, error)
 }
 
 // Worker scans for overdue tickets and marks them as failed.
@@ -58,7 +58,7 @@ func (w *Worker) ExpireOnce(ctx context.Context) {
 
 	failed := ticket.StatusFailed
 	for _, t := range overdue {
-		if _, err := w.updater.Update(ctx, t.ID, ticket.UpdateTicketReq{Status: &failed}); err != nil {
+		if _, err := w.updater.Update(ctx, t.ID, ticket.UpdateTicketReq{Status: &failed}, "system:sla"); err != nil {
 			log.Printf("sla: expire ticket %s: %v", t.ID, err)
 		} else {
 			log.Printf("sla: expired ticket %s (due_at=%s)", t.ID, t.DueAt)

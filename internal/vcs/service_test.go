@@ -60,7 +60,7 @@ func (f *fakeTickets) GetByProjectAndTitleName(_ context.Context, _ uuid.UUID, t
 	}
 	return nil, ticket.ErrNotFound
 }
-func (f *fakeTickets) Update(_ context.Context, id uuid.UUID, req ticket.UpdateTicketReq) (*ticket.Ticket, error) {
+func (f *fakeTickets) Update(_ context.Context, id uuid.UUID, req ticket.UpdateTicketReq, _ string) (*ticket.Ticket, error) {
 	// find and mutate the ticket to emulate the state machine's forward moves
 	for _, t := range f.byName {
 		if t.ID == id && req.Status != nil {

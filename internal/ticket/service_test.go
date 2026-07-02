@@ -172,14 +172,14 @@ func (m *mockNuclex) EmitCreated(_ context.Context, t *ticket.Ticket) error {
 
 func newTestTicket(status ticket.Status) *ticket.Ticket {
 	return &ticket.Ticket{
-		ID:          uuid.New(),
-		Title:       "test ticket",
-		Type:        ticket.TypeTask,
-		Status:      status,
-		Priority:    ticket.PriorityNormal,
+		ID:           uuid.New(),
+		Title:        "test ticket",
+		Type:         ticket.TypeTask,
+		Status:       status,
+		Priority:     ticket.PriorityNormal,
 		AssigneeType: ticket.AssigneeHuman,
-		CreatedAt:   time.Now().UTC(),
-		UpdatedAt:   time.Now().UTC(),
+		CreatedAt:    time.Now().UTC(),
+		UpdatedAt:    time.Now().UTC(),
 	}
 }
 
@@ -307,7 +307,7 @@ func TestService_Update_CompletedEmitsNuclex(t *testing.T) {
 	svc := ticket.NewService(store, pub, nuclex, nil, nil, nil)
 
 	completed := ticket.StatusCompleted
-	_, err := svc.Update(context.Background(), base.ID, ticket.UpdateTicketReq{Status: &completed})
+	_, err := svc.Update(context.Background(), base.ID, ticket.UpdateTicketReq{Status: &completed}, "test-actor")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -326,7 +326,7 @@ func TestService_Update_FailedEmitsNuclexFailed(t *testing.T) {
 	svc := ticket.NewService(store, &mockPublisher{}, nuclex, nil, nil, nil)
 
 	failed := ticket.StatusFailed
-	_, err := svc.Update(context.Background(), base.ID, ticket.UpdateTicketReq{Status: &failed})
+	_, err := svc.Update(context.Background(), base.ID, ticket.UpdateTicketReq{Status: &failed}, "test-actor")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -340,7 +340,7 @@ func TestService_Cancel(t *testing.T) {
 	store := &mockStore{getTicket: base}
 	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
 
-	_, err := svc.Cancel(context.Background(), base.ID)
+	_, err := svc.Cancel(context.Background(), base.ID, "test-actor")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -458,7 +458,7 @@ func TestService_Update_CompletedFiresWebhook(t *testing.T) {
 	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, wh, nil)
 
 	completed := ticket.StatusCompleted
-	_, err := svc.Update(context.Background(), base.ID, ticket.UpdateTicketReq{Status: &completed})
+	_, err := svc.Update(context.Background(), base.ID, ticket.UpdateTicketReq{Status: &completed}, "test-actor")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -481,7 +481,7 @@ func TestService_Update_NoPendingCallbackOnNoURL(t *testing.T) {
 	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, wh, nil)
 
 	completed := ticket.StatusCompleted
-	_, err := svc.Update(context.Background(), base.ID, ticket.UpdateTicketReq{Status: &completed})
+	_, err := svc.Update(context.Background(), base.ID, ticket.UpdateTicketReq{Status: &completed}, "test-actor")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -711,7 +711,7 @@ func TestService_Update_TitleChange(t *testing.T) {
 	newTitle := "new title"
 	_, err := svc.Update(context.Background(), existing.ID, ticket.UpdateTicketReq{
 		Title: &newTitle,
-	})
+	}, "test-actor")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -732,7 +732,7 @@ func TestService_Update_EmptyTitleRejected(t *testing.T) {
 	empty := ""
 	_, err := svc.Update(context.Background(), existing.ID, ticket.UpdateTicketReq{
 		Title: &empty,
-	})
+	}, "test-actor")
 	if err == nil {
 		t.Fatal("expected error for empty title")
 	}
@@ -799,7 +799,7 @@ func TestService_Update_TitleName(t *testing.T) {
 	name := "goq-oom-restart"
 	_, err := svc.Update(context.Background(), existing.ID, ticket.UpdateTicketReq{
 		TitleName: &name,
-	})
+	}, "test-actor")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -816,7 +816,7 @@ func TestService_Update_InvalidTitleNameFormat(t *testing.T) {
 	bad := "BadFormat"
 	_, err := svc.Update(context.Background(), existing.ID, ticket.UpdateTicketReq{
 		TitleName: &bad,
-	})
+	}, "test-actor")
 	if err == nil {
 		t.Fatal("expected error for invalid title_name format")
 	}

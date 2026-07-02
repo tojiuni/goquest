@@ -195,7 +195,7 @@ func (s *Service) GetByProjectAndTitleName(ctx context.Context, projectID uuid.U
 	return s.store.GetByProjectAndTitleName(ctx, projectID, titleName)
 }
 
-func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq) (*Ticket, error) {
+func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq, actor string) (*Ticket, error) {
 	if req.Title != nil && strings.TrimSpace(*req.Title) == "" {
 		return nil, fmt.Errorf("title cannot be empty")
 	}
@@ -215,16 +215,14 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	}
 
 	// Replace-semantics: nil = leave untouched; empty = clear; non-empty = replace.
-	// createdBy is empty for now (Task 11 will plumb actor through).
+	// PATCH-replaced refs carry the caller's actor for created_by attribution;
+	// the handler records the corresponding audit entry.
 	if req.RefIDs != nil {
 		newIDs := *req.RefIDs
 		if err := validateRefIDs(newIDs); err != nil {
 			return nil, err
 		}
-		// TODO: plumb the requester id through Service.Update so replaceRefs gets a real actor.
-		// Currently PATCH-replaced refs are recorded with empty created_by; impact is loss of
-		// actor attribution in ticket_refs.created_by and no audit `ref.add` entry for replaces.
-		if err := s.replaceRefs(ctx, id, newIDs, ""); err != nil {
+		if err := s.replaceRefs(ctx, id, newIDs, actor); err != nil {
 			return nil, fmt.Errorf("replace refs: %w", err)
 		}
 		if refreshed, gerr := s.store.Get(ctx, id); gerr == nil && refreshed != nil {
@@ -283,9 +281,9 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	return t, nil
 }
 
-func (s *Service) Cancel(ctx context.Context, id uuid.UUID) (*Ticket, error) {
+func (s *Service) Cancel(ctx context.Context, id uuid.UUID, actor string) (*Ticket, error) {
 	cancelled := StatusCancelled
-	return s.Update(ctx, id, UpdateTicketReq{Status: &cancelled})
+	return s.Update(ctx, id, UpdateTicketReq{Status: &cancelled}, actor)
 }
 
 func (s *Service) Approve(ctx context.Context, id uuid.UUID, req ApproveTicketReq) (*Ticket, error) {
@@ -425,7 +423,7 @@ func (s *Service) SubmitAttempt(ctx context.Context, ticketID uuid.UUID, userID 
 
 	if a.IsCorrect != nil && *a.IsCorrect {
 		completed := StatusCompleted
-		if _, err := s.Update(ctx, ticketID, UpdateTicketReq{Status: &completed}); err != nil {
+		if _, err := s.Update(ctx, ticketID, UpdateTicketReq{Status: &completed}, "system:autocomplete"); err != nil {
 			log.Printf("warn: auto-complete ticket after correct answer: %v", err)
 		}
 	}
@@ -585,8 +583,8 @@ func validateRefIDs(ids []string) error {
 // the remove/add boundary: a concurrent Update on the same ticket can interleave.
 // Acceptable for v1 (refs are optional/idempotent and races are extremely rare in
 // practice); revisit when SLO requires hard atomicity.
-// TODO: createdBy is empty when called from Update — see replaceRefs call site in Update.
-// Refs added directly via AddRefs carry the actor; refs replaced via Update PATCH do not.
+// replaceRefs records createdBy on the replacement refs; callers thread the
+// actor from Update (PATCH) or AddRefs so ticket_refs.created_by is attributed.
 func (s *Service) replaceRefs(ctx context.Context, ticketID uuid.UUID, newIDs []string, createdBy string) error {
 	existing, err := s.store.ListRefs(ctx, ticketID)
 	if err != nil {

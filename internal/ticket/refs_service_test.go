@@ -154,12 +154,25 @@ func TestSvcRefs_UpdateReplacesRefs(t *testing.T) {
 
 	newRefs := []string{"l1-x", "l1-y"}
 	req := ticket.UpdateTicketReq{RefIDs: &newRefs}
-	tk, err := svc.Update(context.Background(), tid, req)
+	tk, err := svc.Update(context.Background(), tid, req, "ref-actor@x")
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 	if len(tk.Refs) != 2 || tk.Refs[0] != "l1-x" || tk.Refs[1] != "l1-y" {
 		t.Errorf("Refs after update: %v", tk.Refs)
+	}
+	// PATCH-replaced refs must carry the caller's actor as created_by (not empty).
+	stored, err := store.ListRefs(context.Background(), tid)
+	if err != nil {
+		t.Fatalf("ListRefs: %v", err)
+	}
+	if len(stored) != 2 {
+		t.Fatalf("want 2 stored refs, got %d", len(stored))
+	}
+	for _, r := range stored {
+		if r.CreatedBy != "ref-actor@x" {
+			t.Errorf("ref %s created_by = %q, want ref-actor@x", r.GopediaL1ID, r.CreatedBy)
+		}
 	}
 }
 
@@ -171,7 +184,7 @@ func TestSvcRefs_UpdateNilLeavesRefsUntouched(t *testing.T) {
 
 	desc := "updated description"
 	req := ticket.UpdateTicketReq{Description: &desc}
-	tk, err := svc.Update(context.Background(), tid, req)
+	tk, err := svc.Update(context.Background(), tid, req, "test-actor")
 	if err != nil {
 		t.Fatalf("Update: %v", err)
 	}
