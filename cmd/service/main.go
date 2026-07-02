@@ -151,6 +151,7 @@ func main() {
 	auditLogger := audit.New(pool)
 	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter, projectResolver, tagResolver, auditLogger, vcsSvc)
 	requireTicketView := auth.RequireTicketView(svc, sdbChecker)
+	requireTicketManage := auth.RequireTicketManage(svc, sdbChecker)
 	healthH := handler.NewHealthHandler(pool, rdb)
 	openapiH, err := handler.NewOpenAPIHandler()
 	if err != nil {
@@ -266,13 +267,14 @@ func main() {
 			r.Get("/tickets/doc/{doc_id}", ticketH.GetDoc)
 			r.Get("/tickets/by-name/{title_name}", ticketH.GetByName)
 			r.Route("/tickets/{id}", func(r chi.Router) {
-				// View-only floor for all /tickets/{id}/* routes. Manage-level checks for
-				// mutating routes (Update/Cancel/Approve) are deferred to a later phase.
+				// View-only floor for all /tickets/{id}/* routes; the lifecycle-mutating
+				// routes additionally require manage access. Both gates are permissive in
+				// shadow mode (NoopChecker) and enforced when SPICEDB_ENFORCE is set.
 				r.Use(requireTicketView)
 				r.Get("/", ticketH.Get)
-				r.Patch("/", ticketH.Update)
-				r.Delete("/", ticketH.Cancel)
-				r.Post("/approve", ticketH.Approve)
+				r.With(requireTicketManage).Patch("/", ticketH.Update)
+				r.With(requireTicketManage).Delete("/", ticketH.Cancel)
+				r.With(requireTicketManage).Post("/approve", ticketH.Approve)
 				r.Get("/subtasks", ticketH.ListSubtasks)
 				r.Post("/attempts", ticketH.SubmitAttempt)
 				r.Get("/attempts", ticketH.ListAttempts)
