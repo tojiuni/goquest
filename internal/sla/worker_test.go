@@ -22,11 +22,11 @@ func (m *mockScanner) ListOverdue(_ context.Context) ([]*ticket.Ticket, error) {
 }
 
 type mockUpdater struct {
-	updated []uuid.UUID
+	updated  []uuid.UUID
 	statuses []ticket.Status
 }
 
-func (m *mockUpdater) Update(_ context.Context, id uuid.UUID, req ticket.UpdateTicketReq) (*ticket.Ticket, error) {
+func (m *mockUpdater) Update(_ context.Context, id uuid.UUID, req ticket.UpdateTicketReq, _ string) (*ticket.Ticket, error) {
 	m.updated = append(m.updated, id)
 	if req.Status != nil {
 		m.statuses = append(m.statuses, *req.Status)

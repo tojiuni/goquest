@@ -336,7 +336,8 @@ func (h *TicketHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	t, err := h.svc.Update(r.Context(), id, req)
+	actor := auth.RequesterID(r)
+	t, err := h.svc.Update(r.Context(), id, req, actor)
 	if err != nil {
 		if errors.Is(err, ticket.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "ticket not found")
@@ -365,6 +366,15 @@ func (h *TicketHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// PATCH-replaced refs are attributed to the caller; record the replace so the
+	// audit trail covers ref changes made via ticket update (not only /refs).
+	if h.audit != nil && req.RefIDs != nil {
+		h.audit.Record(r.Context(), actor, "ref.replace", "ticket", t.ID.String(), map[string]any{
+			"gopedia_l1_ids": *req.RefIDs,
+			"count":          len(*req.RefIDs),
+		})
+	}
+
 	writeJSON(w, http.StatusOK, t)
 }
 
@@ -375,7 +385,7 @@ func (h *TicketHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	t, err := h.svc.Cancel(r.Context(), id)
+	t, err := h.svc.Cancel(r.Context(), id, auth.RequesterID(r))
 	if err != nil {
 		if errors.Is(err, ticket.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "ticket not found")
@@ -526,7 +536,7 @@ func (h *TicketHandler) GetDoc(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "missing doc_id")
 		return
 	}
-	
+
 	// MVP: For doc-lint validation, any valid format ID is considered "found"
 	// since the GoQuest DB hasn't been migrated yet to hold these documents.
 	// We return 200 OK for now.

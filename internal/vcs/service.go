@@ -13,7 +13,7 @@ import (
 // TicketService is the narrow slice of *ticket.Service the linker needs.
 type TicketService interface {
 	GetByProjectAndTitleName(ctx context.Context, projectID uuid.UUID, titleName string) (*ticket.Ticket, error)
-	Update(ctx context.Context, id uuid.UUID, req ticket.UpdateTicketReq) (*ticket.Ticket, error)
+	Update(ctx context.Context, id uuid.UUID, req ticket.UpdateTicketReq, actor string) (*ticket.Ticket, error)
 }
 
 // CommentService is the narrow slice of *comment.Service the linker needs.
@@ -31,8 +31,10 @@ func NewService(store Store, tickets TicketService, comments CommentService) *Se
 	return &Service{store: store, tickets: tickets, comments: comments}
 }
 
-func (s *Service) RegisterRepo(ctx context.Context, r *VcsRepo) error { return s.store.CreateRepo(ctx, r) }
-func (s *Service) ListRepos(ctx context.Context) ([]*VcsRepo, error)  { return s.store.ListRepos(ctx) }
+func (s *Service) RegisterRepo(ctx context.Context, r *VcsRepo) error {
+	return s.store.CreateRepo(ctx, r)
+}
+func (s *Service) ListRepos(ctx context.Context) ([]*VcsRepo, error) { return s.store.ListRepos(ctx) }
 func (s *Service) LinksForTicket(ctx context.Context, id uuid.UUID) ([]VcsLink, error) {
 	return s.store.LinksForTicket(ctx, id)
 }
@@ -170,7 +172,7 @@ func (s *Service) moveToInProgress(ctx context.Context, t *ticket.Ticket, ev Vcs
 }
 
 func (s *Service) transition(ctx context.Context, t *ticket.Ticket, to ticket.Status) error {
-	updated, err := s.tickets.Update(ctx, t.ID, ticket.UpdateTicketReq{Status: &to})
+	updated, err := s.tickets.Update(ctx, t.ID, ticket.UpdateTicketReq{Status: &to}, "system:vcs")
 	if err != nil {
 		// invalid transitions are non-fatal for webhook processing
 		if errors.Is(err, ticket.ErrInvalidTransition) {
