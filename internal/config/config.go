@@ -43,6 +43,9 @@ type Config struct {
 	SpiceDBInsecure bool
 	SpiceDBEnforce  bool
 
+	// Lymphhub CLI SSO session verification — empty means disabled.
+	LymphhubSessionAddr string
+
 	// CORS
 	CORSOrigins []string
 
@@ -84,6 +87,8 @@ func Load() *Config {
 		SpiceDBToken:    os.Getenv("SPICEDB_TOKEN"),
 		SpiceDBInsecure: parseBool(os.Getenv("SPICEDB_INSECURE"), true),
 		SpiceDBEnforce:  parseBool(os.Getenv("SPICEDB_ENFORCE"), false),
+
+		LymphhubSessionAddr: os.Getenv("LYMPHHUB_SESSION_ADDR"),
 
 		CORSOrigins: parseStringSlice(os.Getenv("CORS_ALLOWED_ORIGINS"), []string{"https://toji.homes", "https://www.toji.homes"}),
 
