@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/tojiuni/goquest/internal/apikey"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/tojiuni/goquest/internal/audit"
 	"github.com/tojiuni/goquest/internal/auth"
@@ -30,6 +31,7 @@ import (
 	"github.com/tojiuni/goquest/internal/magic"
 	"github.com/tojiuni/goquest/internal/migrate"
 	"github.com/tojiuni/goquest/internal/notify"
+	"github.com/tojiuni/goquest/internal/observability"
 	"github.com/tojiuni/goquest/internal/pii"
 	"github.com/tojiuni/goquest/internal/project"
 	"github.com/tojiuni/goquest/internal/queue"
@@ -51,6 +53,18 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	// --- Tracing (OpenTelemetry) — no-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set ---
+	tracerShutdown, err := observability.InitTracer(ctx)
+	if err != nil {
+		log.Printf("warn: otel tracer init: %v (continuing without tracing)", err)
+		tracerShutdown = func(context.Context) error { return nil }
+	}
+	defer func() {
+		sctx, scancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer scancel()
+		_ = tracerShutdown(sctx)
+	}()
 
 	// --- Postgres ---
 	pool, err := pgxpool.New(ctx, cfg.PostgresDSN())
@@ -207,6 +221,13 @@ func main() {
 
 	// --- Router ---
 	r := chi.NewRouter()
+	// Outermost: create a server span per request and extract inbound trace
+	// context. No-op spans when tracing is disabled.
+	r.Use(otelhttp.NewMiddleware("goquest-service",
+		otelhttp.WithSpanNameFormatter(func(_ string, req *http.Request) string {
+			return req.Method + " " + req.URL.Path
+		}),
+	))
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORSOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PATCH", "DELETE", "OPTIONS"},
