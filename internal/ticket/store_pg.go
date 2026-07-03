@@ -66,19 +66,24 @@ func (s *pgStore) Create(ctx context.Context, t *Ticket) error {
 		titleName = &t.TitleName
 	}
 
+	riskTier := t.RiskTier
+	if riskTier == "" {
+		riskTier = RiskLow
+	}
+
 	_, err = s.db.Exec(ctx, `
 		INSERT INTO tickets (
-			id, title_name, title, description, type, status, priority,
+			id, title_name, title, description, type, status, priority, risk_tier,
 			assignee_type, assignee_id, requester_id, source_bot,
 			domain, agent_context, metadata,
 			project_id, parent_id, visibility, completion_mode,
 			completion_spec, reward_xp, due_at, callback_url,
 			created_at, updated_at
 		) VALUES (
-			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-			$15,$16,$17,$18,$19,$20,$21,$22,$23,$24
+			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
+			$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
 		)`,
-		t.ID, titleName, t.Title, t.Description, string(t.Type), string(t.Status), string(t.Priority),
+		t.ID, titleName, t.Title, t.Description, string(t.Type), string(t.Status), string(t.Priority), string(riskTier),
 		string(t.AssigneeType), t.AssigneeID, t.RequesterID, sourceBot,
 		domain, agentCtxJSON, metaJSON,
 		t.ProjectID, t.ParentID, string(visibility), string(mode),
@@ -144,7 +149,7 @@ func (s *pgStore) GetByProjectAndTitleName(ctx context.Context, projectID uuid.U
 // subquery guarantees one row per parent_id.
 const ticketGroupBySQL = ` GROUP BY t.id, p.name, w.name, pt.title`
 const ticketSelectSQL = `
-	SELECT t.id, t.title_name, t.title, t.description, t.type, t.status, t.priority,
+	SELECT t.id, t.title_name, t.title, t.description, t.type, t.status, t.priority, t.risk_tier,
 	       t.assignee_type, t.assignee_id, t.requester_id, t.source_bot,
 	       t.domain, t.agent_context, t.metadata,
 	       t.project_id, t.parent_id, t.visibility, t.completion_mode,
@@ -215,6 +220,13 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	newAssigneeType := current.AssigneeType
 	if req.AssigneeType != nil {
 		newAssigneeType = *req.AssigneeType
+	}
+	newRiskTier := current.RiskTier
+	if req.RiskTier != nil {
+		newRiskTier = *req.RiskTier
+	}
+	if newRiskTier == "" {
+		newRiskTier = RiskLow
 	}
 
 	var newDomain *string
@@ -324,7 +336,7 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 			visibility=$11, completion_mode=$12, completion_spec=$13,
 			reward_xp=$14, due_at=$15, callback_url=$16,
 			updated_at=$17, completed_at=$18,
-			cancellation_note=$19
+			cancellation_note=$19, risk_tier=$20
 		WHERE id=$1`,
 		id,
 		titleNamePtr, newTitle, newDescription,
@@ -333,7 +345,7 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 		string(newVisibility), string(newMode), specJSON,
 		newRewardXP, newDueAt, callbackURL,
 		now, completedAt,
-		cancellationNote,
+		cancellationNote, string(newRiskTier),
 	)
 	if err != nil {
 		if isUniqueViolation(err, "tickets_project_title_name_key") {
@@ -507,7 +519,7 @@ func scanTicket(s scanner) (*Ticket, error) {
 	)
 
 	err := s.Scan(
-		&t.ID, &titleName, &t.Title, &t.Description, &t.Type, &t.Status, &t.Priority,
+		&t.ID, &titleName, &t.Title, &t.Description, &t.Type, &t.Status, &t.Priority, &t.RiskTier,
 		&t.AssigneeType, &t.AssigneeID, &t.RequesterID, &sourceBot,
 		&domain, &agentCtxBytes, &metaBytes,
 		&t.ProjectID, &t.ParentID, &t.Visibility, &t.CompletionMode,
@@ -608,9 +620,9 @@ func isUniqueViolationAny(err error) bool {
 }
 
 var (
-	ErrNotFound            = errors.New("ticket not found")
-	ErrInvalidTransition   = errors.New("invalid status transition")
-	ErrDuplicateTitleName  = errors.New("title_name already exists in this project")
+	ErrNotFound           = errors.New("ticket not found")
+	ErrInvalidTransition  = errors.New("invalid status transition")
+	ErrDuplicateTitleName = errors.New("title_name already exists in this project")
 )
 
 func (s *pgStore) ListSubtasks(ctx context.Context, parentID uuid.UUID) ([]*Ticket, error) {

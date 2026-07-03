@@ -150,6 +150,12 @@ func (s *Service) autoTransition(ctx context.Context, provider string, repo *Vcs
 		if target == "" {
 			target = ticket.StatusCompleted
 		}
+		// Risk gate: medium/high tickets require human sign-off before completing,
+		// so route the merge auto-transition to pending_approval instead.
+		if t.RiskTier != "" && t.RiskTier != ticket.RiskLow {
+			return s.transitionAndNote(ctx, t, ticket.StatusPendingApproval,
+				fmt.Sprintf("linked PR #%d (merged) → pending_approval (awaiting approval: risk_tier=%s) by vcs:%s", ev.PRNumber, t.RiskTier, provider))
+		}
 		return s.transitionAndNote(ctx, t, target, fmt.Sprintf("linked PR #%d (merged) → %s by vcs:%s", ev.PRNumber, target, provider))
 	}
 	return nil

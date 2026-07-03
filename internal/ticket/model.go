@@ -11,14 +11,14 @@ import (
 type Status string
 
 const (
-	StatusPending          Status = "pending"
-	StatusAssigned         Status = "assigned"
-	StatusInProgress       Status = "in_progress"
-	StatusCompleted        Status = "completed"
-	StatusFailed           Status = "failed"
-	StatusCancelled        Status = "cancelled"
-	StatusPendingApproval  Status = "pending_approval"
-	StatusPendingRevision  Status = "pending_revision"
+	StatusPending         Status = "pending"
+	StatusAssigned        Status = "assigned"
+	StatusInProgress      Status = "in_progress"
+	StatusCompleted       Status = "completed"
+	StatusFailed          Status = "failed"
+	StatusCancelled       Status = "cancelled"
+	StatusPendingApproval Status = "pending_approval"
+	StatusPendingRevision Status = "pending_revision"
 )
 
 type TicketType string
@@ -45,6 +45,17 @@ type AssigneeType string
 const (
 	AssigneeHuman AssigneeType = "human"
 	AssigneeAgent AssigneeType = "agent"
+)
+
+// RiskTier declares how much scrutiny a ticket's auto-completion warrants.
+// medium/high tickets auto-completed by a merged PR are routed to
+// pending_approval for human sign-off instead of straight to completed.
+type RiskTier string
+
+const (
+	RiskLow    RiskTier = "low"
+	RiskMedium RiskTier = "medium"
+	RiskHigh   RiskTier = "high"
 )
 
 // Domain maps to hermes-{domain} jobs
@@ -88,20 +99,21 @@ func (c CompletionSpec) MarshalJSON() ([]byte, error) {
 }
 
 type Ticket struct {
-	ID             uuid.UUID      `json:"id"`
-	TitleName      string         `json:"title_name,omitempty"`
-	Title          string         `json:"title"`
-	Description    string         `json:"description"`
-	Type           TicketType     `json:"type"`
-	Status         Status         `json:"status"`
-	Priority       Priority       `json:"priority"`
-	AssigneeType   AssigneeType   `json:"assignee_type"`
-	AssigneeID     string         `json:"assignee_id"`
-	RequesterID    string         `json:"requester_id"`
-	SourceBot      string         `json:"source_bot,omitempty"`
-	Domain         Domain         `json:"domain,omitempty"`
-	AgentContext   map[string]any `json:"agent_context,omitempty"`
-	Metadata       map[string]any `json:"metadata,omitempty"`
+	ID           uuid.UUID      `json:"id"`
+	TitleName    string         `json:"title_name,omitempty"`
+	Title        string         `json:"title"`
+	Description  string         `json:"description"`
+	Type         TicketType     `json:"type"`
+	Status       Status         `json:"status"`
+	Priority     Priority       `json:"priority"`
+	RiskTier     RiskTier       `json:"risk_tier"`
+	AssigneeType AssigneeType   `json:"assignee_type"`
+	AssigneeID   string         `json:"assignee_id"`
+	RequesterID  string         `json:"requester_id"`
+	SourceBot    string         `json:"source_bot,omitempty"`
+	Domain       Domain         `json:"domain,omitempty"`
+	AgentContext map[string]any `json:"agent_context,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
 	// Phase 0: multi-tenancy + game quest fields
 	ProjectID      *uuid.UUID     `json:"project_id,omitempty"`
 	ParentID       *uuid.UUID     `json:"parent_id,omitempty"`
@@ -117,19 +129,19 @@ type Ticket struct {
 	// populated by store List/Get/ListSubtasks via a LEFT JOIN derived table.
 	// Always set (defaults to 0). UI uses this to decide whether to render an
 	// expander chevron.
-	ChildCount     int            `json:"child_count"`
+	ChildCount int `json:"child_count"`
 	// Denormalized read-only fields populated via JOIN in store queries.
-	WorkspaceName  string         `json:"workspace_name,omitempty"`
-	ProjectName    string         `json:"project_name,omitempty"`
-	ParentTitle    string         `json:"parent_title,omitempty"`
+	WorkspaceName string `json:"workspace_name,omitempty"`
+	ProjectName   string `json:"project_name,omitempty"`
+	ParentTitle   string `json:"parent_title,omitempty"`
 	// CancellationNote is populated by contract-plane cascade_reject_ticket.
-	CancellationNote *string        `json:"cancellation_note,omitempty"`
+	CancellationNote *string `json:"cancellation_note,omitempty"`
 	// PublicToken is a one-time magic-link token included only in the CreateTicket response.
 	// It is not persisted in the tickets table; the underlying token lives in magic_tokens.
-	PublicToken    string         `json:"public_token,omitempty"`
-	CreatedAt      time.Time      `json:"created_at"`
-	UpdatedAt      time.Time      `json:"updated_at"`
-	CompletedAt    *time.Time     `json:"completed_at,omitempty"`
+	PublicToken string     `json:"public_token,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
 }
 
 // Tag is a workspace-scoped label attached to tickets.
@@ -145,6 +157,7 @@ type CreateTicketReq struct {
 	Description    string         `json:"description"`
 	Type           TicketType     `json:"type"`
 	Priority       Priority       `json:"priority"`
+	RiskTier       RiskTier       `json:"risk_tier,omitempty"`
 	AssigneeType   AssigneeType   `json:"assignee_type"`
 	AssigneeID     string         `json:"assignee_id"`
 	Domain         Domain         `json:"domain,omitempty"`
@@ -172,6 +185,7 @@ type UpdateTicketReq struct {
 	Title          *string         `json:"title,omitempty"`
 	Description    *string         `json:"description,omitempty"`
 	Status         *Status         `json:"status,omitempty"`
+	RiskTier       *RiskTier       `json:"risk_tier,omitempty"`
 	AssigneeID     *string         `json:"assignee_id,omitempty"`
 	AssigneeType   *AssigneeType   `json:"assignee_type,omitempty"`
 	Domain         *Domain         `json:"domain,omitempty"`
@@ -187,8 +201,8 @@ type UpdateTicketReq struct {
 	// RefIDs replaces the ticket's full ref-doc set on Update.
 	// Semantics: nil (field omitted) = leave refs untouched;
 	// &[]string{} = clear all refs; &[]string{...} = replace with that ordered set.
-	RefIDs           *[]string       `json:"ref_ids,omitempty"`
-	CancellationNote *string         `json:"cancellation_note,omitempty"`
+	RefIDs           *[]string `json:"ref_ids,omitempty"`
+	CancellationNote *string   `json:"cancellation_note,omitempty"`
 }
 
 // VisibleTicketIDs carries the caller's SpiceDB-visible ticket ids, split by the
@@ -201,21 +215,21 @@ type VisibleTicketIDs struct {
 }
 
 type ListTicketsFilter struct {
-	Status       *Status
-	Type         *TicketType
-	Priority     *Priority
-	Domain       *Domain
-	AssigneeType *AssigneeType
-	AssigneeID   *string
-	RequesterID  *string
-	ProjectID    *uuid.UUID
-	WorkspaceID  *uuid.UUID
-	ParentID     *uuid.UUID
-	TopLevelOnly bool
-	TagIDs       []uuid.UUID
-	TitleName    *string
-	Limit        int
-	Offset       int
+	Status        *Status
+	Type          *TicketType
+	Priority      *Priority
+	Domain        *Domain
+	AssigneeType  *AssigneeType
+	AssigneeID    *string
+	RequesterID   *string
+	ProjectID     *uuid.UUID
+	WorkspaceID   *uuid.UUID
+	ParentID      *uuid.UUID
+	TopLevelOnly  bool
+	TagIDs        []uuid.UUID
+	TitleName     *string
+	Limit         int
+	Offset        int
 	VisibleFilter *VisibleTicketIDs
 	// SortField is one of: created_at, updated_at, due_at, priority, title,
 	// status, type, domain, assignee_id. Empty → created_at.
@@ -258,9 +272,9 @@ func (s Status) IsTerminal() bool {
 type ApproveDecision string
 
 const (
-	ApproveDecisionApproved  ApproveDecision = "approved"
-	ApproveDecisionRejected  ApproveDecision = "rejected"
-	ApproveDecisionRevision  ApproveDecision = "revision"
+	ApproveDecisionApproved ApproveDecision = "approved"
+	ApproveDecisionRejected ApproveDecision = "rejected"
+	ApproveDecisionRevision ApproveDecision = "revision"
 )
 
 type ApproveTicketReq struct {

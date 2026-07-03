@@ -83,6 +83,12 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 			return nil, err
 		}
 	}
+	if req.RiskTier == "" {
+		req.RiskTier = RiskLow
+	}
+	if err := validateRiskTier(req.RiskTier); err != nil {
+		return nil, err
+	}
 	// Pre-validate refs before creating the ticket so a bad request doesn't
 	// leave a half-built ticket behind.
 	if len(req.RefIDs) > 0 {
@@ -117,6 +123,7 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 		Type:           req.Type,
 		Status:         StatusPending,
 		Priority:       req.Priority,
+		RiskTier:       req.RiskTier,
 		AssigneeType:   req.AssigneeType,
 		AssigneeID:     req.AssigneeID,
 		RequesterID:    requesterID,
@@ -206,6 +213,11 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq,
 	}
 	if req.Domain != nil {
 		if err := validateDomain(*req.Domain); err != nil {
+			return nil, err
+		}
+	}
+	if req.RiskTier != nil {
+		if err := validateRiskTier(*req.RiskTier); err != nil {
 			return nil, err
 		}
 	}
@@ -439,6 +451,22 @@ var validDomains = map[Domain]struct{}{
 func validateDomain(d Domain) error {
 	if _, ok := validDomains[d]; !ok {
 		return fmt.Errorf("invalid domain: %s", d)
+	}
+	return nil
+}
+
+var validRiskTiers = map[RiskTier]struct{}{
+	RiskLow: {}, RiskMedium: {}, RiskHigh: {},
+}
+
+// validateRiskTier allows "" (defaulted by the caller) plus the three known
+// tiers; anything else is rejected.
+func validateRiskTier(r RiskTier) error {
+	if r == "" {
+		return nil
+	}
+	if _, ok := validRiskTiers[r]; !ok {
+		return fmt.Errorf("invalid risk_tier: %q", r)
 	}
 	return nil
 }
