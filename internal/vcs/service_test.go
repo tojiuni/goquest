@@ -164,6 +164,42 @@ func TestProcessPRMergedCompletes(t *testing.T) {
 	}
 }
 
+func TestProcessPRMergedHighRiskRoutesToPendingApproval(t *testing.T) {
+	st := newFakeStore()
+	_ = st.CreateRepo(context.Background(), repoFixture(true))
+	tk := &ticket.Ticket{ID: uuid.New(), TitleName: "goq-foo", Status: ticket.StatusInProgress, RiskTier: ticket.RiskHigh}
+	tickets := &fakeTickets{byName: map[string]*ticket.Ticket{"goq-foo": tk}}
+	svc := NewService(st, tickets, &fakeComments{})
+	err := svc.Process(context.Background(), "github", VcsEvent{
+		Kind: PRMerged, Repo: "tojiuni/goquest", Branch: "feature/goq-foo", PRBaseRef: "main",
+		PRNumber: 12, PRTitle: "goq-foo done", PRMerged: true, URL: "https://gh/pr/12"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk.Status != ticket.StatusPendingApproval {
+		t.Fatalf("high-risk PR merge should route to pending_approval, got %s", tk.Status)
+	}
+}
+
+func TestProcessPRMergedLowRiskCompletes(t *testing.T) {
+	for _, rt := range []ticket.RiskTier{ticket.RiskLow, ""} {
+		st := newFakeStore()
+		_ = st.CreateRepo(context.Background(), repoFixture(true))
+		tk := &ticket.Ticket{ID: uuid.New(), TitleName: "goq-foo", Status: ticket.StatusInProgress, RiskTier: rt}
+		tickets := &fakeTickets{byName: map[string]*ticket.Ticket{"goq-foo": tk}}
+		svc := NewService(st, tickets, &fakeComments{})
+		err := svc.Process(context.Background(), "github", VcsEvent{
+			Kind: PRMerged, Repo: "tojiuni/goquest", Branch: "feature/goq-foo", PRBaseRef: "main",
+			PRNumber: 12, PRTitle: "goq-foo done", PRMerged: true, URL: "https://gh/pr/12"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tk.Status != ticket.StatusCompleted {
+			t.Fatalf("risk_tier=%q PR merge should complete, got %s", rt, tk.Status)
+		}
+	}
+}
+
 func TestProcessTerminalGuard(t *testing.T) {
 	st := newFakeStore()
 	_ = st.CreateRepo(context.Background(), repoFixture(true))
