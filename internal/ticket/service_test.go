@@ -299,6 +299,69 @@ func TestService_Create_InvalidDomain(t *testing.T) {
 	}
 }
 
+func TestService_Create_DefaultsRiskTierLow(t *testing.T) {
+	store := &mockStore{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	created, err := svc.Create(context.Background(), ticket.CreateTicketReq{Title: "no risk given"}, "user1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if created.RiskTier != ticket.RiskLow {
+		t.Errorf("expected default risk_tier=low, got %q", created.RiskTier)
+	}
+}
+
+func TestService_Create_RiskTierPersisted(t *testing.T) {
+	store := &mockStore{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	created, err := svc.Create(context.Background(),
+		ticket.CreateTicketReq{Title: "risky", RiskTier: ticket.RiskHigh}, "user1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if created.RiskTier != ticket.RiskHigh {
+		t.Errorf("expected risk_tier=high, got %q", created.RiskTier)
+	}
+}
+
+func TestService_Create_InvalidRiskTier(t *testing.T) {
+	svc := ticket.NewService(&mockStore{}, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	_, err := svc.Create(context.Background(),
+		ticket.CreateTicketReq{Title: "x", RiskTier: ticket.RiskTier("critical")}, "user1")
+	if err == nil {
+		t.Fatal("expected error for invalid risk_tier")
+	}
+}
+
+func TestService_Update_InvalidRiskTier(t *testing.T) {
+	existing := newTestTicket(ticket.StatusPending)
+	store := &mockStore{getTicket: existing}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	bad := ticket.RiskTier("extreme")
+	_, err := svc.Update(context.Background(), existing.ID, ticket.UpdateTicketReq{RiskTier: &bad}, "test-actor")
+	if err == nil {
+		t.Fatal("expected error for invalid risk_tier on update")
+	}
+}
+
+func TestService_Update_RiskTierPassedToStore(t *testing.T) {
+	existing := newTestTicket(ticket.StatusPending)
+	store := &mockStore{getTicket: existing}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	rt := ticket.RiskMedium
+	_, err := svc.Update(context.Background(), existing.ID, ticket.UpdateTicketReq{RiskTier: &rt}, "test-actor")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.updated == nil || store.updated.RiskTier == nil || *store.updated.RiskTier != ticket.RiskMedium {
+		t.Errorf("expected risk_tier=medium passed to store, got %v", store.updated)
+	}
+}
+
 func TestService_Update_CompletedEmitsNuclex(t *testing.T) {
 	base := newTestTicket(ticket.StatusInProgress)
 	store := &mockStore{getTicket: base}
