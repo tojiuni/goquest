@@ -24,6 +24,7 @@ import (
 	"github.com/tojiuni/goquest/internal/contract"
 	"github.com/tojiuni/goquest/internal/device"
 	"github.com/tojiuni/goquest/internal/handler"
+	"github.com/tojiuni/goquest/internal/idempotency"
 	"github.com/tojiuni/goquest/internal/integration"
 	"github.com/tojiuni/goquest/internal/macro"
 	"github.com/tojiuni/goquest/internal/magic"
@@ -152,6 +153,7 @@ func main() {
 	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter, projectResolver, tagResolver, auditLogger, vcsSvc)
 	requireTicketView := auth.RequireTicketView(svc, sdbChecker)
 	requireTicketManage := auth.RequireTicketManage(svc, sdbChecker)
+	idempotent := idempotency.Middleware(idempotency.NewRedisStore(rdb))
 	healthH := handler.NewHealthHandler(pool, rdb)
 	openapiH, err := handler.NewOpenAPIHandler()
 	if err != nil {
@@ -262,7 +264,7 @@ func main() {
 			r.Post("/vcs/repos", vcsH.RegisterRepo)
 			r.Get("/vcs/repos", vcsH.ListRepos)
 
-			r.Post("/tickets", ticketH.Create)
+			r.With(idempotent).Post("/tickets", ticketH.Create)
 			r.Get("/tickets", ticketH.List)
 			r.Get("/tickets/doc/{doc_id}", ticketH.GetDoc)
 			r.Get("/tickets/by-name/{title_name}", ticketH.GetByName)
