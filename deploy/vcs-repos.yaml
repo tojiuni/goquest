@@ -51,6 +51,8 @@ repos:
     project: whoami
   - repo: tojiuni/neunexus
     project: neunexus
+  - repo: tojiuni/lymphhub
+    project: goquest
   - repo: Lyckabc/toji-homes
     project: toji-homes
   - repo: Lyckabc/whoami-ui
