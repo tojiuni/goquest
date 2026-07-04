@@ -200,6 +200,49 @@ func TestProcessPRMergedLowRiskCompletes(t *testing.T) {
 	}
 }
 
+// Reproduces goq-vcs-mention-vs-impl: a PR that implements goq-impl (its branch)
+// but merely *mentions* goq-other in prose must link both tickets yet transition
+// only goq-impl. Before the fix, the backtick body mention auto-completed the
+// wrong ticket (PR #60 → goq-lymphhub-cli-sso).
+func TestProcessPRBodyMentionLinksButDoesNotTransition(t *testing.T) {
+	st := newFakeStore()
+	_ = st.CreateRepo(context.Background(), repoFixture(true))
+	impl := &ticket.Ticket{ID: uuid.New(), TitleName: "goq-impl", Status: ticket.StatusInProgress}
+	other := &ticket.Ticket{ID: uuid.New(), TitleName: "goq-other", Status: ticket.StatusInProgress}
+	tickets := &fakeTickets{byName: map[string]*ticket.Ticket{"goq-impl": impl, "goq-other": other}}
+	svc := NewService(st, tickets, &fakeComments{})
+
+	err := svc.Process(context.Background(), "github", VcsEvent{
+		Kind: PRMerged, Repo: "tojiuni/goquest", Branch: "feature/goq-impl", PRBaseRef: "main",
+		PRNumber: 60, PRTitle: "implement goq-impl",
+		PRBody:   "actor fix; the deeper solution is handled in `goq-other`.",
+		PRMerged: true, URL: "https://gh/pr/60"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Rich linking: both referenced tickets get a link.
+	var linkedImpl, linkedOther bool
+	for _, l := range st.links {
+		if l.TicketID == impl.ID {
+			linkedImpl = true
+		}
+		if l.TicketID == other.ID {
+			linkedOther = true
+		}
+	}
+	if !linkedImpl || !linkedOther {
+		t.Fatalf("both referenced tickets should be linked: impl=%v other=%v", linkedImpl, linkedOther)
+	}
+	// Conservative transitions: only the head-ref ticket moves.
+	if impl.Status != ticket.StatusCompleted {
+		t.Fatalf("head-ref ticket should complete, got %s", impl.Status)
+	}
+	if other.Status != ticket.StatusInProgress {
+		t.Fatalf("prose-mentioned ticket must NOT transition, got %s", other.Status)
+	}
+}
+
 func TestProcessTerminalGuard(t *testing.T) {
 	st := newFakeStore()
 	_ = st.CreateRepo(context.Background(), repoFixture(true))
