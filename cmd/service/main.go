@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/tojiuni/goquest/internal/apikey"
+	"github.com/tojiuni/lymphhub/authz"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/tojiuni/goquest/internal/audit"
@@ -272,6 +273,15 @@ func main() {
 			// Customer-token middleware runs before JWT so magic-link
 			// (Bearer ct_*) is consumed first. JWT path remains for staff.
 			r.Use(auth.CustomerTokenMiddleware(&customerTokenParser{}))
+			// Lymphhub CLI SSO session middleware — opt-in via LYMPHHUB_SESSION_ADDR.
+			// Only acts on "Bearer ls_..." tokens; uses the session-only client
+			// (NewSessionClient) so it never touches SpiceDB and cannot fail on
+			// missing/unreachable SpiceDB config. Runs before JWT so lymphhub
+			// sessions are consumed first, after API-key/customer-token.
+			if cfg.LymphhubSessionAddr != "" {
+				log.Printf("lymphhub session middleware enabled: %s", cfg.LymphhubSessionAddr)
+				r.Use(auth.LymphhubSessionMiddleware(authz.NewSessionClient(cfg.LymphhubSessionAddr)))
+			}
 			r.Use(authMiddleware)
 			r.Use(auth.EnforceKeyOrigin())
 			r.Use(auth.EnforceKeyRateLimit(rdb))
