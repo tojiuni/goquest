@@ -136,19 +136,21 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Write SpiceDB relationships asynchronously (best-effort).
-	// Use a fresh bounded context — r.Context() is cancelled when the handler
-	// returns, which would race-cancel the detached write and silently drop the
-	// ticket→project/requester/assignee tuples.
+	// Write SpiceDB relationships synchronously, but best-effort: the ticket→
+	// project/requester/assignee tuple must exist before we return so the
+	// creating session's immediate visibility checks succeed. An async write
+	// raced those reads — a session that batch-created an epic + children then
+	// listed the epic's subtasks got 0 back because the tuples had not landed
+	// yet (goq-epic-child-enumeration-gap). A write error is logged and
+	// swallowed so ticket creation still succeeds when SpiceDB is unavailable;
+	// the backfill job reconciles later. Fresh bounded context: r.Context() may
+	// be near its deadline, and the tuple write should not inherit it.
 	if t.ProjectID != nil {
-		tid, pid, reqID, asgID := t.ID, *t.ProjectID, t.RequesterID, t.AssigneeID
-		go func() {
-			bgctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			if wErr := h.writer.WriteTicket(bgctx, tid, pid, reqID, asgID); wErr != nil {
-				log.Printf("spicedb WriteTicket %s: %v (continuing)", tid, wErr)
-			}
-		}()
+		bgctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if wErr := h.writer.WriteTicket(bgctx, t.ID, *t.ProjectID, t.RequesterID, t.AssigneeID); wErr != nil {
+			log.Printf("spicedb WriteTicket %s: %v (continuing)", t.ID, wErr)
+		}
+		cancel()
 	}
 
 	writeJSON(w, http.StatusCreated, t)

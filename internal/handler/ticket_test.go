@@ -8,13 +8,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/project"
 	"github.com/tojiuni/goquest/internal/resolve"
+	"github.com/tojiuni/goquest/internal/spicedb"
 	"github.com/tojiuni/goquest/internal/ticket"
 )
 
@@ -292,5 +295,103 @@ func TestCreate_TagNamesRequiresProject(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "tag_names requires a resolvable project") {
 		t.Errorf("body = %s, want it to mention %q", rr.Body.String(), "tag_names requires a resolvable project")
+	}
+}
+
+// stubPublisher is a no-op ticket.Publisher so a successful Create can reach the
+// SpiceDB write path without a real event bus (svc.Create calls PublishCreated
+// unconditionally).
+type stubPublisher struct{}
+
+func (stubPublisher) PublishCreated(context.Context, *ticket.Ticket) error   { return nil }
+func (stubPublisher) PublishAssigned(context.Context, *ticket.Ticket) error  { return nil }
+func (stubPublisher) PublishUpdated(context.Context, *ticket.Ticket) error   { return nil }
+func (stubPublisher) PublishCompleted(context.Context, *ticket.Ticket) error { return nil }
+
+// recordingWriter records WriteTicket calls and blocks inside WriteTicket until
+// release is closed, so a test can prove the Create handler waits for the
+// SpiceDB tuple write (synchronous) instead of detaching it in a goroutine (the
+// old bug: goq-epic-child-enumeration-gap, where a session that batch-created an
+// epic then immediately listed its subtasks got 0 back because the tuples had
+// not landed yet).
+type recordingWriter struct {
+	spicedb.NoopWriter
+	entered chan struct{}
+	release chan struct{}
+	mu      sync.Mutex
+	calls   int
+	gotTID  uuid.UUID
+	gotPID  uuid.UUID
+}
+
+func (w *recordingWriter) WriteTicket(_ context.Context, ticketID, projectID uuid.UUID, _, _ string) error {
+	close(w.entered)
+	<-w.release
+	w.mu.Lock()
+	w.calls++
+	w.gotTID, w.gotPID = ticketID, projectID
+	w.mu.Unlock()
+	return nil
+}
+
+// TestCreate_WritesSpiceDBSynchronously verifies the Create handler blocks on the
+// SpiceDB relationship write before responding 201. Regression guard for
+// goq-epic-child-enumeration-gap: the write used to be detached (`go func()`),
+// racing the creating session's immediate visibility reads.
+func TestCreate_WritesSpiceDBSynchronously(t *testing.T) {
+	pid := uuid.New()
+	store := newMemStore()
+	svc := ticket.NewService(store, stubPublisher{}, nil, nil, nil, nil)
+	w := &recordingWriter{entered: make(chan struct{}), release: make(chan struct{})}
+	h := handler.NewTicketHandler(svc, nil, w, &stubResolver{id: &pid}, nil, nil, nil)
+
+	r := ticketRouter(h)
+	body, _ := json.Marshal(map[string]any{
+		"title":      "sync write target",
+		"title_name": "goq-sync-write-x",
+		"project_id": pid.String(),
+	})
+	req := httptest.NewRequest(http.MethodPost, "/tickets", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	done := make(chan struct{})
+	go func() {
+		r.ServeHTTP(rr, req)
+		close(done)
+	}()
+
+	// The handler must call WriteTicket before it can respond.
+	select {
+	case <-w.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("WriteTicket was never called")
+	}
+
+	// While WriteTicket is blocked, the handler must NOT have returned. With the
+	// old async write the handler would race ahead and respond immediately,
+	// closing done here — the failure this test locks out.
+	select {
+	case <-done:
+		t.Fatal("handler responded before WriteTicket completed — write is detached/async")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(w.release)
+	<-done
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rr.Code, rr.Body.String())
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.calls != 1 {
+		t.Errorf("WriteTicket calls = %d, want 1", w.calls)
+	}
+	if w.gotPID != pid {
+		t.Errorf("WriteTicket projectID = %s, want %s", w.gotPID, pid)
+	}
+	if w.gotTID == uuid.Nil {
+		t.Error("WriteTicket ticketID was nil")
 	}
 }
