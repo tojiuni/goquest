@@ -52,7 +52,8 @@ func (s *Service) Process(ctx context.Context, provider string, ev VcsEvent) err
 
 	tickets := s.resolveTickets(ctx, provider, repo, ev)
 	kind, ref, state, title := linkShape(ev)
-	for _, t := range tickets {
+	for _, rt := range tickets {
+		t := rt.t
 		link := &VcsLink{
 			TicketID: t.ID, Provider: provider, RepoFullName: ev.Repo,
 			Kind: kind, ExternalRef: ref, URL: ev.URL, State: state, Title: title, Actor: ev.Actor,
@@ -64,7 +65,10 @@ func (s *Service) Process(ctx context.Context, provider string, ev VcsEvent) err
 		if _, err := s.store.UpsertLink(ctx, link); err != nil {
 			return err
 		}
-		if repo.AutoTransition {
+		// Only tickets matched via the head-ref (branch) drive auto-transitions.
+		// Prose-only matches (PR title/body, commit message) are linked but never
+		// transitioned — see resolveTickets and goq-vcs-mention-vs-impl.
+		if repo.AutoTransition && rt.headRef {
 			if err := s.autoTransition(ctx, provider, repo, t, ev); err != nil {
 				return err
 			}
@@ -73,27 +77,55 @@ func (s *Service) Process(ctx context.Context, provider string, ev VcsEvent) err
 	return nil
 }
 
+// resolvedTicket is a ticket an event references, tagged with whether the match
+// came from the head-ref (branch) — the implementation signal that gates auto-
+// transition — versus prose (PR title/body, commit message), which links only.
+type resolvedTicket struct {
+	t       *ticket.Ticket
+	headRef bool
+}
+
 // resolveTickets returns the distinct tickets an event references: title_name
 // tokens found in branch/commit/PR text that resolve in the repo's project,
-// plus (for commits) the ticket of a linked branch (inheritance).
-func (s *Service) resolveTickets(ctx context.Context, provider string, repo *VcsRepo, ev VcsEvent) []*ticket.Ticket {
-	seen := map[uuid.UUID]bool{}
-	var out []*ticket.Ticket
-	add := func(t *ticket.Ticket) {
-		if t != nil && !seen[t.ID] {
-			seen[t.ID] = true
-			out = append(out, t)
+// plus (for commits) the ticket of a linked branch (inheritance). Each result
+// is tagged headRef=true when the match came from the branch/PR source ref
+// (an implementation signal) rather than prose, so callers can link every
+// reference but transition only the ones the change actually implements.
+func (s *Service) resolveTickets(ctx context.Context, provider string, repo *VcsRepo, ev VcsEvent) []resolvedTicket {
+	idx := map[uuid.UUID]int{}
+	var out []resolvedTicket
+	add := func(t *ticket.Ticket, headRef bool) {
+		if t == nil {
+			return
 		}
+		if i, ok := idx[t.ID]; ok {
+			if headRef { // a head-ref match anywhere upgrades the ticket to eligible
+				out[i].headRef = true
+			}
+			return
+		}
+		idx[t.ID] = len(out)
+		out = append(out, resolvedTicket{t: t, headRef: headRef})
+	}
+
+	// The head-ref (ev.Branch, the branch / PR source ref) is the implementation
+	// signal: a title_name there means this branch/PR implements the ticket.
+	// Prose (PR title/body, commit message) merely references it and must not
+	// drive a transition — a backtick mention of another ticket in a PR body
+	// once auto-completed the wrong ticket. See goq-vcs-mention-vs-impl.
+	headRef := map[string]bool{}
+	for _, tn := range ExtractTitleNames(ev.Branch) {
+		headRef[tn] = true
 	}
 	for _, tn := range ExtractTitleNames(ev.Branch, ev.CommitMsg, ev.PRTitle, ev.PRBody) {
 		if t, err := s.tickets.GetByProjectAndTitleName(ctx, repo.ProjectID, tn); err == nil {
-			add(t)
+			add(t, headRef[tn])
 		}
 	}
 	if ev.Kind == CommitPushed {
 		if bl, err := s.store.GetBranchLink(ctx, provider, ev.Repo, ev.Branch); err == nil {
 			if t, err := s.tickets.GetByProjectAndTitleName(ctx, repo.ProjectID, branchTicketTitleName(bl)); err == nil {
-				add(t)
+				add(t, true) // branch-link inheritance is a head-ref signal
 			}
 		}
 	}
