@@ -21,6 +21,10 @@ type Claims struct {
 	EmailVerified bool   `json:"email_verified"`
 }
 
+// Middleware validates bearer JWTs against one or more JWKS endpoints. jwksURL
+// may be a single URL or a comma-separated list — during an IdP migration both
+// the old and new issuers' keys are trusted (email-based identity is
+// IdP-neutral, so a user keeps the same platform subject across IdPs).
 func Middleware(jwksURL string, skip bool) func(http.Handler) http.Handler {
 	if skip {
 		return func(next http.Handler) http.Handler {
@@ -32,7 +36,7 @@ func Middleware(jwksURL string, skip bool) func(http.Handler) http.Handler {
 		}
 	}
 
-	jwks, err := keyfunc.NewDefault([]string{jwksURL})
+	jwks, err := keyfunc.NewDefault(jwksURLs(jwksURL))
 	if err != nil {
 		log.Printf("warn: could not initialise JWKS from %s: %v", jwksURL, err)
 	}
@@ -90,6 +94,17 @@ func requesterFromClaims(c *Claims) string {
 		return c.Sub
 	}
 	return c.Subject
+}
+
+// jwksURLs splits a comma-separated JWKS_URL into a trimmed, non-empty list.
+func jwksURLs(raw string) []string {
+	var out []string
+	for _, u := range strings.Split(raw, ",") {
+		if u = strings.TrimSpace(u); u != "" {
+			out = append(out, u)
+		}
+	}
+	return out
 }
 
 func bearerToken(r *http.Request) string {

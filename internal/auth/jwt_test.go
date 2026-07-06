@@ -110,3 +110,29 @@ func TestRequesterFromClaims(t *testing.T) {
 		}
 	}
 }
+
+func TestJWKSURLs(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{"single", "https://a/keys", []string{"https://a/keys"}},
+		{"dual comma", "https://a/keys,https://b/jwks", []string{"https://a/keys", "https://b/jwks"}},
+		{"trims spaces", " https://a/keys , https://b/jwks ", []string{"https://a/keys", "https://b/jwks"}},
+		{"drops empties", "https://a/keys,,", []string{"https://a/keys"}},
+		{"empty", "", nil},
+	}
+	for _, c := range cases {
+		got := jwksURLs(c.raw)
+		if len(got) != len(c.want) {
+			t.Errorf("%s: got %v want %v", c.name, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("%s[%d]: got %q want %q", c.name, i, got[i], c.want[i])
+			}
+		}
+	}
+}
