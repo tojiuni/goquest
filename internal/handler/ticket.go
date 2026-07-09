@@ -240,6 +240,9 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 	if tn := q.Get("title_name"); tn != "" {
 		f.TitleName = &tn
 	}
+	if sq := q.Get("q"); sq != "" {
+		f.Query = &sq
+	}
 	if tagNames := q["tag"]; len(tagNames) > 0 {
 		// Tag filtering scopes by workspace, derived from project_id. get-or-create
 		// is acceptable for a filter: an unknown tag name yields zero matches.
