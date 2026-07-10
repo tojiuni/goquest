@@ -383,6 +383,124 @@ func (h *TicketHandler) Update(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
+// maxBulkUpdateIDs bounds a single bulk-update request so one call cannot fan
+// out into an unbounded number of per-ticket authz checks and store writes.
+const maxBulkUpdateIDs = 100
+
+type bulkUpdateReq struct {
+	IDs   []string               `json:"ids"`
+	Patch ticket.UpdateTicketReq `json:"patch"`
+}
+
+type bulkUpdateResult struct {
+	ID    string `json:"id"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+type bulkUpdateResp struct {
+	Results []bulkUpdateResult `json:"results"`
+	Updated int                `json:"updated"`
+}
+
+// BulkUpdate applies one patch to many tickets in a single request. Each id is
+// processed independently: manage authz is checked per ticket (mirroring the
+// RequireTicketManage middleware — a project-less legacy ticket is not gated),
+// the state-machine and field validation of the normal Update path is reused,
+// and a per-id failure (bad id, not found, forbidden, invalid transition) is
+// reported in results without aborting the rest. Response is always 200 with a
+// per-id result list; callers inspect `ok`/`error` per row.
+func (h *TicketHandler) BulkUpdate(w http.ResponseWriter, r *http.Request) {
+	var req bulkUpdateReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if len(req.IDs) == 0 {
+		writeError(w, http.StatusBadRequest, "ids must be non-empty")
+		return
+	}
+	if len(req.IDs) > maxBulkUpdateIDs {
+		writeError(w, http.StatusBadRequest, "too many ids (max "+strconv.Itoa(maxBulkUpdateIDs)+")")
+		return
+	}
+
+	actor := auth.RequesterID(r)
+	results := make([]bulkUpdateResult, 0, len(req.IDs))
+	updated := make([]*ticket.Ticket, 0, len(req.IDs))
+
+	for _, raw := range req.IDs {
+		res := bulkUpdateResult{ID: raw}
+		id, err := parseUUID(raw)
+		if err != nil {
+			res.Error = "invalid ticket id"
+			results = append(results, res)
+			continue
+		}
+		// Existence + legacy bypass mirror RequireTicketManage: fetch the ticket,
+		// and only SpiceDB-gate it when it belongs to a project.
+		t, err := h.svc.Get(r.Context(), id)
+		if err != nil {
+			if errors.Is(err, ticket.ErrNotFound) {
+				res.Error = "ticket not found"
+			} else {
+				res.Error = "lookup ticket"
+			}
+			results = append(results, res)
+			continue
+		}
+		if t.ProjectID != nil {
+			ok, err := h.checker.CanManageTicket(r.Context(), id, actor)
+			if err != nil {
+				res.Error = "permission check"
+				results = append(results, res)
+				continue
+			}
+			if !ok {
+				res.Error = "access denied"
+				results = append(results, res)
+				continue
+			}
+		}
+		ut, err := h.svc.Update(r.Context(), id, req.Patch, actor)
+		if err != nil {
+			res.Error = err.Error()
+			results = append(results, res)
+			continue
+		}
+		res.OK = true
+		results = append(results, res)
+		if ut != nil {
+			updated = append(updated, ut)
+		}
+	}
+
+	// Keep SpiceDB's assignee relation in sync for every updated ticket
+	// (best-effort, mirroring the single Update path). One detached goroutine for
+	// the whole batch; r.Context() is cancelled once the handler returns.
+	if h.writer != nil && len(updated) > 0 {
+		type sync struct {
+			id  uuid.UUID
+			asg string
+		}
+		syncs := make([]sync, len(updated))
+		for i, t := range updated {
+			syncs[i] = sync{id: t.ID, asg: t.AssigneeID}
+		}
+		go func() {
+			bgctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			for _, s := range syncs {
+				if wErr := h.writer.ReplaceTicketAssignee(bgctx, s.id, s.asg); wErr != nil {
+					log.Printf("spicedb ReplaceTicketAssignee %s: %v (continuing)", s.id, wErr)
+				}
+			}
+		}()
+	}
+
+	writeJSON(w, http.StatusOK, bulkUpdateResp{Results: results, Updated: len(updated)})
+}
+
 func (h *TicketHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(chi.URLParam(r, "id"))
 	if err != nil {

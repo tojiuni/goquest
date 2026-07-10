@@ -297,6 +297,10 @@ func main() {
 
 			r.With(idempotent).Post("/tickets", ticketH.Create)
 			r.Get("/tickets", ticketH.List)
+			// Bulk update: manage authz is enforced per-id inside the handler
+			// (ids arrive in the body, not the path), so this stays out of the
+			// /tickets/{id} manage-gated subrouter.
+			r.Post("/tickets/bulk", ticketH.BulkUpdate)
 			r.Get("/tickets/doc/{doc_id}", ticketH.GetDoc)
 			r.Get("/tickets/by-name/{title_name}", ticketH.GetByName)
 			r.Route("/tickets/{id}", func(r chi.Router) {
