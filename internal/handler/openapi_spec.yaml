@@ -77,6 +77,46 @@ paths:
         - { name: q, in: query, schema: { type: string }, description: free-text search (case-insensitive substring over title, title_name, description) }
       responses:
         '200': { description: ok }
+  /tickets/bulk:
+    post:
+      summary: Bulk-update many tickets with one patch (per-id manage authz, partial success)
+      description: >
+        Applies one patch to each id independently. Manage permission is checked
+        per ticket; a per-id failure (bad id, not found, forbidden, invalid
+        transition) is reported in results without aborting the rest. Always 200.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, patch]
+              properties:
+                ids:
+                  type: array
+                  items: { type: string, format: uuid }
+                  description: 1 to 100 ticket ids
+                patch:
+                  type: object
+                  description: same fields as PATCH /tickets/{id} (status/assignee_id/domain/risk_tier/...)
+      responses:
+        '200':
+          description: per-id results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated: { type: integer }
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        ok: { type: boolean }
+                        error: { type: string }
+        '400': { description: empty or oversized ids, or invalid body }
   /tickets/by-name/{title_name}:
     get:
       summary: Look up a ticket by title_name within a project
