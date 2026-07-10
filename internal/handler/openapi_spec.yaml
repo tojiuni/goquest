@@ -74,6 +74,7 @@ paths:
         - { name: tag, in: query, schema: { type: string }, description: repeatable tag-name filter (requires project_id) }
         - { name: status, in: query, schema: { type: string } }
         - { name: domain, in: query, schema: { type: string } }
+        - { name: q, in: query, schema: { type: string }, description: free-text search (case-insensitive substring over title, title_name, description) }
       responses:
         '200': { description: ok }
   /tickets/by-name/{title_name}:

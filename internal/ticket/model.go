@@ -215,19 +215,22 @@ type VisibleTicketIDs struct {
 }
 
 type ListTicketsFilter struct {
-	Status        *Status
-	Type          *TicketType
-	Priority      *Priority
-	Domain        *Domain
-	AssigneeType  *AssigneeType
-	AssigneeID    *string
-	RequesterID   *string
-	ProjectID     *uuid.UUID
-	WorkspaceID   *uuid.UUID
-	ParentID      *uuid.UUID
-	TopLevelOnly  bool
-	TagIDs        []uuid.UUID
-	TitleName     *string
+	Status       *Status
+	Type         *TicketType
+	Priority     *Priority
+	Domain       *Domain
+	AssigneeType *AssigneeType
+	AssigneeID   *string
+	RequesterID  *string
+	ProjectID    *uuid.UUID
+	WorkspaceID  *uuid.UUID
+	ParentID     *uuid.UUID
+	TopLevelOnly bool
+	TagIDs       []uuid.UUID
+	TitleName    *string
+	// Query is a free-text search term matched (case-insensitive substring)
+	// against title, title_name, and description. Empty/nil → no text filter.
+	Query         *string
 	Limit         int
 	Offset        int
 	VisibleFilter *VisibleTicketIDs

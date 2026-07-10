@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -423,6 +424,17 @@ func (s *pgStore) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int
 	if f.TitleName != nil {
 		where += fmt.Sprintf(" AND t.title_name=$%d", i)
 		args = append(args, *f.TitleName)
+		i++
+	}
+	if f.Query != nil {
+		// Case-insensitive substring match across title, title_name, description.
+		// LIKE metacharacters in the user term are escaped so it matches literally
+		// (backslash is ILIKE's default escape char): "50%" finds literal "50%",
+		// not "50<anything>". The same placeholder is reused three times; args
+		// carries one wrapped term.
+		esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(*f.Query)
+		where += fmt.Sprintf(" AND (t.title ILIKE $%d OR t.title_name ILIKE $%d OR t.description ILIKE $%d)", i, i, i)
+		args = append(args, "%"+esc+"%")
 		i++
 	}
 	if len(f.TagIDs) > 0 {
