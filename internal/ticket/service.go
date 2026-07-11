@@ -364,6 +364,12 @@ func (s *Service) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int
 	return s.store.List(ctx, f)
 }
 
+// Aggregate returns COUNT(*) grouped by one whitelisted column, scoped by f
+// (including the visibility filter). Unknown groupBy → ErrInvalidGroupBy.
+func (s *Service) Aggregate(ctx context.Context, groupBy string, f ListTicketsFilter) ([]AggBucket, error) {
+	return s.store.Aggregate(ctx, groupBy, f)
+}
+
 func (s *Service) ListSubtasks(ctx context.Context, parentID uuid.UUID) ([]*Ticket, error) {
 	return s.store.ListSubtasks(ctx, parentID)
 }

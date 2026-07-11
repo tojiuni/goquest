@@ -117,6 +117,36 @@ paths:
                         ok: { type: boolean }
                         error: { type: string }
         '400': { description: empty or oversized ids, or invalid body }
+  /analytics/tickets:
+    get:
+      summary: Aggregate ticket counts grouped by one whitelisted column
+      description: >
+        COUNT(*) grouped by group_by, scoped by the same optional filters as the
+        ticket list (project_id, workspace_id, status) plus the caller's SpiceDB
+        visibility. Buckets are ordered by descending count.
+      parameters:
+        - { name: group_by, in: query, required: true, schema: { type: string, enum: [status, type, priority, domain, risk_tier, assignee_id, assignee_type] } }
+        - { name: project_id, in: query, schema: { type: string, format: uuid } }
+        - { name: workspace_id, in: query, schema: { type: string, format: uuid } }
+        - { name: status, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: aggregation buckets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  group_by: { type: string }
+                  total: { type: integer }
+                  buckets:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key: { type: string }
+                        count: { type: integer }
+        '400': { description: missing or unknown group_by, or invalid id }
   /tickets/by-name/{title_name}:
     get:
       summary: Look up a ticket by title_name within a project

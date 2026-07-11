@@ -362,7 +362,12 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	return s.Get(ctx, id)
 }
 
-func (s *pgStore) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int, error) {
+// ticketWhere builds the shared WHERE clause + bound args from a
+// ListTicketsFilter, used by both List and Aggregate so the two stay in lockstep
+// (same filters, same authz visibility predicate). It returns the clause
+// ("WHERE 1=1 AND …"), the args, and the next positional placeholder index —
+// callers that append more parameters (LIMIT/OFFSET) continue numbering from it.
+func ticketWhere(f ListTicketsFilter) (string, []any, int) {
 	args := []any{}
 	where := "WHERE 1=1"
 	i := 1
@@ -455,6 +460,57 @@ func (s *pgStore) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int
 		args = append(args, f.VisibleFilter.Project, f.VisibleFilter.Restricted)
 		i += 2
 	}
+	return where, args, i
+}
+
+// aggColumns whitelists the group_by keys the analytics endpoint accepts, each
+// mapped to a fixed column expression. group_by is NEVER interpolated raw — only
+// a value from this map reaches the SQL, so a caller cannot inject SQL via the
+// column name.
+var aggColumns = map[string]string{
+	"status":        "t.status",
+	"type":          "t.type",
+	"priority":      "t.priority",
+	"domain":        "t.domain",
+	"risk_tier":     "t.risk_tier",
+	"assignee_id":   "t.assignee_id",
+	"assignee_type": "t.assignee_type",
+}
+
+// Aggregate returns COUNT(*) grouped by one whitelisted column, honoring the same
+// filters + SpiceDB visibility predicate as List (via ticketWhere). Buckets are
+// ordered by descending count. An unknown groupBy yields ErrInvalidGroupBy.
+func (s *pgStore) Aggregate(ctx context.Context, groupBy string, f ListTicketsFilter) ([]AggBucket, error) {
+	col, ok := aggColumns[groupBy]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrInvalidGroupBy, groupBy)
+	}
+	where, args, _ := ticketWhere(f)
+	q := "SELECT " + col + " AS k, COUNT(*) AS n FROM tickets t " + where +
+		" GROUP BY " + col + " ORDER BY n DESC, k ASC"
+	rows, err := s.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("aggregate tickets: %w", err)
+	}
+	defer rows.Close()
+	var out []AggBucket
+	for rows.Next() {
+		var k *string
+		var n int
+		if err := rows.Scan(&k, &n); err != nil {
+			return nil, fmt.Errorf("scan aggregate: %w", err)
+		}
+		key := ""
+		if k != nil {
+			key = *k
+		}
+		out = append(out, AggBucket{Key: key, Count: n})
+	}
+	return out, rows.Err()
+}
+
+func (s *pgStore) List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int, error) {
+	where, args, i := ticketWhere(f)
 
 	countQuery := "SELECT COUNT(*) FROM tickets t " + where
 	var total int
@@ -635,6 +691,7 @@ var (
 	ErrNotFound           = errors.New("ticket not found")
 	ErrInvalidTransition  = errors.New("invalid status transition")
 	ErrDuplicateTitleName = errors.New("title_name already exists in this project")
+	ErrInvalidGroupBy     = errors.New("invalid group_by")
 )
 
 func (s *pgStore) ListSubtasks(ctx context.Context, parentID uuid.UUID) ([]*Ticket, error) {

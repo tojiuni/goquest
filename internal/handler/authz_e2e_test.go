@@ -154,6 +154,9 @@ func (s *memStore) GetByProjectAndTitleName(_ context.Context, projectID uuid.UU
 	}
 	return nil, ticket.ErrNotFound
 }
+func (s *memStore) Aggregate(_ context.Context, _ string, _ ticket.ListTicketsFilter) ([]ticket.AggBucket, error) {
+	return nil, nil
+}
 func (s *memStore) Update(_ context.Context, _ uuid.UUID, _ ticket.UpdateTicketReq) (*ticket.Ticket, error) {
 	return nil, nil
 }
@@ -494,9 +497,9 @@ func TestE2E_GroupB_Shadow(t *testing.T) {
 
 func TestE2E_GroupC_Enforce(t *testing.T) {
 	proj := pid()
-	tp := tProject(proj)        // project-visibility
-	tr := tRestricted(proj)     // restricted; requester bob
-	ts := tRestricted(proj)     // restricted subtask of tp; requester bob
+	tp := tProject(proj)    // project-visibility
+	tr := tRestricted(proj) // restricted; requester bob
+	ts := tRestricted(proj) // restricted subtask of tp; requester bob
 	ts.ParentID = &tp.ID
 	store := newMemStore(tp, tr, ts)
 
@@ -633,8 +636,8 @@ func (m *memAudit) List(_ context.Context, f audit.ListFilter) ([]*audit.Entry, 
 // on a specific workspace to a set of allowed user IDs only. All ticket-level
 // methods delegate to a wrapped worldChecker (or return safe defaults if nil).
 type contractApproveChecker struct {
-	workspaceID string              // workspace for which the permission applies
-	allowed     map[string]bool     // userID → may approve
+	workspaceID string                    // workspace for which the permission applies
+	allowed     map[string]bool           // userID → may approve
 	inner       spicedb.PermissionChecker // for ticket-check methods (may be nil)
 }
 

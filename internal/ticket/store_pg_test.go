@@ -161,6 +161,43 @@ func TestList_FilterByQuery(t *testing.T) {
 	assert.Equal(t, litHit.ID, got[0].ID)
 }
 
+// TestAggregate_GroupByStatus exercises the real GROUP BY against the store:
+// counts per status within a unique requester scope (robust to shared-DB rows),
+// and that an unwhitelisted group_by is rejected with ErrInvalidGroupBy.
+func TestAggregate_GroupByStatus(t *testing.T) {
+	ctx, store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	requester := "agg-" + uuid.NewString() // unique scope isolates this test's rows
+	mk := func(status ticket.Status) {
+		tk := &ticket.Ticket{
+			ID: uuid.New(), Title: "agg " + string(status),
+			Type: ticket.TypeTask, Status: status, Priority: ticket.PriorityNormal,
+			AssigneeType: ticket.AssigneeHuman, RequesterID: requester,
+			Visibility: ticket.VisibilityProject,
+		}
+		require.NoError(t, store.Create(ctx, tk))
+	}
+	mk(ticket.StatusPending)
+	mk(ticket.StatusPending)
+	mk(ticket.StatusCompleted)
+
+	buckets, err := store.Aggregate(ctx, "status", ticket.ListTicketsFilter{RequesterID: &requester})
+	require.NoError(t, err)
+	got := map[string]int{}
+	total := 0
+	for _, b := range buckets {
+		got[b.Key] = b.Count
+		total += b.Count
+	}
+	require.Equal(t, 3, total)
+	assert.Equal(t, 2, got["pending"])
+	assert.Equal(t, 1, got["completed"])
+
+	_, err = store.Aggregate(ctx, "title; DROP TABLE tickets", ticket.ListTicketsFilter{RequesterID: &requester})
+	assert.ErrorIs(t, err, ticket.ErrInvalidGroupBy)
+}
+
 func TestStoreGet_PopulatesParentTitle(t *testing.T) {
 	ctx, store, cleanup := newTestStore(t)
 	defer cleanup()
