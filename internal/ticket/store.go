@@ -12,6 +12,9 @@ type Store interface {
 	GetByProjectAndTitleName(ctx context.Context, projectID uuid.UUID, titleName string) (*Ticket, error)
 	Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq) (*Ticket, error)
 	List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int, error)
+	// Aggregate returns COUNT(*) grouped by one whitelisted column, honoring the
+	// same filters + visibility predicate as List. Unknown groupBy → ErrInvalidGroupBy.
+	Aggregate(ctx context.Context, groupBy string, f ListTicketsFilter) ([]AggBucket, error)
 
 	// Subtask
 	ListSubtasks(ctx context.Context, parentID uuid.UUID) ([]*Ticket, error)

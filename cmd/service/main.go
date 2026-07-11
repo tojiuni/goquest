@@ -297,6 +297,9 @@ func main() {
 
 			r.With(idempotent).Post("/tickets", ticketH.Create)
 			r.Get("/tickets", ticketH.List)
+			// Ticket analytics: COUNT(*) grouped by a whitelisted column. The
+			// handler applies the same SpiceDB visibility scope as List.
+			r.Get("/analytics/tickets", ticketH.TicketAnalytics)
 			// Bulk update: manage authz is enforced per-id inside the handler
 			// (ids arrive in the body, not the path), so this stays out of the
 			// /tickets/{id} manage-gated subrouter.

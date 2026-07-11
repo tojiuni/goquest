@@ -272,31 +272,13 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 	f.SortField = sortField
 	f.SortOrder = sortOrder
 
-	// Visibility: restrict to SpiceDB-visible tickets. Two LookupResources calls —
-	// project-visibility tickets need can_view_project, restricted need
-	// can_view_restricted; the store combines them visibility-aware for an exact total.
-	// In shadow (NoopChecker) both report unrestricted → no filter (identical to before).
-	uid := auth.RequesterID(r)
-	projIDs, unrP, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_project", uid)
+	// Visibility: restrict to SpiceDB-visible tickets (nil in shadow/Noop → no filter).
+	vf, err := h.visibleFilter(r)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
 		return
 	}
-	restrIDs, unrR, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_restricted", uid)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
-		return
-	}
-	// Invariant: a live Checker returns unrestricted=false for both calls; NoopChecker
-	// returns true for both. So unrP and unrR always agree — there is no mixed state in
-	// which we'd build a filter from one real set and one empty set. Any new
-	// PermissionChecker must preserve this (return unrestricted consistently).
-	if !unrP || !unrR {
-		f.VisibleFilter = &ticket.VisibleTicketIDs{
-			Project:    parseTicketUUIDs(projIDs),
-			Restricted: parseTicketUUIDs(restrIDs),
-		}
-	}
+	f.VisibleFilter = vf
 
 	tickets, total, err := h.svc.List(r.Context(), f)
 	if err != nil {

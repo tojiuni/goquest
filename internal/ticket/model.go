@@ -241,6 +241,13 @@ type ListTicketsFilter struct {
 	SortOrder string
 }
 
+// AggBucket is one row of a group-by aggregation: the group key and its count.
+// An empty Key represents rows where the grouped column is NULL/empty.
+type AggBucket struct {
+	Key   string `json:"key"`
+	Count int    `json:"count"`
+}
+
 // Attempt records a user's answer submission for answer-mode tickets.
 type Attempt struct {
 	ID          uuid.UUID `json:"id"`

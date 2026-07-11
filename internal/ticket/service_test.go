@@ -59,6 +59,9 @@ func (m *mockStore) Update(_ context.Context, _ uuid.UUID, req ticket.UpdateTick
 	return &result, nil
 }
 
+func (m *mockStore) Aggregate(_ context.Context, _ string, _ ticket.ListTicketsFilter) ([]ticket.AggBucket, error) {
+	return nil, nil
+}
 func (m *mockStore) List(_ context.Context, _ ticket.ListTicketsFilter) ([]*ticket.Ticket, int, error) {
 	return m.tickets, m.total, nil
 }
