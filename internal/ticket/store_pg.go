@@ -285,6 +285,30 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	if req.TitleName != nil {
 		newTitleName = *req.TitleName
 	}
+
+	// Project move: validate the target exists and shares the current project's
+	// workspace (tags, title_name uniqueness and visibility are all scoped by
+	// workspace/project — a cross-workspace move would silently break them).
+	newProjectID := current.ProjectID
+	if req.ProjectID != nil && (current.ProjectID == nil || *current.ProjectID != *req.ProjectID) {
+		var targetWS uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT workspace_id FROM projects WHERE id = $1`, *req.ProjectID).Scan(&targetWS); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, ErrProjectNotFound
+			}
+			return nil, fmt.Errorf("lookup target project: %w", err)
+		}
+		if current.ProjectID != nil {
+			var currentWS uuid.UUID
+			if err := tx.QueryRow(ctx, `SELECT workspace_id FROM projects WHERE id = $1`, *current.ProjectID).Scan(&currentWS); err != nil {
+				return nil, fmt.Errorf("lookup current project: %w", err)
+			}
+			if currentWS != targetWS {
+				return nil, ErrCrossWorkspaceMove
+			}
+		}
+		newProjectID = req.ProjectID
+	}
 	var titleNamePtr *string
 	if newTitleName != "" {
 		titleNamePtr = &newTitleName
@@ -337,7 +361,8 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 			visibility=$11, completion_mode=$12, completion_spec=$13,
 			reward_xp=$14, due_at=$15, callback_url=$16,
 			updated_at=$17, completed_at=$18,
-			cancellation_note=$19, risk_tier=$20
+			cancellation_note=$19, risk_tier=$20,
+			project_id=$21
 		WHERE id=$1`,
 		id,
 		titleNamePtr, newTitle, newDescription,
@@ -347,6 +372,7 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 		newRewardXP, newDueAt, callbackURL,
 		now, completedAt,
 		cancellationNote, string(newRiskTier),
+		newProjectID,
 	)
 	if err != nil {
 		if isUniqueViolation(err, "tickets_project_title_name_key") {
@@ -692,6 +718,8 @@ var (
 	ErrInvalidTransition  = errors.New("invalid status transition")
 	ErrDuplicateTitleName = errors.New("title_name already exists in this project")
 	ErrInvalidGroupBy     = errors.New("invalid group_by")
+	ErrProjectNotFound    = errors.New("target project not found")
+	ErrCrossWorkspaceMove = errors.New("target project is in a different workspace")
 )
 
 func (s *pgStore) ListSubtasks(ctx context.Context, parentID uuid.UUID) ([]*Ticket, error) {

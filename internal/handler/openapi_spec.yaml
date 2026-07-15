@@ -98,7 +98,7 @@ paths:
                   description: 1 to 100 ticket ids
                 patch:
                   type: object
-                  description: same fields as PATCH /tickets/{id} (status/assignee_id/domain/risk_tier/...)
+                  description: same fields as PATCH /tickets/{id} (status/assignee_id/domain/risk_tier/project_id/...)
       responses:
         '200':
           description: per-id results
@@ -169,7 +169,13 @@ paths:
         '404': { description: not found }
     patch:
       summary: Update a ticket
+      description: >
+        Partial update. project_id moves the ticket to another project in the
+        SAME workspace (400 on unknown target or cross-workspace move, 409 on a
+        title_name collision in the target project).
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         '200': { description: ok }
+        '400': { description: unknown target project or cross-workspace move }
+        '409': { description: title_name already exists in the target project }

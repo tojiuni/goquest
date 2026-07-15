@@ -338,18 +338,30 @@ func (h *TicketHandler) Update(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
+		if errors.Is(err, ticket.ErrProjectNotFound) || errors.Is(err, ticket.ErrCrossWorkspaceMove) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	// Keep SpiceDB's assignee relation in sync after an update (best-effort).
+	// Keep SpiceDB's assignee (and, on a project move, project) relation in
+	// sync after an update (best-effort).
 	// Detached bounded context — r.Context() is cancelled when the handler returns.
 	tid, asg := t.ID, t.AssigneeID
+	movedProject := req.ProjectID != nil
+	newProject := t.ProjectID
 	go func() {
 		bgctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if wErr := h.writer.ReplaceTicketAssignee(bgctx, tid, asg); wErr != nil {
 			log.Printf("spicedb ReplaceTicketAssignee %s: %v (continuing)", tid, wErr)
+		}
+		if movedProject && newProject != nil {
+			if wErr := h.writer.ReplaceTicketProject(bgctx, tid, *newProject); wErr != nil {
+				log.Printf("spicedb ReplaceTicketProject %s: %v (continuing)", tid, wErr)
+			}
 		}
 	}()
 
@@ -462,12 +474,14 @@ func (h *TicketHandler) BulkUpdate(w http.ResponseWriter, r *http.Request) {
 	// the whole batch; r.Context() is cancelled once the handler returns.
 	if h.writer != nil && len(updated) > 0 {
 		type sync struct {
-			id  uuid.UUID
-			asg string
+			id   uuid.UUID
+			asg  string
+			proj *uuid.UUID
 		}
+		movedProject := req.Patch.ProjectID != nil
 		syncs := make([]sync, len(updated))
 		for i, t := range updated {
-			syncs[i] = sync{id: t.ID, asg: t.AssigneeID}
+			syncs[i] = sync{id: t.ID, asg: t.AssigneeID, proj: t.ProjectID}
 		}
 		go func() {
 			bgctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -475,6 +489,11 @@ func (h *TicketHandler) BulkUpdate(w http.ResponseWriter, r *http.Request) {
 			for _, s := range syncs {
 				if wErr := h.writer.ReplaceTicketAssignee(bgctx, s.id, s.asg); wErr != nil {
 					log.Printf("spicedb ReplaceTicketAssignee %s: %v (continuing)", s.id, wErr)
+				}
+				if movedProject && s.proj != nil {
+					if wErr := h.writer.ReplaceTicketProject(bgctx, s.id, *s.proj); wErr != nil {
+						log.Printf("spicedb ReplaceTicketProject %s: %v (continuing)", s.id, wErr)
+					}
 				}
 			}
 		}()

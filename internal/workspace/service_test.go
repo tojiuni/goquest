@@ -49,6 +49,7 @@ func (m *mockWriter) AddTicketViewer(_ context.Context, _ uuid.UUID, _ string) e
 func (m *mockWriter) ReplaceTicketAssignee(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
 }
+func (m *mockWriter) ReplaceTicketProject(_ context.Context, _, _ uuid.UUID) error { return nil }
 
 // ── mock store ────────────────────────────────────────────────────
 
