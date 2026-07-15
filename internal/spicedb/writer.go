@@ -75,6 +75,17 @@ func (w *Writer) AddTicketViewer(ctx context.Context, ticketID uuid.UUID, userID
 	return w.write(ctx, touch(TypeTicket, ticketID.String(), "restricted_viewer", TypeUser, userID, ""))
 }
 
+// ReplaceTicketProject points the ticket's project relation at a new project:
+// it removes any existing project relation, then writes the new one. Idempotent
+// — safe to call on every project move.
+func (w *Writer) ReplaceTicketProject(ctx context.Context, ticketID, projectID uuid.UUID) error {
+	// Delete all existing project relations (empty subId → matches any project).
+	if err := w.delete(ctx, TypeTicket, ticketID.String(), "project", TypeProject, "", ""); err != nil {
+		return err
+	}
+	return w.write(ctx, touch(TypeTicket, ticketID.String(), "project", TypeProject, projectID.String(), ""))
+}
+
 // ReplaceTicketAssignee makes SpiceDB's assignee relation match the current
 // assignee: it removes any existing assignee on the ticket, then writes the new
 // one (skipped when empty/unassigned). Idempotent — safe to call on every update.
