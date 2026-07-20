@@ -151,8 +151,10 @@ func main() {
 	commentStore := comment.NewPGStore(pool)
 	commentSvc := comment.NewService(commentStore)
 	// Phase H3: customer-token contexts (magic-link) MUST NOT see internal comments.
+	// goq-org-backend Task 6: external-org callers (admin or member) are outsiders
+	// to staff conversation, same as magic-link customers — must not see internal comments.
 	commentH := handler.NewCommentHandler(commentSvc, func(r *http.Request) bool {
-		return !auth.IsCustomerRequest(r)
+		return !auth.IsCustomerRequest(r) && auth.OrgFrom(r) == nil
 	})
 
 	// vcsSvc must be constructed before ticketH, which takes it as the
