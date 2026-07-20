@@ -151,6 +151,9 @@ func TestOrgFromClaims(t *testing.T) {
 		{"unknown role downgraded", Claims{OrgID: orgID.String(), OrgRole: "owner"}, &OrgCtx{ID: orgID, Role: "member"}},
 		{"no org claim", Claims{}, nil},
 		{"bad uuid", Claims{OrgID: "not-a-uuid", OrgRole: "admin"}, nil},
+		// all-zero UUID parses "successfully" but is not a real org — treat as
+		// no org claim, same as a parse failure (fail-closed).
+		{"nil uuid", Claims{OrgID: uuid.Nil.String(), OrgRole: "admin"}, nil},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

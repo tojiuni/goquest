@@ -593,6 +593,7 @@ func (h *TicketHandler) OrgReassign(w http.ResponseWriter, r *http.Request) {
 	t := auth.TicketFrom(r) // stashed by RequireTicketView
 	o := auth.OrgFrom(r)
 	if t == nil || o == nil || !o.IsAdmin() ||
+		t.AssigneeType != ticket.AssigneeOrg ||
 		t.AssigneeOrgID == nil || *t.AssigneeOrgID != o.ID {
 		writeError(w, http.StatusForbidden, "org admin of the assignee org required")
 		return

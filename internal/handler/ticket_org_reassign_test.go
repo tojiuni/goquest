@@ -172,6 +172,37 @@ func TestOrgReassign_AdminOfDifferentOrg_Forbidden(t *testing.T) {
 	}
 }
 
+func TestOrgReassign_AssigneeTypeNotOrg_Forbidden(t *testing.T) {
+	assigneeOrg := uuid.New()
+	tk := &ticket.Ticket{
+		ID: uuid.New(), Status: ticket.StatusPending, Priority: ticket.PriorityNormal,
+		Visibility: ticket.VisibilityProject,
+		// Data-inconsistency case: AssigneeOrgID is set but AssigneeType never
+		// transitioned to "org" (e.g. left over from a prior individual
+		// assignment). OrgReassign's precondition — this ticket is genuinely
+		// org-assigned — must be enforced explicitly, not assumed from
+		// AssigneeOrgID alone.
+		AssigneeType:  ticket.AssigneeHuman,
+		AssigneeOrgID: &assigneeOrg, AssigneeID: "old@corp.com",
+	}
+	store := &reassignStore{memStore: newMemStore(tk)}
+	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
+	r := orgReassignRouter(svc, &worldChecker{})
+
+	req := reassignReq(tk.ID, "new@corp.com")
+	req = asUser(req, "boss@corp.com")
+	req = asOrg(req, &auth.OrgCtx{ID: assigneeOrg, Role: "admin"})
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body: %s", rec.Code, rec.Body.String())
+	}
+	if tk.AssigneeID != "old@corp.com" {
+		t.Errorf("AssigneeID must be untouched, got %q", tk.AssigneeID)
+	}
+}
+
 func TestOrgReassign_NoOrgClaim_Forbidden(t *testing.T) {
 	assigneeOrg := uuid.New()
 	tk := &ticket.Ticket{

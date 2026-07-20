@@ -175,6 +175,11 @@ func orgFromClaims(c *Claims) *OrgCtx {
 	if err != nil {
 		return nil
 	}
+	if id == uuid.Nil {
+		// An all-zero UUID parses "successfully" but is not a real org claim —
+		// treat it the same as a parse failure (fail-closed).
+		return nil
+	}
 	role := c.OrgRole
 	if role != "admin" {
 		role = "member"

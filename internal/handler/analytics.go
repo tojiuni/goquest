@@ -75,12 +75,26 @@ func (h *TicketHandler) TicketAnalytics(w http.ResponseWriter, r *http.Request) 
 		f.WorkspaceID = &u
 	}
 
-	vf, err := h.visibleFilter(r)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
-		return
+	// External-org callers are scoped by their JWT org claim — never by query
+	// params (org_side is the sole exception: it only narrows the axis).
+	// Staff tokens carry no org claim and keep the SpiceDB path below. Mirrors
+	// List's org branch: without this, an org caller's aggregate would run
+	// unfiltered over every org's tickets (cross-tenant leak).
+	if o := auth.OrgFrom(r); o != nil {
+		f.OrgScope = &ticket.OrgScope{
+			OrgID:    o.ID,
+			Role:     o.Role,
+			CallerID: auth.RequesterID(r),
+			Side:     q.Get("org_side"),
+		}
+	} else {
+		vf, err := h.visibleFilter(r)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+			return
+		}
+		f.VisibleFilter = vf
 	}
-	f.VisibleFilter = vf
 
 	buckets, err := h.svc.Aggregate(r.Context(), groupBy, f)
 	if err != nil {
