@@ -473,6 +473,35 @@ func ticketWhere(f ListTicketsFilter) (string, []any, int) {
 		args = append(args, "%"+esc+"%")
 		i++
 	}
+	if f.OrgScope != nil {
+		o := f.OrgScope
+		orgArg := i
+		args = append(args, o.OrgID)
+		i++
+		if o.Role == "admin" {
+			switch o.Side {
+			case "requester":
+				where += fmt.Sprintf(" AND t.requester_org_id=$%d", orgArg)
+			case "assignee":
+				where += fmt.Sprintf(" AND t.assignee_org_id=$%d", orgArg)
+			default:
+				where += fmt.Sprintf(" AND (t.requester_org_id=$%d OR t.assignee_org_id=$%d)", orgArg, orgArg)
+			}
+		} else {
+			callerArg := i
+			args = append(args, o.CallerID)
+			i++
+			switch o.Side {
+			case "requester":
+				where += fmt.Sprintf(" AND (t.requester_org_id=$%d AND t.requester_id=$%d)", orgArg, callerArg)
+			case "assignee":
+				where += fmt.Sprintf(" AND (t.assignee_org_id=$%d AND t.assignee_id=$%d)", orgArg, callerArg)
+			default:
+				where += fmt.Sprintf(" AND ((t.requester_org_id=$%d AND t.requester_id=$%d) OR (t.assignee_org_id=$%d AND t.assignee_id=$%d))",
+					orgArg, callerArg, orgArg, callerArg)
+			}
+		}
+	}
 	if len(f.TagIDs) > 0 {
 		// Subquery (not a join predicate) keeps GROUP BY t.id intact and matches
 		// tickets carrying ANY of the requested tags.

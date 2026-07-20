@@ -272,13 +272,25 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 	f.SortField = sortField
 	f.SortOrder = sortOrder
 
-	// Visibility: restrict to SpiceDB-visible tickets (nil in shadow/Noop → no filter).
-	vf, err := h.visibleFilter(r)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
-		return
+	// External-org callers are scoped by their JWT org claim — never by query
+	// params (org_side is the sole exception: it only narrows the axis).
+	// Staff tokens carry no org claim and keep the SpiceDB path below.
+	if o := auth.OrgFrom(r); o != nil {
+		f.OrgScope = &ticket.OrgScope{
+			OrgID:    o.ID,
+			Role:     o.Role,
+			CallerID: auth.RequesterID(r),
+			Side:     q.Get("org_side"),
+		}
+	} else {
+		// Visibility: restrict to SpiceDB-visible tickets (nil in shadow/Noop → no filter).
+		vf, err := h.visibleFilter(r)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+			return
+		}
+		f.VisibleFilter = vf
 	}
-	f.VisibleFilter = vf
 
 	tickets, total, err := h.svc.List(r.Context(), f)
 	if err != nil {

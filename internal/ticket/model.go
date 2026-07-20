@@ -228,6 +228,17 @@ type VisibleTicketIDs struct {
 	Restricted []uuid.UUID
 }
 
+// OrgScope restricts a listing to what an external-org caller may see,
+// derived from JWT org claims (never from client input). Role semantics:
+// admin → every ticket where the org is requester or assignee side;
+// member → only tickets the caller personally requested / is assigned.
+type OrgScope struct {
+	OrgID    uuid.UUID
+	Role     string // "admin" | "member"
+	CallerID string
+	Side     string // "" | "requester" | "assignee"
+}
+
 type ListTicketsFilter struct {
 	Status       *Status
 	Type         *TicketType
@@ -248,6 +259,9 @@ type ListTicketsFilter struct {
 	Limit         int
 	Offset        int
 	VisibleFilter *VisibleTicketIDs
+	// OrgScope, when non-nil, restricts the listing to what an external-org
+	// caller may see (populated only from JWT org claims, never client input).
+	OrgScope *OrgScope
 	// SortField is one of: created_at, updated_at, due_at, priority, title,
 	// status, type, domain, assignee_id. Empty → created_at.
 	SortField string
