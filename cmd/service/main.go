@@ -315,6 +315,7 @@ func main() {
 				r.With(requireTicketManage).Patch("/", ticketH.Update)
 				r.With(requireTicketManage).Delete("/", ticketH.Cancel)
 				r.With(requireTicketManage).Post("/approve", ticketH.Approve)
+				r.Post("/org-reassign", ticketH.OrgReassign)
 				r.Get("/subtasks", ticketH.ListSubtasks)
 				r.Post("/attempts", ticketH.SubmitAttempt)
 				r.Get("/attempts", ticketH.ListAttempts)

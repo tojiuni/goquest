@@ -586,6 +586,37 @@ func (h *TicketHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
+// OrgReassign lets an admin of the ticket's assignee org route the work to one
+// of their own members. Only assignee_id changes; assignee_type stays "org"
+// and the status machine is untouched. POST /tickets/{id}/org-reassign
+func (h *TicketHandler) OrgReassign(w http.ResponseWriter, r *http.Request) {
+	t := auth.TicketFrom(r) // stashed by RequireTicketView
+	o := auth.OrgFrom(r)
+	if t == nil || o == nil || !o.IsAdmin() ||
+		t.AssigneeOrgID == nil || *t.AssigneeOrgID != o.ID {
+		writeError(w, http.StatusForbidden, "org admin of the assignee org required")
+		return
+	}
+
+	var body struct {
+		AssigneeID string `json:"assignee_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.AssigneeID == "" {
+		writeError(w, http.StatusBadRequest, "assignee_id required")
+		return
+	}
+
+	actor := auth.RequesterID(r)
+	updated, err := h.svc.Update(r.Context(), t.ID, ticket.UpdateTicketReq{
+		AssigneeID: &body.AssigneeID,
+	}, actor)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
 func (h *TicketHandler) ListSubtasks(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(chi.URLParam(r, "id"))
 	if err != nil {

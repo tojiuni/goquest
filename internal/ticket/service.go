@@ -204,6 +204,9 @@ func (s *Service) GetByProjectAndTitleName(ctx context.Context, projectID uuid.U
 }
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq, actor string) (*Ticket, error) {
+	if req.AssigneeType != nil && *req.AssigneeType == AssigneeOrg && req.AssigneeOrgID == nil {
+		return nil, errors.New("assignee_org_id required when assignee_type is org")
+	}
 	if req.Title != nil && strings.TrimSpace(*req.Title) == "" {
 		return nil, fmt.Errorf("title cannot be empty")
 	}
