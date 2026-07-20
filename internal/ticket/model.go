@@ -45,6 +45,9 @@ type AssigneeType string
 const (
 	AssigneeHuman AssigneeType = "human"
 	AssigneeAgent AssigneeType = "agent"
+	// AssigneeOrg assigns the ticket to an external lymphhub organization; the
+	// org's admin re-assigns internally (assignee_id then holds the member).
+	AssigneeOrg AssigneeType = "org"
 )
 
 // RiskTier declares how much scrutiny a ticket's auto-completion warrants.
@@ -99,21 +102,24 @@ func (c CompletionSpec) MarshalJSON() ([]byte, error) {
 }
 
 type Ticket struct {
-	ID           uuid.UUID      `json:"id"`
-	TitleName    string         `json:"title_name,omitempty"`
-	Title        string         `json:"title"`
-	Description  string         `json:"description"`
-	Type         TicketType     `json:"type"`
-	Status       Status         `json:"status"`
-	Priority     Priority       `json:"priority"`
-	RiskTier     RiskTier       `json:"risk_tier"`
-	AssigneeType AssigneeType   `json:"assignee_type"`
-	AssigneeID   string         `json:"assignee_id"`
-	RequesterID  string         `json:"requester_id"`
-	SourceBot    string         `json:"source_bot,omitempty"`
-	Domain       Domain         `json:"domain,omitempty"`
-	AgentContext map[string]any `json:"agent_context,omitempty"`
-	Metadata     map[string]any `json:"metadata,omitempty"`
+	ID           uuid.UUID    `json:"id"`
+	TitleName    string       `json:"title_name,omitempty"`
+	Title        string       `json:"title"`
+	Description  string       `json:"description"`
+	Type         TicketType   `json:"type"`
+	Status       Status       `json:"status"`
+	Priority     Priority     `json:"priority"`
+	RiskTier     RiskTier     `json:"risk_tier"`
+	AssigneeType AssigneeType `json:"assignee_type"`
+	AssigneeID   string       `json:"assignee_id"`
+	RequesterID  string       `json:"requester_id"`
+	// Org reference axes (lymphhub org UUIDs; source of truth is external).
+	RequesterOrgID *uuid.UUID     `json:"requester_org_id,omitempty"`
+	AssigneeOrgID  *uuid.UUID     `json:"assignee_org_id,omitempty"`
+	SourceBot      string         `json:"source_bot,omitempty"`
+	Domain         Domain         `json:"domain,omitempty"`
+	AgentContext   map[string]any `json:"agent_context,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
 	// Phase 0: multi-tenancy + game quest fields
 	ProjectID      *uuid.UUID     `json:"project_id,omitempty"`
 	ParentID       *uuid.UUID     `json:"parent_id,omitempty"`
@@ -152,14 +158,17 @@ type Tag struct {
 }
 
 type CreateTicketReq struct {
-	TitleName      string         `json:"title_name,omitempty"`
-	Title          string         `json:"title"`
-	Description    string         `json:"description"`
-	Type           TicketType     `json:"type"`
-	Priority       Priority       `json:"priority"`
-	RiskTier       RiskTier       `json:"risk_tier,omitempty"`
-	AssigneeType   AssigneeType   `json:"assignee_type"`
-	AssigneeID     string         `json:"assignee_id"`
+	TitleName    string       `json:"title_name,omitempty"`
+	Title        string       `json:"title"`
+	Description  string       `json:"description"`
+	Type         TicketType   `json:"type"`
+	Priority     Priority     `json:"priority"`
+	RiskTier     RiskTier     `json:"risk_tier,omitempty"`
+	AssigneeType AssigneeType `json:"assignee_type"`
+	AssigneeID   string       `json:"assignee_id"`
+	// RequesterOrgID is server-stamped only (from the caller's auth claims);
+	// clients cannot set it via the request body.
+	RequesterOrgID *uuid.UUID     `json:"-"`
 	Domain         Domain         `json:"domain,omitempty"`
 	AgentContext   map[string]any `json:"agent_context,omitempty"`
 	SourceBot      string         `json:"source_bot,omitempty"`
@@ -181,14 +190,15 @@ type CreateTicketReq struct {
 }
 
 type UpdateTicketReq struct {
-	TitleName      *string         `json:"title_name,omitempty"`
-	Title          *string         `json:"title,omitempty"`
-	Description    *string         `json:"description,omitempty"`
-	Status         *Status         `json:"status,omitempty"`
-	RiskTier       *RiskTier       `json:"risk_tier,omitempty"`
-	AssigneeID     *string         `json:"assignee_id,omitempty"`
-	AssigneeType   *AssigneeType   `json:"assignee_type,omitempty"`
-	Domain         *Domain         `json:"domain,omitempty"`
+	TitleName     *string       `json:"title_name,omitempty"`
+	Title         *string       `json:"title,omitempty"`
+	Description   *string       `json:"description,omitempty"`
+	Status        *Status       `json:"status,omitempty"`
+	RiskTier      *RiskTier     `json:"risk_tier,omitempty"`
+	AssigneeID    *string       `json:"assignee_id,omitempty"`
+	AssigneeType  *AssigneeType `json:"assignee_type,omitempty"`
+	AssigneeOrgID *uuid.UUID    `json:"assignee_org_id,omitempty"`
+	Domain        *Domain       `json:"domain,omitempty"`
 	// ProjectID moves the ticket to another project. The target must exist and
 	// live in the same workspace as the current project (tags, title_name
 	// uniqueness and visibility are all workspace/project-scoped).
