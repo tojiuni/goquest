@@ -9,24 +9,17 @@ import (
 	"github.com/tojiuni/goquest/internal/auth"
 )
 
-// TestCommentCanSeeInternal_ClosureLogic exercises the exact boolean expression
-// wired into handler.NewCommentHandler in main.go:
-//
-//	!auth.IsCustomerRequest(r) && auth.OrgFrom(r) == nil
-//
-// The closure is constructed inline here (rather than imported) because it is
-// a main.go-local var, not an exported function — this test guards the wiring
-// logic itself, so any edit to the expression above must be mirrored here.
+// TestCommentCanSeeInternal_ClosureLogic exercises the actual production
+// function `canSeeInternal` (main.go), which is wired directly into
+// handler.NewCommentHandler(commentSvc, canSeeInternal) — no duplicated
+// expression here, so drift between this test and the real gate is
+// impossible.
 //
 // goq-org-backend Task 6: external-org callers (admin or member) must be
 // treated like magic-link customers — neither should see is_internal=true
 // comments. Only a plain staff/OIDC request (no customer token, no org claim)
 // is allowed to see them.
 func TestCommentCanSeeInternal_ClosureLogic(t *testing.T) {
-	canSeeInternal := func(r *http.Request) bool {
-		return !auth.IsCustomerRequest(r) && auth.OrgFrom(r) == nil
-	}
-
 	tests := []struct {
 		name string
 		ctx  func(r *http.Request) *http.Request
