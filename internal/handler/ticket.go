@@ -611,7 +611,11 @@ func (h *TicketHandler) OrgReassign(w http.ResponseWriter, r *http.Request) {
 		AssigneeID: &body.AssigneeID,
 	}, actor)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		if errors.Is(err, ticket.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "ticket not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, updated)
