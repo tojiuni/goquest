@@ -8,6 +8,7 @@ import (
 
 	keyfunc "github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 type contextKey string
@@ -19,6 +20,8 @@ type Claims struct {
 	Sub           string `json:"sub"`
 	Email         string `json:"email"`
 	EmailVerified bool   `json:"email_verified"`
+	OrgID         string `json:"org_id,omitempty"`
+	OrgRole       string `json:"org_role,omitempty"`
 }
 
 // Middleware validates bearer JWTs against one or more JWKS endpoints. jwksURL
@@ -63,6 +66,9 @@ func Middleware(jwksURL string, skip bool) func(http.Handler) http.Handler {
 			}
 
 			ctx := context.WithValue(r.Context(), requesterKey, requesterFromClaims(claims))
+			if o := orgFromClaims(claims); o != nil {
+				ctx = context.WithValue(ctx, orgCtxKey, o)
+			}
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -147,4 +153,40 @@ func APIKeyMiddleware(verifier KeyVerifier) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+const orgCtxKey contextKey = "org_ctx"
+
+// OrgCtx carries the caller's lymphhub organization claim. Present only for
+// external-org users; staff tokens have no org claim. Role is "admin" or
+// "member" — anything else is downgraded to member (fail-closed).
+type OrgCtx struct {
+	ID   uuid.UUID
+	Role string
+}
+
+func (o *OrgCtx) IsAdmin() bool { return o != nil && o.Role == "admin" }
+
+func orgFromClaims(c *Claims) *OrgCtx {
+	if c.OrgID == "" {
+		return nil
+	}
+	id, err := uuid.Parse(c.OrgID)
+	if err != nil {
+		return nil
+	}
+	role := c.OrgRole
+	if role != "admin" {
+		role = "member"
+	}
+	return &OrgCtx{ID: id, Role: role}
+}
+
+func WithOrgCtx(ctx context.Context, o *OrgCtx) context.Context {
+	return context.WithValue(ctx, orgCtxKey, o)
+}
+
+func OrgFrom(r *http.Request) *OrgCtx {
+	v, _ := r.Context().Value(orgCtxKey).(*OrgCtx)
+	return v
 }
