@@ -98,6 +98,12 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	requesterID := auth.RequesterID(r)
 
+	// External-org callers get their org stamped server-side; the json:"-" tag
+	// on the field makes client-supplied values unreachable.
+	if o := auth.OrgFrom(r); o != nil {
+		req.RequesterOrgID = &o.ID
+	}
+
 	if len(req.TagNames) > 0 {
 		if h.tags == nil || req.ProjectID == nil {
 			writeError(w, http.StatusBadRequest, "tag_names requires a resolvable project")

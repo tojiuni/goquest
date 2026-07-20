@@ -94,6 +94,39 @@ func TestRequireTicketView_LegacyNoProject(t *testing.T) {
 	}
 }
 
+func TestRequireTicketView_OrgRules(t *testing.T) {
+	org, otherOrg := uuid.New(), uuid.New()
+	pid := uuid.New()
+	tk := &ticket.Ticket{ID: uuid.New(), ProjectID: &pid,
+		RequesterID: "m@corp.com", RequesterOrgID: &org}
+
+	cases := []struct {
+		name     string
+		orgCtx   *auth.OrgCtx
+		caller   string
+		wantCode int
+	}{
+		{"org admin views org ticket", &auth.OrgCtx{ID: org, Role: "admin"}, "boss@corp.com", http.StatusOK},
+		{"org member views own ticket", &auth.OrgCtx{ID: org, Role: "member"}, "m@corp.com", http.StatusOK},
+		{"org member blocked from colleague ticket", &auth.OrgCtx{ID: org, Role: "member"}, "other@corp.com", http.StatusForbidden},
+		{"foreign org blocked", &auth.OrgCtx{ID: otherOrg, Role: "admin"}, "x@rival.com", http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// checker must NOT be consulted for org callers; a stub that errors
+			// out would make that visible, but a plain disallow is sufficient
+			// here since org callers never reach the SpiceDB branch at all.
+			mw := auth.RequireTicketView(stubGetter{t: tk}, stubChecker{err: context.DeadlineExceeded})
+			req := reqWithUser(tk.ID, tc.caller)
+			req = req.WithContext(auth.WithOrgCtx(req.Context(), tc.orgCtx))
+			rec := serve(t, mw, req)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("%s: code=%d want %d", tc.name, rec.Code, tc.wantCode)
+			}
+		})
+	}
+}
+
 func TestRequireTicketView_CustomerToken(t *testing.T) {
 	id := uuid.New()
 	other := uuid.New()

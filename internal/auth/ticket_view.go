@@ -57,6 +57,23 @@ func RequireTicketView(getter ticketGetter, checker spicedb.PermissionChecker) f
 					http.Error(w, "forbidden", http.StatusForbidden)
 					return
 				}
+			} else if o := OrgFrom(r); o != nil {
+				// External-org caller: claim-based rule, SpiceDB not consulted.
+				// admin → any ticket on the org's requester/assignee axis;
+				// member → only tickets they personally requested / are assigned.
+				caller := RequesterID(r)
+				sameOrg := func(x *uuid.UUID) bool { return x != nil && *x == o.ID }
+				allowed := false
+				if o.IsAdmin() {
+					allowed = sameOrg(t.RequesterOrgID) || sameOrg(t.AssigneeOrgID)
+				} else {
+					allowed = (sameOrg(t.RequesterOrgID) && t.RequesterID == caller) ||
+						(sameOrg(t.AssigneeOrgID) && t.AssigneeID == caller)
+				}
+				if !allowed {
+					http.Error(w, "forbidden", http.StatusForbidden)
+					return
+				}
 			} else if t.ProjectID != nil {
 				// OIDC user, project-scoped ticket → SpiceDB gate. RequesterID is "" for
 				// requests carrying neither JWT nor API key nor customer token; SpiceDB

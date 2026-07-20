@@ -127,6 +127,7 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 		AssigneeType:   req.AssigneeType,
 		AssigneeID:     req.AssigneeID,
 		RequesterID:    requesterID,
+		RequesterOrgID: req.RequesterOrgID,
 		SourceBot:      req.SourceBot,
 		Domain:         req.Domain,
 		AgentContext:   req.AgentContext,
