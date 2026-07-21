@@ -75,18 +75,10 @@ func (h *TicketHandler) TicketAnalytics(w http.ResponseWriter, r *http.Request) 
 		f.WorkspaceID = &u
 	}
 
-	// External-org callers are scoped by their JWT org claim — never by query
-	// params (org_side is the sole exception: it only narrows the axis).
-	// Staff tokens carry no org claim and keep the SpiceDB path below. Mirrors
-	// List's org branch: without this, an org caller's aggregate would run
-	// unfiltered over every org's tickets (cross-tenant leak).
-	if o := auth.OrgFrom(r); o != nil {
-		f.OrgScope = &ticket.OrgScope{
-			OrgID:    o.ID,
-			Role:     o.Role,
-			CallerID: auth.RequesterID(r),
-			Side:     q.Get("org_side"),
-		}
+	// Org scoping only engages on an explicit org_side — see orgScopeForSide.
+	// Mirrors List's org branch so read and aggregate scope identically.
+	if scope := orgScopeForSide(auth.OrgFrom(r), auth.RequesterID(r), q.Get("org_side")); scope != nil {
+		f.OrgScope = scope
 	} else {
 		vf, err := h.visibleFilter(r)
 		if err != nil {

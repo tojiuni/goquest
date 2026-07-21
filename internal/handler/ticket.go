@@ -197,6 +197,24 @@ func (h *TicketHandler) GetByName(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ticketWithLinks{Ticket: t, VcsLinks: links})
 }
 
+// orgScopeForSide builds the caller's org-axis filter, but only when they
+// explicitly asked for one via a recognized org_side value. An org claim on
+// its own is not sufficient: a staff account can carry one too (e.g. acting
+// as an org admin), and must keep its normal SpiceDB-visible results on a
+// plain request instead of being silently narrowed to org-only tickets.
+// Shared by List and TicketAnalytics so both scope identically.
+func orgScopeForSide(org *auth.OrgCtx, callerID, side string) *ticket.OrgScope {
+	if org == nil || (side != "requester" && side != "assignee") {
+		return nil
+	}
+	return &ticket.OrgScope{
+		OrgID:    org.ID,
+		Role:     org.Role,
+		CallerID: callerID,
+		Side:     side,
+	}
+}
+
 func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	f := ticket.ListTicketsFilter{
@@ -278,16 +296,12 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 	f.SortField = sortField
 	f.SortOrder = sortOrder
 
-	// External-org callers are scoped by their JWT org claim — never by query
-	// params (org_side is the sole exception: it only narrows the axis).
-	// Staff tokens carry no org claim and keep the SpiceDB path below.
-	if o := auth.OrgFrom(r); o != nil {
-		f.OrgScope = &ticket.OrgScope{
-			OrgID:    o.ID,
-			Role:     o.Role,
-			CallerID: auth.RequesterID(r),
-			Side:     q.Get("org_side"),
-		}
+	// An org claim alone does not mean the caller is external-only — a staff
+	// account can also carry one (e.g. acting as an org admin). Org scoping
+	// only engages when org_side is explicitly requested (goq-org-claim-staff-visibility-bypass);
+	// everyone else keeps the normal SpiceDB visibility path below.
+	if scope := orgScopeForSide(auth.OrgFrom(r), auth.RequesterID(r), q.Get("org_side")); scope != nil {
+		f.OrgScope = scope
 	} else {
 		// Visibility: restrict to SpiceDB-visible tickets (nil in shadow/Noop → no filter).
 		vf, err := h.visibleFilter(r)
