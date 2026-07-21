@@ -160,6 +160,9 @@ func (s *memStore) Aggregate(_ context.Context, _ string, _ ticket.ListTicketsFi
 func (s *memStore) Update(_ context.Context, _ uuid.UUID, _ ticket.UpdateTicketReq) (*ticket.Ticket, error) {
 	return nil, nil
 }
+func (s *memStore) ReopenTerminal(_ context.Context, _ uuid.UUID) (*ticket.Ticket, error) {
+	return nil, nil
+}
 func (s *memStore) AllSubtasksTerminal(_ context.Context, _ uuid.UUID) (bool, error) {
 	return false, nil
 }

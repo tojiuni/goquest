@@ -393,6 +393,28 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	return s.Get(ctx, id)
 }
 
+// ReopenTerminal writes status=in_progress + completed_at=NULL directly,
+// bypassing validateTransition (see Store.ReopenTerminal doc). Only rows
+// currently in a terminal status are affected; the WHERE guard makes this
+// safe against a concurrent non-terminal update racing this call, but the
+// caller (Service.Reopen) is expected to have already verified the ticket is
+// terminal so it can return a precise 422 rather than a silent no-op here.
+func (s *pgStore) ReopenTerminal(ctx context.Context, id uuid.UUID) (*Ticket, error) {
+	now := time.Now().UTC()
+	ct, err := s.db.Exec(ctx, `
+		UPDATE tickets SET status=$2, completed_at=NULL, updated_at=$3
+		WHERE id=$1 AND status IN ($4, $5)`,
+		id, string(StatusInProgress), now, string(StatusCompleted), string(StatusCancelled),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("reopen ticket: %w", err)
+	}
+	if ct.RowsAffected() == 0 {
+		return nil, ErrNotFound
+	}
+	return s.Get(ctx, id)
+}
+
 // ticketWhere builds the shared WHERE clause + bound args from a
 // ListTicketsFilter, used by both List and Aggregate so the two stay in lockstep
 // (same filters, same authz visibility predicate). It returns the clause

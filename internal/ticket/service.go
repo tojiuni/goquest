@@ -302,6 +302,35 @@ func (s *Service) Cancel(ctx context.Context, id uuid.UUID, actor string) (*Tick
 	return s.Update(ctx, id, UpdateTicketReq{Status: &cancelled}, actor)
 }
 
+// Reopen moves a completed/cancelled ticket back to in_progress. This is an
+// explicit, audited escape hatch for tickets closed in error (e.g. a VCS
+// auto-link false-positive completion, or a mistaken manual completion) —
+// it intentionally bypasses the normal validateTransition state machine,
+// which keeps terminals closed by design (goq-ticket-reopen-terminal). The
+// caller (handler) is responsible for audit-logging the reason; this method
+// only enforces that a reason was given and that the ticket is actually
+// terminal.
+func (s *Service) Reopen(ctx context.Context, id uuid.UUID, actor, reason string) (*Ticket, error) {
+	if strings.TrimSpace(reason) == "" {
+		return nil, fmt.Errorf("%w: reason is required", ErrValidation)
+	}
+	t, err := s.store.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if t.Status != StatusCompleted && t.Status != StatusCancelled {
+		return nil, fmt.Errorf("%w: only completed or cancelled tickets can be reopened (current: %s)", ErrInvalidTransition, t.Status)
+	}
+	reopened, err := s.store.ReopenTerminal(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.pub.PublishUpdated(ctx, reopened); err != nil {
+		log.Printf("warn: publish updated: %v", err)
+	}
+	return reopened, nil
+}
+
 func (s *Service) Approve(ctx context.Context, id uuid.UUID, req ApproveTicketReq) (*Ticket, error) {
 	t, err := s.store.Get(ctx, id)
 	if err != nil {

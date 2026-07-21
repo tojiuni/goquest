@@ -597,6 +597,53 @@ func (h *TicketHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
+// Reopen moves a completed/cancelled ticket back to in_progress. This is the
+// audited escape hatch for tickets closed in error (e.g. a VCS auto-link
+// false-positive completion) — see goq-ticket-reopen-terminal. Gated by
+// requireTicketManage same as Update/Cancel/Approve. POST /tickets/{id}/reopen
+func (h *TicketHandler) Reopen(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUID(chi.URLParam(r, "id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid ticket id")
+		return
+	}
+
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+
+	actor := auth.RequesterID(r)
+	t, err := h.svc.Reopen(r.Context(), id, actor, req.Reason)
+	if err != nil {
+		if errors.Is(err, ticket.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "ticket not found")
+			return
+		}
+		if errors.Is(err, ticket.ErrValidation) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if errors.Is(err, ticket.ErrInvalidTransition) {
+			writeError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if h.audit != nil {
+		h.audit.Record(r.Context(), actor, "ticket.reopened", "ticket", t.ID.String(), map[string]any{
+			"reason": req.Reason,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, t)
+}
+
 // OrgReassign lets an admin of the ticket's assignee org route the work to one
 // of their own members. Only assignee_id changes; assignee_type stays "org"
 // and the status machine is untouched. POST /tickets/{id}/org-reassign
