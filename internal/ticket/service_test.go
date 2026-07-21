@@ -903,6 +903,45 @@ func TestService_Update_OrgAssignmentRequiresOrgID(t *testing.T) {
 	}
 }
 
+// TestService_Update_ValidationErrorsWrapErrValidation covers
+// goq-ticket-update-validation-500: every client-input validation failure in
+// Update must satisfy errors.Is(err, ticket.ErrValidation) so the handler can
+// map it to 400 instead of falling through to its catch-all 500.
+func TestService_Update_ValidationErrorsWrapErrValidation(t *testing.T) {
+	badTitleName := "BadFormat"
+	emptyTitle := "   "
+	badDomain := ticket.Domain("not-a-domain")
+	badRiskTier := ticket.RiskTier("not-a-tier")
+	orgType := ticket.AssigneeOrg
+
+	cases := []struct {
+		name string
+		req  ticket.UpdateTicketReq
+	}{
+		{"empty title", ticket.UpdateTicketReq{Title: &emptyTitle}},
+		{"bad title_name", ticket.UpdateTicketReq{TitleName: &badTitleName}},
+		{"invalid domain", ticket.UpdateTicketReq{Domain: &badDomain}},
+		{"invalid risk_tier", ticket.UpdateTicketReq{RiskTier: &badRiskTier}},
+		{"org assignment missing org id", ticket.UpdateTicketReq{AssigneeType: &orgType}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			existing := newTestTicket(ticket.StatusPending)
+			store := &mockStore{getTicket: existing}
+			svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+			_, err := svc.Update(context.Background(), existing.ID, tc.req, "test-actor")
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !errors.Is(err, ticket.ErrValidation) {
+				t.Fatalf("err = %v, want errors.Is(err, ticket.ErrValidation)", err)
+			}
+		})
+	}
+}
+
 func TestService_Create_DuplicateTitleName(t *testing.T) {
 	store := &mockStore{createErr: ticket.ErrDuplicateTitleName}
 	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
