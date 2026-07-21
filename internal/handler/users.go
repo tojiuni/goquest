@@ -31,9 +31,10 @@ func (h *UsersHandler) Lookup(w http.ResponseWriter, r *http.Request) {
 	ids := strings.Split(idsParam, ",")
 
 	actors, err := h.lookup.Lookup(r.Context(), ids)
-	if err != nil {
-		writeJSON(w, http.StatusOK, []directory.Actor{})
-		return
+	if err != nil || actors == nil {
+		// A nil slice (no error, e.g. the unconfigured noopLookuper fallback)
+		// must not serialize as JSON `null` — callers expect an array.
+		actors = []directory.Actor{}
 	}
 	writeJSON(w, http.StatusOK, actors)
 }

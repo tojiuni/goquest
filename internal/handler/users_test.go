@@ -47,6 +47,22 @@ func TestUsersLookup_NoIDs_ReturnsEmptyArray(t *testing.T) {
 	assert.JSONEq(t, `[]`, rec.Body.String())
 }
 
+func TestUsersLookup_LookuperReturnsNilWithoutError_ReturnsEmptyArray(t *testing.T) {
+	// The unconfigured (noopLookuper) fallback returns (nil, nil) — a bare
+	// nil slice must not serialize as JSON `null`; callers expect an array
+	// to iterate even when lymphhub isn't wired up yet.
+	h := handler.NewUsersHandler(&fakeLookuper{result: nil, err: nil})
+	r := chi.NewRouter()
+	r.Get("/users/lookup", h.Lookup)
+
+	req := httptest.NewRequest("GET", "/users/lookup?ids=a", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, 200, rec.Code)
+	assert.JSONEq(t, `[]`, rec.Body.String())
+}
+
 func TestUsersLookup_LookuperError_ReturnsEmptyNot500(t *testing.T) {
 	// lymphhub being down must never fail the whole request — this is a
 	// UX nicety, not load-bearing (spec §C).
