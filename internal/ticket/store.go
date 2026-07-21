@@ -11,6 +11,12 @@ type Store interface {
 	Get(ctx context.Context, id uuid.UUID) (*Ticket, error)
 	GetByProjectAndTitleName(ctx context.Context, projectID uuid.UUID, titleName string) (*Ticket, error)
 	Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq) (*Ticket, error)
+	// ReopenTerminal moves a completed/cancelled ticket back to in_progress,
+	// intentionally bypassing the validateTransition state machine (terminals
+	// are closed by design — see statemachine_quality_test.go). Callers must
+	// verify the ticket is actually terminal before calling; this method does
+	// not re-check status.
+	ReopenTerminal(ctx context.Context, id uuid.UUID) (*Ticket, error)
 	List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int, error)
 	// Aggregate returns COUNT(*) grouped by one whitelisted column, honoring the
 	// same filters + visibility predicate as List. Unknown groupBy → ErrInvalidGroupBy.

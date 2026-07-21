@@ -24,6 +24,9 @@ type mockStore struct {
 	updateErr error
 	tickets   []*ticket.Ticket
 	total     int
+
+	reopenedID uuid.UUID
+	reopenErr  error
 }
 
 func (m *mockStore) Create(_ context.Context, t *ticket.Ticket) error {
@@ -57,6 +60,17 @@ func (m *mockStore) Update(_ context.Context, _ uuid.UUID, req ticket.UpdateTick
 	if req.AssigneeType != nil {
 		result.AssigneeType = *req.AssigneeType
 	}
+	return &result, nil
+}
+
+func (m *mockStore) ReopenTerminal(_ context.Context, id uuid.UUID) (*ticket.Ticket, error) {
+	m.reopenedID = id
+	if m.reopenErr != nil {
+		return nil, m.reopenErr
+	}
+	result := *m.getTicket
+	result.Status = ticket.StatusInProgress
+	result.CompletedAt = nil
 	return &result, nil
 }
 
@@ -416,6 +430,75 @@ func TestService_Cancel(t *testing.T) {
 	}
 	if *store.updated.Status != ticket.StatusCancelled {
 		t.Errorf("expected cancelled status, got %s", *store.updated.Status)
+	}
+}
+
+func TestService_Reopen_CompletedToInProgress(t *testing.T) {
+	base := newTestTicket(ticket.StatusCompleted)
+	store := &mockStore{getTicket: base}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	got, err := svc.Reopen(context.Background(), base.ID, "test-actor", "reopened by mistake")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Status != ticket.StatusInProgress {
+		t.Errorf("status = %s, want in_progress", got.Status)
+	}
+	if got.CompletedAt != nil {
+		t.Error("expected completed_at cleared")
+	}
+	if store.reopenedID != base.ID {
+		t.Errorf("store.ReopenTerminal called with %s, want %s", store.reopenedID, base.ID)
+	}
+}
+
+func TestService_Reopen_CancelledToInProgress(t *testing.T) {
+	base := newTestTicket(ticket.StatusCancelled)
+	store := &mockStore{getTicket: base}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	got, err := svc.Reopen(context.Background(), base.ID, "test-actor", "reopened by mistake")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Status != ticket.StatusInProgress {
+		t.Errorf("status = %s, want in_progress", got.Status)
+	}
+}
+
+func TestService_Reopen_NonTerminalRejected(t *testing.T) {
+	base := newTestTicket(ticket.StatusInProgress)
+	store := &mockStore{getTicket: base}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	_, err := svc.Reopen(context.Background(), base.ID, "test-actor", "reason")
+	if !errors.Is(err, ticket.ErrInvalidTransition) {
+		t.Fatalf("err = %v, want errors.Is(err, ticket.ErrInvalidTransition)", err)
+	}
+	if store.reopenedID != uuid.Nil {
+		t.Error("store.ReopenTerminal must not be called for a non-terminal ticket")
+	}
+}
+
+func TestService_Reopen_RequiresReason(t *testing.T) {
+	base := newTestTicket(ticket.StatusCompleted)
+	store := &mockStore{getTicket: base}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	_, err := svc.Reopen(context.Background(), base.ID, "test-actor", "  ")
+	if !errors.Is(err, ticket.ErrValidation) {
+		t.Fatalf("err = %v, want errors.Is(err, ticket.ErrValidation)", err)
+	}
+}
+
+func TestService_Reopen_NotFound(t *testing.T) {
+	store := &mockStore{getErr: ticket.ErrNotFound}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	_, err := svc.Reopen(context.Background(), uuid.New(), "test-actor", "reason")
+	if !errors.Is(err, ticket.ErrNotFound) {
+		t.Fatalf("err = %v, want errors.Is(err, ticket.ErrNotFound)", err)
 	}
 }
 
