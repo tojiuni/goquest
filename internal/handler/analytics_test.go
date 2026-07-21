@@ -120,9 +120,10 @@ func TestTicketAnalytics_GroupByAndValidation(t *testing.T) {
 }
 
 // TestTicketAnalytics_OrgCaller_ScopesByOrgNotSpiceDB proves the cross-tenant
-// leak fix: an external-org caller's analytics query must be scoped by
-// ListTicketsFilter.OrgScope (derived from the JWT org claim), never by the
-// SpiceDB VisibleFilter path, which would aggregate over every org's tickets.
+// leak fix: an external-org caller that explicitly asks for an org-scoped view
+// (org_side) must be scoped by ListTicketsFilter.OrgScope (derived from the
+// JWT org claim), never by the SpiceDB VisibleFilter path, which would
+// aggregate over every org's tickets.
 func TestTicketAnalytics_OrgCaller_ScopesByOrgNotSpiceDB(t *testing.T) {
 	store := &aggStore{memStore: newMemStore()}
 	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
@@ -131,7 +132,7 @@ func TestTicketAnalytics_OrgCaller_ScopesByOrgNotSpiceDB(t *testing.T) {
 	r.Get("/analytics/tickets", h.TicketAnalytics)
 
 	orgID := uuid.New()
-	req := httptest.NewRequest(http.MethodGet, "/analytics/tickets?group_by=status", nil)
+	req := httptest.NewRequest(http.MethodGet, "/analytics/tickets?group_by=status&org_side=requester", nil)
 	req = asUser(req, "member@corp.com")
 	req = req.WithContext(auth.WithOrgCtx(req.Context(), &auth.OrgCtx{ID: orgID, Role: "member"}))
 	rec := httptest.NewRecorder()
@@ -155,4 +156,33 @@ func TestTicketAnalytics_OrgCaller_ScopesByOrgNotSpiceDB(t *testing.T) {
 	if store.lastFilter.VisibleFilter != nil {
 		t.Errorf("VisibleFilter must not be set for an org caller (that's the SpiceDB path), got %+v", store.lastFilter.VisibleFilter)
 	}
+}
+
+// TestTicketAnalytics_OrgCallerWithoutSide_UsesSpiceDBVisibility covers
+// goq-org-claim-staff-visibility-bypass: a caller whose JWT carries an org
+// claim but who did NOT ask for an org-scoped view (no org_side) must keep
+// its normal SpiceDB visibility — an org claim alone is not proof the caller
+// is external-only, since a staff account can hold one too.
+func TestTicketAnalytics_OrgCallerWithoutSide_UsesSpiceDBVisibility(t *testing.T) {
+	store := &aggStore{memStore: newMemStore()}
+	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, &spicedb.NoopChecker{}, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil)
+	r := chi.NewRouter()
+	r.Get("/analytics/tickets", h.TicketAnalytics)
+
+	orgID := uuid.New()
+	req := httptest.NewRequest(http.MethodGet, "/analytics/tickets?group_by=status", nil)
+	req = asUser(req, "staffadmin@toji.homes")
+	req = req.WithContext(auth.WithOrgCtx(req.Context(), &auth.OrgCtx{ID: orgID, Role: "admin"}))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if store.lastFilter.OrgScope != nil {
+		t.Errorf("OrgScope must be nil without an explicit org_side, got %+v", store.lastFilter.OrgScope)
+	}
+	// NoopChecker reports unrestricted, so visibleFilter legitimately returns nil too —
+	// the point under test is that OrgScope was NOT set, i.e. the org branch was skipped.
 }
