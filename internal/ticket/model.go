@@ -340,3 +340,9 @@ var (
 	ErrRefIDInvalid     = errors.New("gopedia_l1_id must be 1..512 chars")
 	ErrRefIDsDuplicate  = errors.New("duplicate gopedia_l1_id in request")
 )
+
+// ErrValidation wraps application-level client-input validation failures
+// (bad title/title_name/domain/risk_tier/org-assignment fields) so handlers
+// can map them to 400 with errors.Is, instead of falling through to their
+// catch-all 500 (goq-ticket-update-validation-500).
+var ErrValidation = errors.New("validation failed")

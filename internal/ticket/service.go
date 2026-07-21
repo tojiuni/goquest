@@ -205,14 +205,14 @@ func (s *Service) GetByProjectAndTitleName(ctx context.Context, projectID uuid.U
 
 func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq, actor string) (*Ticket, error) {
 	if req.AssigneeType != nil && *req.AssigneeType == AssigneeOrg && req.AssigneeOrgID == nil {
-		return nil, errors.New("assignee_org_id required when assignee_type is org")
+		return nil, fmt.Errorf("%w: assignee_org_id required when assignee_type is org", ErrValidation)
 	}
 	if req.Title != nil && strings.TrimSpace(*req.Title) == "" {
-		return nil, fmt.Errorf("title cannot be empty")
+		return nil, fmt.Errorf("%w: title cannot be empty", ErrValidation)
 	}
 	if req.TitleName != nil {
 		if *req.TitleName != "" && !titleNameRe.MatchString(*req.TitleName) {
-			return nil, fmt.Errorf("title_name must be lowercase hyphen-separated (e.g. goq-vault-portforward)")
+			return nil, fmt.Errorf("%w: title_name must be lowercase hyphen-separated (e.g. goq-vault-portforward)", ErrValidation)
 		}
 	}
 	if req.Domain != nil {
@@ -460,7 +460,7 @@ var validDomains = map[Domain]struct{}{
 
 func validateDomain(d Domain) error {
 	if _, ok := validDomains[d]; !ok {
-		return fmt.Errorf("invalid domain: %s", d)
+		return fmt.Errorf("%w: invalid domain: %s", ErrValidation, d)
 	}
 	return nil
 }
@@ -476,7 +476,7 @@ func validateRiskTier(r RiskTier) error {
 		return nil
 	}
 	if _, ok := validRiskTiers[r]; !ok {
-		return fmt.Errorf("invalid risk_tier: %q", r)
+		return fmt.Errorf("%w: invalid risk_tier: %q", ErrValidation, r)
 	}
 	return nil
 }

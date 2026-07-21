@@ -360,6 +360,17 @@ func (h *TicketHandler) Update(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if errors.Is(err, ticket.ErrRefConflict) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		if errors.Is(err, ticket.ErrValidation) ||
+			errors.Is(err, ticket.ErrRefIDInvalid) ||
+			errors.Is(err, ticket.ErrRefIDsDuplicate) ||
+			errors.Is(err, ticket.ErrRefLimitExceeded) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
