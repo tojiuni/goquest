@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -885,6 +886,20 @@ func TestService_Update_InvalidTitleNameFormat(t *testing.T) {
 	}, "test-actor")
 	if err == nil {
 		t.Fatal("expected error for invalid title_name format")
+	}
+}
+
+func TestService_Update_OrgAssignmentRequiresOrgID(t *testing.T) {
+	existing := newTestTicket(ticket.StatusPending)
+	store := &mockStore{getTicket: existing}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	at := ticket.AssigneeOrg
+	_, err := svc.Update(context.Background(), existing.ID, ticket.UpdateTicketReq{
+		AssigneeType: &at,
+	}, "test-actor")
+	if err == nil || !strings.Contains(err.Error(), "assignee_org_id required") {
+		t.Fatalf("want assignee_org_id required error, got %v", err)
 	}
 }
 

@@ -98,6 +98,12 @@ func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	requesterID := auth.RequesterID(r)
 
+	// External-org callers get their org stamped server-side; the json:"-" tag
+	// on the field makes client-supplied values unreachable.
+	if o := auth.OrgFrom(r); o != nil {
+		req.RequesterOrgID = &o.ID
+	}
+
 	if len(req.TagNames) > 0 {
 		if h.tags == nil || req.ProjectID == nil {
 			writeError(w, http.StatusBadRequest, "tag_names requires a resolvable project")
@@ -272,13 +278,25 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 	f.SortField = sortField
 	f.SortOrder = sortOrder
 
-	// Visibility: restrict to SpiceDB-visible tickets (nil in shadow/Noop → no filter).
-	vf, err := h.visibleFilter(r)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
-		return
+	// External-org callers are scoped by their JWT org claim — never by query
+	// params (org_side is the sole exception: it only narrows the axis).
+	// Staff tokens carry no org claim and keep the SpiceDB path below.
+	if o := auth.OrgFrom(r); o != nil {
+		f.OrgScope = &ticket.OrgScope{
+			OrgID:    o.ID,
+			Role:     o.Role,
+			CallerID: auth.RequesterID(r),
+			Side:     q.Get("org_side"),
+		}
+	} else {
+		// Visibility: restrict to SpiceDB-visible tickets (nil in shadow/Noop → no filter).
+		vf, err := h.visibleFilter(r)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+			return
+		}
+		f.VisibleFilter = vf
 	}
-	f.VisibleFilter = vf
 
 	tickets, total, err := h.svc.List(r.Context(), f)
 	if err != nil {
@@ -566,6 +584,42 @@ func (h *TicketHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, t)
+}
+
+// OrgReassign lets an admin of the ticket's assignee org route the work to one
+// of their own members. Only assignee_id changes; assignee_type stays "org"
+// and the status machine is untouched. POST /tickets/{id}/org-reassign
+func (h *TicketHandler) OrgReassign(w http.ResponseWriter, r *http.Request) {
+	t := auth.TicketFrom(r) // stashed by RequireTicketView
+	o := auth.OrgFrom(r)
+	if t == nil || o == nil || !o.IsAdmin() ||
+		t.AssigneeType != ticket.AssigneeOrg ||
+		t.AssigneeOrgID == nil || *t.AssigneeOrgID != o.ID {
+		writeError(w, http.StatusForbidden, "org admin of the assignee org required")
+		return
+	}
+
+	var body struct {
+		AssigneeID string `json:"assignee_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.AssigneeID == "" {
+		writeError(w, http.StatusBadRequest, "assignee_id required")
+		return
+	}
+
+	actor := auth.RequesterID(r)
+	updated, err := h.svc.Update(r.Context(), t.ID, ticket.UpdateTicketReq{
+		AssigneeID: &body.AssigneeID,
+	}, actor)
+	if err != nil {
+		if errors.Is(err, ticket.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "ticket not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
 }
 
 func (h *TicketHandler) ListSubtasks(w http.ResponseWriter, r *http.Request) {

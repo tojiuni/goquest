@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	jwt "github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 func TestBearerToken(t *testing.T) {
@@ -134,5 +135,44 @@ func TestJWKSURLs(t *testing.T) {
 				t.Errorf("%s[%d]: got %q want %q", c.name, i, got[i], c.want[i])
 			}
 		}
+	}
+}
+
+func TestOrgFromClaims(t *testing.T) {
+	orgID := uuid.New()
+	cases := []struct {
+		name  string
+		c     Claims
+		want  *OrgCtx
+	}{
+		{"admin", Claims{OrgID: orgID.String(), OrgRole: "admin"}, &OrgCtx{ID: orgID, Role: "admin"}},
+		{"member", Claims{OrgID: orgID.String(), OrgRole: "member"}, &OrgCtx{ID: orgID, Role: "member"}},
+		// 알 수 없는 role은 최소 권한(member)으로 강등 — fail-closed.
+		{"unknown role downgraded", Claims{OrgID: orgID.String(), OrgRole: "owner"}, &OrgCtx{ID: orgID, Role: "member"}},
+		{"no org claim", Claims{}, nil},
+		{"bad uuid", Claims{OrgID: "not-a-uuid", OrgRole: "admin"}, nil},
+		// all-zero UUID parses "successfully" but is not a real org — treat as
+		// no org claim, same as a parse failure (fail-closed).
+		{"nil uuid", Claims{OrgID: uuid.Nil.String(), OrgRole: "admin"}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := orgFromClaims(&tc.c)
+			if (got == nil) != (tc.want == nil) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+			if got != nil && (got.ID != tc.want.ID || got.Role != tc.want.Role) {
+				t.Fatalf("got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOrgFromRequest_RoundTrip(t *testing.T) {
+	o := &OrgCtx{ID: uuid.New(), Role: "admin"}
+	r := httptest.NewRequest("GET", "/", nil)
+	r = r.WithContext(WithOrgCtx(r.Context(), o))
+	if got := OrgFrom(r); got == nil || got.ID != o.ID {
+		t.Fatalf("OrgFrom = %v, want %v", got, o)
 	}
 }

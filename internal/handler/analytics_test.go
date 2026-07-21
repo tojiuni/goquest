@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/spicedb"
 	"github.com/tojiuni/goquest/internal/ticket"
@@ -18,7 +19,12 @@ import (
 // it groups the in-memory tickets by a small whitelist, honoring the status +
 // visibility filter, so the analytics handler is exercised end to end. Unknown
 // keys return ErrInvalidGroupBy, mirroring the production store contract.
-type aggStore struct{ *memStore }
+// lastFilter records the exact ListTicketsFilter the handler forwarded, so
+// tests can assert OrgScope vs VisibleFilter wiring without a DB.
+type aggStore struct {
+	*memStore
+	lastFilter ticket.ListTicketsFilter
+}
 
 var aggTestKey = map[string]func(*ticket.Ticket) string{
 	"status":   func(t *ticket.Ticket) string { return string(t.Status) },
@@ -26,6 +32,7 @@ var aggTestKey = map[string]func(*ticket.Ticket) string{
 }
 
 func (s *aggStore) Aggregate(_ context.Context, groupBy string, f ticket.ListTicketsFilter) ([]ticket.AggBucket, error) {
+	s.lastFilter = f
 	keyOf, ok := aggTestKey[groupBy]
 	if !ok {
 		return nil, ticket.ErrInvalidGroupBy
@@ -60,7 +67,7 @@ func TestTicketAnalytics_GroupByAndValidation(t *testing.T) {
 			Priority: ticket.PriorityNormal, Visibility: ticket.VisibilityProject,
 		}
 	}
-	store := &aggStore{newMemStore(mk(ticket.StatusPending), mk(ticket.StatusPending), mk(ticket.StatusCompleted))}
+	store := &aggStore{memStore: newMemStore(mk(ticket.StatusPending), mk(ticket.StatusPending), mk(ticket.StatusCompleted))}
 	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
 	// NoopChecker → unrestricted visibility → every ticket is counted.
 	h := handler.NewTicketHandler(svc, &spicedb.NoopChecker{}, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil)
@@ -109,5 +116,43 @@ func TestTicketAnalytics_GroupByAndValidation(t *testing.T) {
 	// invalid project_id → 400
 	if code := do("?group_by=status&project_id=not-a-uuid").Code; code != http.StatusBadRequest {
 		t.Errorf("bad project_id: status = %d, want 400", code)
+	}
+}
+
+// TestTicketAnalytics_OrgCaller_ScopesByOrgNotSpiceDB proves the cross-tenant
+// leak fix: an external-org caller's analytics query must be scoped by
+// ListTicketsFilter.OrgScope (derived from the JWT org claim), never by the
+// SpiceDB VisibleFilter path, which would aggregate over every org's tickets.
+func TestTicketAnalytics_OrgCaller_ScopesByOrgNotSpiceDB(t *testing.T) {
+	store := &aggStore{memStore: newMemStore()}
+	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, &spicedb.NoopChecker{}, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil)
+	r := chi.NewRouter()
+	r.Get("/analytics/tickets", h.TicketAnalytics)
+
+	orgID := uuid.New()
+	req := httptest.NewRequest(http.MethodGet, "/analytics/tickets?group_by=status", nil)
+	req = asUser(req, "member@corp.com")
+	req = req.WithContext(auth.WithOrgCtx(req.Context(), &auth.OrgCtx{ID: orgID, Role: "member"}))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if store.lastFilter.OrgScope == nil {
+		t.Fatal("filter.OrgScope is nil, want it set from the caller's JWT org claim")
+	}
+	if store.lastFilter.OrgScope.OrgID != orgID {
+		t.Errorf("OrgScope.OrgID = %v, want %v", store.lastFilter.OrgScope.OrgID, orgID)
+	}
+	if store.lastFilter.OrgScope.Role != "member" {
+		t.Errorf("OrgScope.Role = %q, want member", store.lastFilter.OrgScope.Role)
+	}
+	if store.lastFilter.OrgScope.CallerID != "member@corp.com" {
+		t.Errorf("OrgScope.CallerID = %q, want member@corp.com", store.lastFilter.OrgScope.CallerID)
+	}
+	if store.lastFilter.VisibleFilter != nil {
+		t.Errorf("VisibleFilter must not be set for an org caller (that's the SpiceDB path), got %+v", store.lastFilter.VisibleFilter)
 	}
 }

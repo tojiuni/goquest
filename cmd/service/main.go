@@ -150,10 +150,7 @@ func main() {
 
 	commentStore := comment.NewPGStore(pool)
 	commentSvc := comment.NewService(commentStore)
-	// Phase H3: customer-token contexts (magic-link) MUST NOT see internal comments.
-	commentH := handler.NewCommentHandler(commentSvc, func(r *http.Request) bool {
-		return !auth.IsCustomerRequest(r)
-	})
+	commentH := handler.NewCommentHandler(commentSvc, canSeeInternal)
 
 	// vcsSvc must be constructed before ticketH, which takes it as the
 	// ticket-GET links provider (embeds vcs_links without ticket->vcs import).
@@ -315,6 +312,7 @@ func main() {
 				r.With(requireTicketManage).Patch("/", ticketH.Update)
 				r.With(requireTicketManage).Delete("/", ticketH.Cancel)
 				r.With(requireTicketManage).Post("/approve", ticketH.Approve)
+				r.Post("/org-reassign", ticketH.OrgReassign)
 				r.Get("/subtasks", ticketH.ListSubtasks)
 				r.Post("/attempts", ticketH.SubmitAttempt)
 				r.Get("/attempts", ticketH.ListAttempts)
@@ -505,6 +503,15 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown: %v", err)
 	}
+}
+
+// canSeeInternal reports whether the caller may see is_internal=true comments.
+// Phase H3: customer-token (magic-link) contexts MUST NOT see internal comments.
+// goq-org-backend Task 6: external-org callers (admin or member) are outsiders
+// to staff conversation, same as magic-link customers — must not see internal
+// comments either.
+func canSeeInternal(r *http.Request) bool {
+	return !auth.IsCustomerRequest(r) && auth.OrgFrom(r) == nil
 }
 
 // customerTokenParser adapts magic.ParseCustomerAccessToken to auth.CustomerTokenParser

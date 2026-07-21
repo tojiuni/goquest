@@ -79,17 +79,17 @@ func (s *pgStore) Create(ctx context.Context, t *Ticket) error {
 			domain, agent_context, metadata,
 			project_id, parent_id, visibility, completion_mode,
 			completion_spec, reward_xp, due_at, callback_url,
-			created_at, updated_at
+			created_at, updated_at, requester_org_id, assignee_org_id
 		) VALUES (
 			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
-			$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
+			$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27
 		)`,
 		t.ID, titleName, t.Title, t.Description, string(t.Type), string(t.Status), string(t.Priority), string(riskTier),
 		string(t.AssigneeType), t.AssigneeID, t.RequesterID, sourceBot,
 		domain, agentCtxJSON, metaJSON,
 		t.ProjectID, t.ParentID, string(visibility), string(mode),
 		specJSON, t.RewardXP, t.DueAt, callbackURL,
-		t.CreatedAt, t.UpdatedAt,
+		t.CreatedAt, t.UpdatedAt, t.RequesterOrgID, t.AssigneeOrgID,
 	)
 	if err != nil {
 		if isUniqueViolation(err, "tickets_project_title_name_key") {
@@ -156,6 +156,7 @@ const ticketSelectSQL = `
 	       t.project_id, t.parent_id, t.visibility, t.completion_mode,
 	       t.completion_spec, t.reward_xp, t.due_at, t.callback_url,
 	       t.created_at, t.updated_at, t.completed_at, t.cancellation_note,
+	       t.requester_org_id, t.assignee_org_id,
 	       COALESCE(
 	         json_agg(json_build_object('id',tg.id,'name',tg.name,'color',tg.color))
 	         FILTER (WHERE tg.id IS NOT NULL),
@@ -221,6 +222,10 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	newAssigneeType := current.AssigneeType
 	if req.AssigneeType != nil {
 		newAssigneeType = *req.AssigneeType
+	}
+	newAssigneeOrgID := current.AssigneeOrgID
+	if req.AssigneeOrgID != nil {
+		newAssigneeOrgID = req.AssigneeOrgID
 	}
 	newRiskTier := current.RiskTier
 	if req.RiskTier != nil {
@@ -362,7 +367,7 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 			reward_xp=$14, due_at=$15, callback_url=$16,
 			updated_at=$17, completed_at=$18,
 			cancellation_note=$19, risk_tier=$20,
-			project_id=$21
+			project_id=$21, assignee_org_id=$22
 		WHERE id=$1`,
 		id,
 		titleNamePtr, newTitle, newDescription,
@@ -372,7 +377,7 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 		newRewardXP, newDueAt, callbackURL,
 		now, completedAt,
 		cancellationNote, string(newRiskTier),
-		newProjectID,
+		newProjectID, newAssigneeOrgID,
 	)
 	if err != nil {
 		if isUniqueViolation(err, "tickets_project_title_name_key") {
@@ -467,6 +472,35 @@ func ticketWhere(f ListTicketsFilter) (string, []any, int) {
 		where += fmt.Sprintf(" AND (t.title ILIKE $%d OR t.title_name ILIKE $%d OR t.description ILIKE $%d)", i, i, i)
 		args = append(args, "%"+esc+"%")
 		i++
+	}
+	if f.OrgScope != nil {
+		o := f.OrgScope
+		orgArg := i
+		args = append(args, o.OrgID)
+		i++
+		if o.Role == "admin" {
+			switch o.Side {
+			case "requester":
+				where += fmt.Sprintf(" AND t.requester_org_id=$%d", orgArg)
+			case "assignee":
+				where += fmt.Sprintf(" AND t.assignee_org_id=$%d", orgArg)
+			default:
+				where += fmt.Sprintf(" AND (t.requester_org_id=$%d OR t.assignee_org_id=$%d)", orgArg, orgArg)
+			}
+		} else {
+			callerArg := i
+			args = append(args, o.CallerID)
+			i++
+			switch o.Side {
+			case "requester":
+				where += fmt.Sprintf(" AND (t.requester_org_id=$%d AND t.requester_id=$%d)", orgArg, callerArg)
+			case "assignee":
+				where += fmt.Sprintf(" AND (t.assignee_org_id=$%d AND t.assignee_id=$%d)", orgArg, callerArg)
+			default:
+				where += fmt.Sprintf(" AND ((t.requester_org_id=$%d AND t.requester_id=$%d) OR (t.assignee_org_id=$%d AND t.assignee_id=$%d))",
+					orgArg, callerArg, orgArg, callerArg)
+			}
+		}
 	}
 	if len(f.TagIDs) > 0 {
 		// Subquery (not a join predicate) keeps GROUP BY t.id intact and matches
@@ -619,6 +653,7 @@ func scanTicket(s scanner) (*Ticket, error) {
 		&t.ProjectID, &t.ParentID, &t.Visibility, &t.CompletionMode,
 		&specBytes, &t.RewardXP, &t.DueAt, &callbackURL,
 		&t.CreatedAt, &t.UpdatedAt, &t.CompletedAt, &cancellationNote,
+		&t.RequesterOrgID, &t.AssigneeOrgID,
 		&tagsBytes,
 		&t.ChildCount,
 		&t.ProjectName, &t.WorkspaceName, &t.ParentTitle,
