@@ -46,6 +46,13 @@ type Config struct {
 	// Lymphhub CLI SSO session verification — empty means disabled.
 	LymphhubSessionAddr string
 
+	// Lymphhub actor-lookup service client (goq-user-lookup-proxy) — resolves
+	// requester/assignee ids to display names. Empty LymphhubOIDCURL disables
+	// the /users/lookup proxy (it always returns an empty array).
+	LymphhubOIDCURL             string
+	LymphhubServiceClientID     string
+	LymphhubServiceClientSecret string
+
 	// CORS
 	CORSOrigins []string
 
@@ -89,6 +96,10 @@ func Load() *Config {
 		SpiceDBEnforce:  parseBool(os.Getenv("SPICEDB_ENFORCE"), false),
 
 		LymphhubSessionAddr: os.Getenv("LYMPHHUB_SESSION_ADDR"),
+
+		LymphhubOIDCURL:             os.Getenv("LYMPHHUB_OIDC_URL"),
+		LymphhubServiceClientID:     os.Getenv("LYMPHHUB_SERVICE_CLIENT_ID"),
+		LymphhubServiceClientSecret: os.Getenv("LYMPHHUB_SERVICE_CLIENT_SECRET"),
 
 		CORSOrigins: parseStringSlice(os.Getenv("CORS_ALLOWED_ORIGINS"), []string{"https://toji.homes", "https://www.toji.homes"}),
 
