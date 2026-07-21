@@ -25,6 +25,7 @@ import (
 	"github.com/tojiuni/goquest/internal/config"
 	"github.com/tojiuni/goquest/internal/contract"
 	"github.com/tojiuni/goquest/internal/device"
+	"github.com/tojiuni/goquest/internal/directory"
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/idempotency"
 	"github.com/tojiuni/goquest/internal/integration"
@@ -200,6 +201,17 @@ func main() {
 	deviceSvc := device.NewService(deviceStore)
 	deviceH := handler.NewDeviceHandler(deviceSvc)
 
+	// Lymphhub actor-lookup proxy (goq-user-lookup-proxy) — resolves
+	// requester/assignee ids to display names. Unconfigured (empty
+	// LymphhubOIDCURL) → noopLookuper, so /users/lookup stays live but always
+	// returns [] until the lymphhub service client secrets are provisioned.
+	var userLookup directory.Lookuper = noopLookuper{}
+	if cfg.LymphhubOIDCURL != "" && cfg.LymphhubServiceClientID != "" {
+		directoryClient := directory.NewClient(cfg.LymphhubOIDCURL, cfg.LymphhubServiceClientID, cfg.LymphhubServiceClientSecret, http.DefaultClient)
+		userLookup = directory.NewCachedLookuper(directoryClient, 5*time.Minute)
+	}
+	usersH := handler.NewUsersHandler(userLookup)
+
 	contractClient := contract.NewClient(cfg.ContractPlaneURL, &http.Client{Timeout: 10 * time.Second})
 	contractSvc := contract.NewService(contractClient, sdbChecker, auditLogger)
 	contractH := handler.NewContractHandler(contractSvc)
@@ -294,6 +306,7 @@ func main() {
 
 			r.With(idempotent).Post("/tickets", ticketH.Create)
 			r.Get("/tickets", ticketH.List)
+			r.Get("/users/lookup", usersH.Lookup)
 			// Ticket analytics: COUNT(*) grouped by a whitelisted column. The
 			// handler applies the same SpiceDB visibility scope as List.
 			r.Get("/analytics/tickets", ticketH.TicketAnalytics)
@@ -513,6 +526,15 @@ func main() {
 // comments either.
 func canSeeInternal(r *http.Request) bool {
 	return !auth.IsCustomerRequest(r) && auth.OrgFrom(r) == nil
+}
+
+// noopLookuper is the /users/lookup fallback when lymphhub's service client
+// isn't configured — the route stays live and returns [] rather than being
+// absent, so goquest-ui can call it unconditionally (goq-user-lookup-proxy).
+type noopLookuper struct{}
+
+func (noopLookuper) Lookup(_ context.Context, _ []string) ([]directory.Actor, error) {
+	return nil, nil
 }
 
 // customerTokenParser adapts magic.ParseCustomerAccessToken to auth.CustomerTokenParser
