@@ -30,6 +30,10 @@ func TicketFrom(r *http.Request) *ticket.Ticket {
 // RequireTicketView gates every /tickets/{id}/* route on view access and stashes
 // the ticket in context. Principal handling:
 //   - customer-token (magic-link): allowed iff the token is bound to this ticket id.
+//   - org-claim caller: an org-axis match (per admin/member rule) grants access
+//     immediately. A non-match does NOT deny — it falls through to the normal
+//     OIDC path below, since an org claim only ever adds access and must never
+//     subtract access the caller would otherwise have (e.g. as staff).
 //   - OIDC user: SpiceDB CanViewTicket (visibility-aware). Legacy tickets with no
 //     project skip the SpiceDB gate. fail-closed on checker error.
 func RequireTicketView(getter ticketGetter, checker spicedb.PermissionChecker) func(http.Handler) http.Handler {
@@ -51,29 +55,35 @@ func RequireTicketView(getter ticketGetter, checker spicedb.PermissionChecker) f
 				return
 			}
 
+			granted := false
 			if cust := CustomerFrom(r); cust != nil {
 				// magic-link: the token is the capability. It must be bound to this ticket.
 				if cust.TicketID == nil || *cust.TicketID != id {
 					http.Error(w, "forbidden", http.StatusForbidden)
 					return
 				}
+				granted = true // customer-token path fully handled above; skip the rest.
 			} else if o := OrgFrom(r); o != nil {
-				// External-org caller: claim-based rule, SpiceDB not consulted.
-				// admin → any ticket on the org's requester/assignee axis;
+				// External-org caller: the org axis can only ADD access, never subtract
+				// it. If the ticket is on the caller's org axis (per admin/member rule
+				// below), grant immediately and skip SpiceDB as an optimization. If it
+				// is NOT on the org axis (e.g. an internal ticket with no org fields at
+				// all), fall through to the normal SpiceDB/legacy path below instead of
+				// denying outright — a caller who is ALSO staff must keep their staff
+				// visibility. admin → any ticket on the org's requester/assignee axis;
 				// member → only tickets they personally requested / are assigned.
 				caller := RequesterID(r)
 				sameOrg := func(x *uuid.UUID) bool { return x != nil && *x == o.ID }
-				allowed := false
 				if o.IsAdmin() {
-					allowed = sameOrg(t.RequesterOrgID) || sameOrg(t.AssigneeOrgID)
+					granted = sameOrg(t.RequesterOrgID) || sameOrg(t.AssigneeOrgID)
 				} else {
-					allowed = (sameOrg(t.RequesterOrgID) && t.RequesterID == caller) ||
+					granted = (sameOrg(t.RequesterOrgID) && t.RequesterID == caller) ||
 						(sameOrg(t.AssigneeOrgID) && t.AssigneeID == caller)
 				}
-				if !allowed {
-					http.Error(w, "forbidden", http.StatusForbidden)
-					return
-				}
+			}
+
+			if granted {
+				// handled above (customer token or org-axis match).
 			} else if t.ProjectID != nil {
 				// OIDC user, project-scoped ticket → SpiceDB gate. RequesterID is "" for
 				// requests carrying neither JWT nor API key nor customer token; SpiceDB
