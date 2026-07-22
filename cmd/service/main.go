@@ -207,7 +207,7 @@ func main() {
 	// returns [] until the lymphhub service client secrets are provisioned.
 	var userLookup directory.Lookuper = noopLookuper{}
 	if cfg.LymphhubOIDCURL != "" && cfg.LymphhubServiceClientID != "" {
-		directoryClient := directory.NewClient(cfg.LymphhubOIDCURL, cfg.LymphhubServiceClientID, cfg.LymphhubServiceClientSecret, http.DefaultClient)
+		directoryClient := directory.NewClient(cfg.LymphhubOIDCURL, cfg.LymphhubOIDCHost, cfg.LymphhubServiceClientID, cfg.LymphhubServiceClientSecret, http.DefaultClient)
 		userLookup = directory.NewCachedLookuper(directoryClient, 5*time.Minute)
 	}
 	usersH := handler.NewUsersHandler(userLookup)

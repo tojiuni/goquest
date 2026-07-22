@@ -49,7 +49,15 @@ type Config struct {
 	// Lymphhub actor-lookup service client (goq-user-lookup-proxy) — resolves
 	// requester/assignee ids to display names. Empty LymphhubOIDCURL disables
 	// the /users/lookup proxy (it always returns an empty array).
+	//
+	// LymphhubOIDCURL is the in-cluster dial address (e.g.
+	// http://oidc.iam.svc.cluster.local:8081); lymphhub routes tenants by
+	// subdomain, so LymphhubOIDCHost (the public tenant hostname, e.g.
+	// toji.idp.toji.homes) must also be set and is sent as the Host header
+	// on every request — the dial address alone is not tenant-scoped
+	// (who-lymphhub-actor-lookup live-verification finding, 2026-07-22).
 	LymphhubOIDCURL             string
+	LymphhubOIDCHost            string
 	LymphhubServiceClientID     string
 	LymphhubServiceClientSecret string
 
@@ -98,6 +106,7 @@ func Load() *Config {
 		LymphhubSessionAddr: os.Getenv("LYMPHHUB_SESSION_ADDR"),
 
 		LymphhubOIDCURL:             os.Getenv("LYMPHHUB_OIDC_URL"),
+		LymphhubOIDCHost:            envOrDefault("LYMPHHUB_OIDC_HOST", "toji.idp.toji.homes"),
 		LymphhubServiceClientID:     os.Getenv("LYMPHHUB_SERVICE_CLIENT_ID"),
 		LymphhubServiceClientSecret: os.Getenv("LYMPHHUB_SERVICE_CLIENT_SECRET"),
 
