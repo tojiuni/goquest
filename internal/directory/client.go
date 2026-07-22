@@ -31,6 +31,7 @@ type Lookuper interface {
 // a cached client_credentials access token (fetched from baseURL+"/oauth/token").
 type Client struct {
 	baseURL      string
+	tenantHost   string
 	clientID     string
 	clientSecret string
 	http         *http.Client
@@ -40,15 +41,34 @@ type Client struct {
 	tokenExpiry time.Time
 }
 
-func NewClient(baseURL, clientID, clientSecret string, httpClient *http.Client) *Client {
+// NewClient builds a lymphhub directory client. tenantHost overrides the
+// Host header (not the dial address) on every request — lymphhub routes
+// tenants by subdomain, so an in-cluster baseURL (a bare Kubernetes service
+// DNS name, e.g. http://oidc.iam.svc.cluster.local:8081) would otherwise
+// carry that service name as its Host and never resolve to a tenant. Pass ""
+// to leave the Host header as whatever the URL naturally produces (e.g. in
+// tests against an httptest.Server, or if baseURL is itself the public
+// tenant hostname).
+func NewClient(baseURL, tenantHost, clientID, clientSecret string, httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
 	return &Client{
 		baseURL:      strings.TrimRight(baseURL, "/"),
+		tenantHost:   tenantHost,
 		clientID:     clientID,
 		clientSecret: clientSecret,
 		http:         httpClient,
+	}
+}
+
+// setTenantHost overrides req.Host when tenantHost is configured. Setting
+// http.Request.Host (not just the Host header via req.Header.Set) is what
+// actually changes the outgoing Host header — net/http otherwise derives it
+// from the request URL regardless of any header value set directly.
+func (c *Client) setTenantHost(req *http.Request) {
+	if c.tenantHost != "" {
+		req.Host = c.tenantHost
 	}
 }
 
@@ -66,6 +86,7 @@ func (c *Client) Lookup(ctx context.Context, ids []string) ([]Actor, error) {
 	if err != nil {
 		return nil, err
 	}
+	c.setTenantHost(req)
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Content-Type", "application/json")
 
@@ -105,6 +126,7 @@ func (c *Client) accessToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	c.setTenantHost(req)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := c.http.Do(req)
