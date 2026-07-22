@@ -113,10 +113,12 @@ func TestRequireTicketView_OrgRules(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// checker must NOT be consulted for org callers; a stub that errors
-			// out would make that visible, but a plain disallow is sufficient
-			// here since org callers never reach the SpiceDB branch at all.
-			mw := auth.RequireTicketView(stubGetter{t: tk}, stubChecker{err: context.DeadlineExceeded})
+			// An org-axis match must grant without consulting SpiceDB at all
+			// (case 1 and 2 below never reach the checker). A non-match must
+			// fall through to SpiceDB instead of denying outright, so the
+			// checker here denies explicitly rather than erroring — cases 3
+			// and 4 rely on this stub actually being consulted.
+			mw := auth.RequireTicketView(stubGetter{t: tk}, stubChecker{allow: false})
 			req := reqWithUser(tk.ID, tc.caller)
 			req = req.WithContext(auth.WithOrgCtx(req.Context(), tc.orgCtx))
 			rec := serve(t, mw, req)
@@ -124,6 +126,23 @@ func TestRequireTicketView_OrgRules(t *testing.T) {
 				t.Fatalf("%s: code=%d want %d", tc.name, rec.Code, tc.wantCode)
 			}
 		})
+	}
+}
+
+// TestRequireTicketView_OrgClaim_FallsThroughToSpiceDB reproduces the
+// production bug (goq-org-ticket-view-visibility-bypass): a staff caller who
+// also holds an org claim must keep normal SpiceDB visibility on tickets that
+// have no org axis at all. Under the old exclusive org branch this 403'd
+// without ever consulting SpiceDB; it must now return 200.
+func TestRequireTicketView_OrgClaim_FallsThroughToSpiceDB(t *testing.T) {
+	pid := uuid.New()
+	tk := &ticket.Ticket{ID: uuid.New(), ProjectID: &pid, Visibility: ticket.VisibilityProject}
+
+	mw := auth.RequireTicketView(stubGetter{t: tk}, stubChecker{allow: true})
+	req := reqWithUser(tk.ID, "staff@corp.com")
+	req = req.WithContext(auth.WithOrgCtx(req.Context(), &auth.OrgCtx{ID: uuid.New(), Role: "admin"}))
+	if rec := serve(t, mw, req); rec.Code != http.StatusOK {
+		t.Errorf("staff+org caller on non-org ticket: want 200, got %d", rec.Code)
 	}
 }
 
