@@ -153,7 +153,9 @@ func main() {
 
 	commentStore := comment.NewPGStore(pool)
 	commentSvc := comment.NewService(commentStore)
-	commentH := handler.NewCommentHandler(commentSvc, canSeeInternal)
+	commentH := handler.NewCommentHandler(commentSvc, func(r *http.Request) bool {
+		return canSeeInternal(r, wsSvc)
+	})
 
 	// vcsSvc must be constructed before ticketH, which takes it as the
 	// ticket-GET links provider (embeds vcs_links without ticket->vcs import).
@@ -235,7 +237,7 @@ func main() {
 			refDocsGitHub = ghClient
 		}
 	}
-	refDocsH := handler.NewRefDocsHandler(refDocsBrain, refDocsGitHub, cfg.GenesoRepoOwner, cfg.GenesoRepoName)
+	refDocsH := handler.NewRefDocsHandler(refDocsBrain, refDocsGitHub, wsSvc, cfg.GenesoRepoOwner, cfg.GenesoRepoName)
 
 	contractClient := contract.NewClient(cfg.ContractPlaneURL, &http.Client{Timeout: 10 * time.Second})
 	contractSvc := contract.NewService(contractClient, sdbChecker, auditLogger)
@@ -553,9 +555,13 @@ func main() {
 // Phase H3: customer-token (magic-link) contexts MUST NOT see internal comments.
 // goq-org-backend Task 6: external-org callers (admin or member) are outsiders
 // to staff conversation, same as magic-link customers — must not see internal
-// comments either.
-func canSeeInternal(r *http.Request) bool {
-	return !auth.IsCustomerRequest(r) && auth.OrgFrom(r) == nil
+// comments either. goq-org-claim-staff-content-comment-bypass: an org claim
+// alone does NOT make a caller external — a caller who is ALSO staff (a
+// member of any goquest workspace) must keep full internal visibility, so
+// this defers to auth.IsExternalOnly rather than treating org-claim presence
+// as sufficient on its own.
+func canSeeInternal(r *http.Request, staff auth.StaffChecker) bool {
+	return !auth.IsExternalOnly(r.Context(), r, staff)
 }
 
 // noopLookuper is the /users/lookup fallback when lymphhub's service client
