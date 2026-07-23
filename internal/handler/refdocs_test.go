@@ -167,7 +167,7 @@ func TestRefDocs_Content_ReturnsContent(t *testing.T) {
 	assert.JSONEq(t, `{"content":"# Foo\n","source_path":"goquest/spec/foo.md"}`, rec.Body.String())
 }
 
-func TestRefDocs_Content_StripsGenesoPrefix(t *testing.T) {
+func TestRefDocs_Content_StripsGenesoColonPrefix(t *testing.T) {
 	fetcher := &fakeContentFetcher{content: "x"}
 	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, fetcher, &fakeStaffChecker{}, "tojiuni", "geneso")
 	r := refDocsRouter(rd, nil, &worldChecker{})
@@ -178,6 +178,29 @@ func TestRefDocs_Content_StripsGenesoPrefix(t *testing.T) {
 
 	assert.Equal(t, 200, rec.Code)
 	assert.JSONEq(t, `{"content":"x","source_path":"goquest/spec/foo.md"}`, rec.Body.String())
+}
+
+// TestRefDocs_Content_StripsGenesoSlashPrefix reproduces the production bug
+// (goq-refdoc-content-geneso-slash-prefix): brain's TicketDocs RPC returns
+// source_path values with a "geneso/" (slash) prefix (its own ingest
+// namespace convention — confirmed live via mcp__brain_mcp__ticket_docs
+// returning "geneso/goquest/troubleshooting/....md" for a doc whose real
+// repo-relative path is "goquest/troubleshooting/....md"), not the
+// "geneso:" (colon) prefix some raw ticket ref_ids use. Only stripping the
+// colon form left the slash form unstripped, so the GitHub Contents API
+// call targeted a path one level too deep and 404'd for a document that
+// genuinely exists.
+func TestRefDocs_Content_StripsGenesoSlashPrefix(t *testing.T) {
+	fetcher := &fakeContentFetcher{content: "x"}
+	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, fetcher, &fakeStaffChecker{}, "tojiuni", "geneso")
+	r := refDocsRouter(rd, nil, &worldChecker{})
+
+	req := httptest.NewRequest("GET", "/docs/content?source_path=geneso/goquest/troubleshooting/2026-07-21-org-update-validation-500.md", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, 200, rec.Code)
+	assert.JSONEq(t, `{"content":"x","source_path":"goquest/troubleshooting/2026-07-21-org-update-validation-500.md"}`, rec.Body.String())
 }
 
 func TestRefDocs_Content_MissingSourcePath_Returns400(t *testing.T) {
