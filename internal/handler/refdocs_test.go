@@ -1,0 +1,167 @@
+package handler_test
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+
+	"github.com/tojiuni/goquest/internal/auth"
+	"github.com/tojiuni/goquest/internal/brainclient"
+	"github.com/tojiuni/goquest/internal/githubapp"
+	"github.com/tojiuni/goquest/internal/handler"
+	"github.com/tojiuni/goquest/internal/spicedb"
+	"github.com/tojiuni/goquest/internal/ticket"
+)
+
+type fakeBrainLookuper struct {
+	docs []brainclient.RelatedDoc
+	err  error
+}
+
+func (f *fakeBrainLookuper) TicketDocs(_ context.Context, _, _ string) ([]brainclient.RelatedDoc, error) {
+	return f.docs, f.err
+}
+
+type fakeContentFetcher struct {
+	content string
+	err     error
+}
+
+func (f *fakeContentFetcher) Content(_ context.Context, _, _, _ string) (string, error) {
+	return f.content, f.err
+}
+
+// refDocsRouter mounts TicketDocs inside the same RequireTicketView-gated
+// /tickets/{id} group as production, and Content as a standalone route
+// (mirrors cmd/service/main.go's authenticated group, minus API-key/JWT
+// middleware — auth.WithRequesterID + a raw Authorization header stand in
+// for it in tests, matching this package's existing test conventions).
+func refDocsRouter(rd *handler.RefDocsHandler, svc *ticket.Service, checker spicedb.PermissionChecker) http.Handler {
+	r := chi.NewRouter()
+	r.Route("/tickets/{id}", func(r chi.Router) {
+		r.Use(auth.RequireTicketView(svc, checker))
+		r.Get("/docs", rd.TicketDocs)
+	})
+	r.Get("/docs/content", rd.Content)
+	return r
+}
+
+func withBearerJWT(req *http.Request, jwt string) *http.Request {
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	return req
+}
+
+func TestRefDocs_TicketDocs_ReturnsResolvedDocs(t *testing.T) {
+	tk := &ticket.Ticket{
+		ID: uuid.New(), Status: ticket.StatusPending, Priority: ticket.PriorityNormal,
+		Visibility: ticket.VisibilityProject, AssigneeType: ticket.AssigneeHuman,
+	}
+	store := newMemStore(tk)
+	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
+	rd := handler.NewRefDocsHandler(
+		&fakeBrainLookuper{docs: []brainclient.RelatedDoc{{Title: "Foo", SourcePath: "goquest/spec/foo.md"}}},
+		&fakeContentFetcher{}, "tojiuni", "geneso",
+	)
+	r := refDocsRouter(rd, svc, &worldChecker{})
+
+	req := httptest.NewRequest("GET", "/tickets/"+tk.ID.String()+"/docs", nil)
+	req = asUser(req, "staff@toji.homes")
+	req = withBearerJWT(req, "header.payload.sig")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, 200, rec.Code)
+	assert.JSONEq(t, `{"docs":[{"title":"Foo","source_path":"goquest/spec/foo.md"}]}`, rec.Body.String())
+}
+
+func TestRefDocs_TicketDocs_NoBearerToken_Returns401(t *testing.T) {
+	tk := &ticket.Ticket{
+		ID: uuid.New(), Status: ticket.StatusPending, Priority: ticket.PriorityNormal,
+		Visibility: ticket.VisibilityProject, AssigneeType: ticket.AssigneeHuman,
+	}
+	store := newMemStore(tk)
+	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
+	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, &fakeContentFetcher{}, "tojiuni", "geneso")
+	r := refDocsRouter(rd, svc, &worldChecker{})
+
+	req := httptest.NewRequest("GET", "/tickets/"+tk.ID.String()+"/docs", nil)
+	req = asUser(req, "staff@toji.homes")
+	// No Authorization header set — API-key-authenticated caller, no JWT to forward.
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, 401, rec.Code)
+}
+
+func TestRefDocs_TicketDocs_BrainError_Returns502(t *testing.T) {
+	tk := &ticket.Ticket{
+		ID: uuid.New(), Status: ticket.StatusPending, Priority: ticket.PriorityNormal,
+		Visibility: ticket.VisibilityProject, AssigneeType: ticket.AssigneeHuman,
+	}
+	store := newMemStore(tk)
+	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
+	rd := handler.NewRefDocsHandler(
+		&fakeBrainLookuper{err: errors.New("brain unavailable")},
+		&fakeContentFetcher{}, "tojiuni", "geneso",
+	)
+	r := refDocsRouter(rd, svc, &worldChecker{})
+
+	req := withBearerJWT(asUser(httptest.NewRequest("GET", "/tickets/"+tk.ID.String()+"/docs", nil), "staff@toji.homes"), "header.payload.sig")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, 502, rec.Code)
+}
+
+func TestRefDocs_Content_ReturnsContent(t *testing.T) {
+	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, &fakeContentFetcher{content: "# Foo\n"}, "tojiuni", "geneso")
+	r := refDocsRouter(rd, nil, &worldChecker{})
+
+	req := httptest.NewRequest("GET", "/docs/content?source_path=goquest/spec/foo.md", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, 200, rec.Code)
+	assert.JSONEq(t, `{"content":"# Foo\n","source_path":"goquest/spec/foo.md"}`, rec.Body.String())
+}
+
+func TestRefDocs_Content_StripsGenesoPrefix(t *testing.T) {
+	fetcher := &fakeContentFetcher{content: "x"}
+	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, fetcher, "tojiuni", "geneso")
+	r := refDocsRouter(rd, nil, &worldChecker{})
+
+	req := httptest.NewRequest("GET", "/docs/content?source_path=geneso:goquest/spec/foo.md", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, 200, rec.Code)
+	assert.JSONEq(t, `{"content":"x","source_path":"goquest/spec/foo.md"}`, rec.Body.String())
+}
+
+func TestRefDocs_Content_MissingSourcePath_Returns400(t *testing.T) {
+	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, &fakeContentFetcher{}, "tojiuni", "geneso")
+	r := refDocsRouter(rd, nil, &worldChecker{})
+
+	req := httptest.NewRequest("GET", "/docs/content", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, 400, rec.Code)
+}
+
+func TestRefDocs_Content_NotFound_Returns404(t *testing.T) {
+	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, &fakeContentFetcher{err: githubapp.ErrNotFound}, "tojiuni", "geneso")
+	r := refDocsRouter(rd, nil, &worldChecker{})
+
+	req := httptest.NewRequest("GET", "/docs/content?source_path=missing.md", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, 404, rec.Code)
+}
