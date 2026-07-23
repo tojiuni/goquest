@@ -22,6 +22,14 @@ import (
 // brain round trip that would fail anyway.
 var ErrNoCallerJWT = errors.New("brainclient: no caller JWT to forward")
 
+// ErrJWTDecode is wrapped (via %w) into the error returned by TicketDocs when
+// the caller JWT can't be decoded (malformed/forged token) — as distinct from
+// a brain gRPC/availability failure. Callers can distinguish the two with
+// errors.Is(err, ErrJWTDecode) and map decode failures to 401 rather than the
+// 502 appropriate for brain being unavailable (goq-refdoc-goquest-brain-client
+// final review, Fix 2).
+var ErrJWTDecode = errors.New("brainclient: caller JWT decode failed")
+
 // RelatedDoc is the minimum brain returns for a ticket's reference documents.
 type RelatedDoc struct {
 	Title      string
@@ -60,7 +68,7 @@ func (c *Client) TicketDocs(ctx context.Context, ticketID, callerJWT string) ([]
 	}
 	user, err := userFromJWT(callerJWT)
 	if err != nil {
-		return nil, fmt.Errorf("brainclient: decode caller JWT: %w", err)
+		return nil, fmt.Errorf("brainclient: decode caller JWT: %w: %w", ErrJWTDecode, err)
 	}
 
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+callerJWT)

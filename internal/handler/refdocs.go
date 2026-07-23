@@ -72,6 +72,13 @@ func (h *RefDocsHandler) TicketDocs(w http.ResponseWriter, r *http.Request) {
 
 	related, err := h.brain.TicketDocs(r.Context(), tk.ID.String(), jwt)
 	if err != nil {
+		if errors.Is(err, brainclient.ErrJWTDecode) {
+			// A malformed/forged JWT is a client auth problem, not a brain
+			// availability problem — don't conflate it with 502 (goq-refdoc-
+			// goquest-brain-client final review, Fix 2).
+			writeError(w, http.StatusUnauthorized, "invalid session token")
+			return
+		}
 		writeError(w, http.StatusBadGateway, "brain unavailable: "+err.Error())
 		return
 	}
@@ -87,6 +94,17 @@ func (h *RefDocsHandler) TicketDocs(w http.ResponseWriter, r *http.Request) {
 // existing authenticated route group (no ticket context needed — the path
 // alone is the lookup key, matching the spec's design).
 func (h *RefDocsHandler) Content(w http.ResponseWriter, r *http.Request) {
+	// Unlike TicketDocs (ReBAC-filtered by brain via the forwarded caller
+	// JWT), this endpoint's source_path is a bare lookup key with no scoping
+	// of its own — so external contexts (magic-link customers, external org
+	// members) that merely passed the shared authenticated group's
+	// middleware must be excluded here explicitly. Mirrors cmd/service/main.go's
+	// canSeeInternal idiom (goq-refdoc-goquest-brain-client final review).
+	if auth.IsCustomerRequest(r) || auth.OrgFrom(r) != nil {
+		writeError(w, http.StatusForbidden, "internal document content is not available to external callers")
+		return
+	}
+
 	sourcePath := r.URL.Query().Get("source_path")
 	if sourcePath == "" {
 		writeError(w, http.StatusBadRequest, "source_path is required")
