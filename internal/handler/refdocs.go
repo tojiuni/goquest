@@ -114,10 +114,18 @@ func (h *RefDocsHandler) Content(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "source_path is required")
 		return
 	}
-	// ref_ids in production carry a mix of "geneso:"-prefixed and bare paths
-	// (see brain/spec/2026-07-22-brain-ticket-docs-rpc-design.md §background) —
-	// accept both.
+	// Two different "geneso" prefix conventions reach this endpoint and
+	// neither is a real path segment in the tojiuni/geneso repo tree: raw
+	// ticket ref_ids use "geneso:" (colon; see brain/spec/2026-07-22-brain-
+	// ticket-docs-rpc-design.md §background), while brain's own TicketDocs
+	// RPC returns source_path values with a "geneso/" (slash) prefix — its
+	// ingest namespace convention, confirmed live via
+	// mcp__brain_mcp__ticket_docs returning
+	// "geneso/goquest/troubleshooting/....md" for a doc whose real
+	// repo-relative path is "goquest/troubleshooting/....md"
+	// (goq-refdoc-content-geneso-slash-prefix). Strip either.
 	sourcePath = strings.TrimPrefix(sourcePath, "geneso:")
+	sourcePath = strings.TrimPrefix(sourcePath, "geneso/")
 
 	content, err := h.github.Content(r.Context(), h.genesoOwner, h.genesoRepo, sourcePath)
 	if err != nil {
