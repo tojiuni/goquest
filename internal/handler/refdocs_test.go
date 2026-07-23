@@ -18,7 +18,20 @@ import (
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/spicedb"
 	"github.com/tojiuni/goquest/internal/ticket"
+	wskg "github.com/tojiuni/goquest/internal/workspace"
 )
+
+// fakeStaffChecker stubs auth.StaffChecker. A nil/empty workspaces slice
+// means "not staff" (matches most existing tests' external-caller intent);
+// tests proving the staff+org-claim fix set workspaces non-empty.
+type fakeStaffChecker struct {
+	workspaces []*wskg.Workspace
+	err        error
+}
+
+func (f *fakeStaffChecker) ListByUser(_ context.Context, _ string) ([]*wskg.Workspace, error) {
+	return f.workspaces, f.err
+}
 
 type fakeBrainLookuper struct {
 	docs []brainclient.RelatedDoc
@@ -69,7 +82,7 @@ func TestRefDocs_TicketDocs_ReturnsResolvedDocs(t *testing.T) {
 	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
 	rd := handler.NewRefDocsHandler(
 		&fakeBrainLookuper{docs: []brainclient.RelatedDoc{{Title: "Foo", SourcePath: "goquest/spec/foo.md"}}},
-		&fakeContentFetcher{}, "tojiuni", "geneso",
+		&fakeContentFetcher{}, &fakeStaffChecker{}, "tojiuni", "geneso",
 	)
 	r := refDocsRouter(rd, svc, &worldChecker{})
 
@@ -90,7 +103,7 @@ func TestRefDocs_TicketDocs_NoBearerToken_Returns401(t *testing.T) {
 	}
 	store := newMemStore(tk)
 	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
-	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, &fakeContentFetcher{}, "tojiuni", "geneso")
+	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, &fakeContentFetcher{}, &fakeStaffChecker{}, "tojiuni", "geneso")
 	r := refDocsRouter(rd, svc, &worldChecker{})
 
 	req := httptest.NewRequest("GET", "/tickets/"+tk.ID.String()+"/docs", nil)
@@ -111,7 +124,7 @@ func TestRefDocs_TicketDocs_JWTDecodeError_Returns401(t *testing.T) {
 	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
 	rd := handler.NewRefDocsHandler(
 		&fakeBrainLookuper{err: fmt.Errorf("brainclient: decode caller JWT: %w: %w", brainclient.ErrJWTDecode, errors.New("malformed JWT"))},
-		&fakeContentFetcher{}, "tojiuni", "geneso",
+		&fakeContentFetcher{}, &fakeStaffChecker{}, "tojiuni", "geneso",
 	)
 	r := refDocsRouter(rd, svc, &worldChecker{})
 
@@ -131,7 +144,7 @@ func TestRefDocs_TicketDocs_BrainError_Returns502(t *testing.T) {
 	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
 	rd := handler.NewRefDocsHandler(
 		&fakeBrainLookuper{err: errors.New("brain unavailable")},
-		&fakeContentFetcher{}, "tojiuni", "geneso",
+		&fakeContentFetcher{}, &fakeStaffChecker{}, "tojiuni", "geneso",
 	)
 	r := refDocsRouter(rd, svc, &worldChecker{})
 
@@ -143,7 +156,7 @@ func TestRefDocs_TicketDocs_BrainError_Returns502(t *testing.T) {
 }
 
 func TestRefDocs_Content_ReturnsContent(t *testing.T) {
-	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, &fakeContentFetcher{content: "# Foo\n"}, "tojiuni", "geneso")
+	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, &fakeContentFetcher{content: "# Foo\n"}, &fakeStaffChecker{}, "tojiuni", "geneso")
 	r := refDocsRouter(rd, nil, &worldChecker{})
 
 	req := httptest.NewRequest("GET", "/docs/content?source_path=goquest/spec/foo.md", nil)
@@ -156,7 +169,7 @@ func TestRefDocs_Content_ReturnsContent(t *testing.T) {
 
 func TestRefDocs_Content_StripsGenesoPrefix(t *testing.T) {
 	fetcher := &fakeContentFetcher{content: "x"}
-	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, fetcher, "tojiuni", "geneso")
+	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, fetcher, &fakeStaffChecker{}, "tojiuni", "geneso")
 	r := refDocsRouter(rd, nil, &worldChecker{})
 
 	req := httptest.NewRequest("GET", "/docs/content?source_path=geneso:goquest/spec/foo.md", nil)
@@ -168,7 +181,7 @@ func TestRefDocs_Content_StripsGenesoPrefix(t *testing.T) {
 }
 
 func TestRefDocs_Content_MissingSourcePath_Returns400(t *testing.T) {
-	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, &fakeContentFetcher{}, "tojiuni", "geneso")
+	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, &fakeContentFetcher{}, &fakeStaffChecker{}, "tojiuni", "geneso")
 	r := refDocsRouter(rd, nil, &worldChecker{})
 
 	req := httptest.NewRequest("GET", "/docs/content", nil)
@@ -179,7 +192,7 @@ func TestRefDocs_Content_MissingSourcePath_Returns400(t *testing.T) {
 }
 
 func TestRefDocs_Content_NotFound_Returns404(t *testing.T) {
-	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, &fakeContentFetcher{err: githubapp.ErrNotFound}, "tojiuni", "geneso")
+	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, &fakeContentFetcher{err: githubapp.ErrNotFound}, &fakeStaffChecker{}, "tojiuni", "geneso")
 	r := refDocsRouter(rd, nil, &worldChecker{})
 
 	req := httptest.NewRequest("GET", "/docs/content?source_path=missing.md", nil)
@@ -194,7 +207,7 @@ func TestRefDocs_Content_NotFound_Returns404(t *testing.T) {
 // otherwise depend on that file).
 func TestRefDocs_Content_CustomerToken_Returns403_DoesNotCallGitHub(t *testing.T) {
 	fetcher := &fakeContentFetcher{content: "should never be returned"}
-	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, fetcher, "tojiuni", "geneso")
+	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, fetcher, &fakeStaffChecker{}, "tojiuni", "geneso")
 	r := refDocsRouter(rd, nil, &worldChecker{})
 
 	req := httptest.NewRequest("GET", "/docs/content?source_path=neunexus/.hermes/SOUL.md", nil)
@@ -208,7 +221,7 @@ func TestRefDocs_Content_CustomerToken_Returns403_DoesNotCallGitHub(t *testing.T
 
 func TestRefDocs_Content_OrgContext_Returns403_DoesNotCallGitHub(t *testing.T) {
 	fetcher := &fakeContentFetcher{content: "should never be returned"}
-	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, fetcher, "tojiuni", "geneso")
+	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, fetcher, &fakeStaffChecker{}, "tojiuni", "geneso")
 	r := refDocsRouter(rd, nil, &worldChecker{})
 
 	req := httptest.NewRequest("GET", "/docs/content?source_path=neunexus/.hermes/SOUL.md", nil)
@@ -220,9 +233,31 @@ func TestRefDocs_Content_OrgContext_Returns403_DoesNotCallGitHub(t *testing.T) {
 	assert.False(t, fetcher.called, "github Content fetcher must not be invoked for external org callers")
 }
 
+// TestRefDocs_Content_StaffWithOrgClaim_ReturnsContent reproduces the
+// production bug (goq-org-claim-staff-content-comment-bypass): a staff
+// account that also holds an org claim (e.g. lyckabc, dual-role for org
+// e2e testing) must still be able to read internal doc content — the org
+// claim only adds access, it must never subtract the access the caller
+// already has as staff.
+func TestRefDocs_Content_StaffWithOrgClaim_ReturnsContent(t *testing.T) {
+	fetcher := &fakeContentFetcher{content: "# Foo\n"}
+	staff := &fakeStaffChecker{workspaces: []*wskg.Workspace{{ID: uuid.New(), Name: "personal"}}}
+	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, fetcher, staff, "tojiuni", "geneso")
+	r := refDocsRouter(rd, nil, &worldChecker{})
+
+	req := httptest.NewRequest("GET", "/docs/content?source_path=goquest/spec/foo.md", nil)
+	req = asUser(req, "lyckabc@gmail.com")
+	req = req.WithContext(auth.WithOrgCtx(req.Context(), &auth.OrgCtx{ID: uuid.New(), Role: "admin"}))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, 200, rec.Code)
+	assert.True(t, fetcher.called)
+}
+
 func TestRefDocs_Content_InternalStaff_StillReturnsContent(t *testing.T) {
 	fetcher := &fakeContentFetcher{content: "# Foo\n"}
-	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, fetcher, "tojiuni", "geneso")
+	rd := handler.NewRefDocsHandler(&fakeBrainLookuper{}, fetcher, &fakeStaffChecker{}, "tojiuni", "geneso")
 	r := refDocsRouter(rd, nil, &worldChecker{})
 
 	req := httptest.NewRequest("GET", "/docs/content?source_path=goquest/spec/foo.md", nil)

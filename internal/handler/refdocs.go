@@ -30,12 +30,13 @@ type ContentFetcher interface {
 type RefDocsHandler struct {
 	brain       BrainLookuper
 	github      ContentFetcher
+	staff       auth.StaffChecker
 	genesoOwner string
 	genesoRepo  string
 }
 
-func NewRefDocsHandler(brain BrainLookuper, github ContentFetcher, genesoOwner, genesoRepo string) *RefDocsHandler {
-	return &RefDocsHandler{brain: brain, github: github, genesoOwner: genesoOwner, genesoRepo: genesoRepo}
+func NewRefDocsHandler(brain BrainLookuper, github ContentFetcher, staff auth.StaffChecker, genesoOwner, genesoRepo string) *RefDocsHandler {
+	return &RefDocsHandler{brain: brain, github: github, staff: staff, genesoOwner: genesoOwner, genesoRepo: genesoRepo}
 }
 
 // bearerJWT extracts the raw JWT from an "Authorization: Bearer <jwt>"
@@ -96,11 +97,14 @@ func (h *RefDocsHandler) TicketDocs(w http.ResponseWriter, r *http.Request) {
 func (h *RefDocsHandler) Content(w http.ResponseWriter, r *http.Request) {
 	// Unlike TicketDocs (ReBAC-filtered by brain via the forwarded caller
 	// JWT), this endpoint's source_path is a bare lookup key with no scoping
-	// of its own — so external contexts (magic-link customers, external org
-	// members) that merely passed the shared authenticated group's
-	// middleware must be excluded here explicitly. Mirrors cmd/service/main.go's
-	// canSeeInternal idiom (goq-refdoc-goquest-brain-client final review).
-	if auth.IsCustomerRequest(r) || auth.OrgFrom(r) != nil {
+	// of its own — so genuinely external contexts (magic-link customers,
+	// external org members with no goquest workspace of their own) must be
+	// excluded here explicitly. An org claim alone is NOT sufficient to
+	// exclude: a caller can be staff AND hold an org claim (e.g. a dual-role
+	// account), and that staff identity must not be overridden by the org
+	// claim (goq-org-claim-staff-content-comment-bypass — same principle as
+	// goq-org-claim-staff-visibility-bypass / goq-org-ticket-view-visibility-bypass).
+	if auth.IsExternalOnly(r.Context(), r, h.staff) {
 		writeError(w, http.StatusForbidden, "internal document content is not available to external callers")
 		return
 	}
