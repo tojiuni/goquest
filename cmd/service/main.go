@@ -21,11 +21,13 @@ import (
 
 	"github.com/tojiuni/goquest/internal/audit"
 	"github.com/tojiuni/goquest/internal/auth"
+	"github.com/tojiuni/goquest/internal/brainclient"
 	"github.com/tojiuni/goquest/internal/comment"
 	"github.com/tojiuni/goquest/internal/config"
 	"github.com/tojiuni/goquest/internal/contract"
 	"github.com/tojiuni/goquest/internal/device"
 	"github.com/tojiuni/goquest/internal/directory"
+	"github.com/tojiuni/goquest/internal/githubapp"
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/idempotency"
 	"github.com/tojiuni/goquest/internal/integration"
@@ -212,6 +214,29 @@ func main() {
 	}
 	usersH := handler.NewUsersHandler(userLookup)
 
+	// brain-backed ticket reference docs + GitHub-backed content
+	// (goq-refdoc-goquest-brain-client). Both degrade to inert responses
+	// when unconfigured — see noopBrainLookuper/noopContentFetcher below.
+	var refDocsBrain handler.BrainLookuper = noopBrainLookuper{}
+	if cfg.BrainGRPCAddr != "" {
+		brainClient, err := brainclient.New(cfg.BrainGRPCAddr, cfg.BrainTenant)
+		if err != nil {
+			log.Printf("warn: brainclient.New: %v (ticket docs will be unavailable)", err)
+		} else {
+			refDocsBrain = brainClient
+		}
+	}
+	var refDocsGitHub handler.ContentFetcher = noopContentFetcher{}
+	if cfg.GitHubAppID != "" && cfg.GitHubAppPrivateKeyPEM != "" {
+		ghClient, err := githubapp.NewClient(cfg.GitHubAppID, cfg.GitHubAppInstallationID, cfg.GitHubAppPrivateKeyPEM, http.DefaultClient)
+		if err != nil {
+			log.Printf("warn: githubapp.NewClient: %v (doc content will be unavailable)", err)
+		} else {
+			refDocsGitHub = ghClient
+		}
+	}
+	refDocsH := handler.NewRefDocsHandler(refDocsBrain, refDocsGitHub, cfg.GenesoRepoOwner, cfg.GenesoRepoName)
+
 	contractClient := contract.NewClient(cfg.ContractPlaneURL, &http.Client{Timeout: 10 * time.Second})
 	contractSvc := contract.NewService(contractClient, sdbChecker, auditLogger)
 	contractH := handler.NewContractHandler(contractSvc)
@@ -307,6 +332,8 @@ func main() {
 			r.With(idempotent).Post("/tickets", ticketH.Create)
 			r.Get("/tickets", ticketH.List)
 			r.Get("/users/lookup", usersH.Lookup)
+			// GitHub-backed doc content (goq-refdoc-goquest-brain-client)
+			r.Get("/docs/content", refDocsH.Content)
 			// Ticket analytics: COUNT(*) grouped by a whitelisted column. The
 			// handler applies the same SpiceDB visibility scope as List.
 			r.Get("/analytics/tickets", ticketH.TicketAnalytics)
@@ -336,6 +363,9 @@ func main() {
 				r.Post("/refs", ticketH.AddRefs)
 				r.Delete("/refs/{l1_id}", ticketH.RemoveRef)
 				r.Patch("/refs/reorder", ticketH.ReorderRefs)
+
+				// brain-backed ticket reference docs (goq-refdoc-goquest-brain-client)
+				r.Get("/docs", refDocsH.TicketDocs)
 
 				// ── Helpdesk: comments (Phase H1 + H5 publish) ───
 				r.Post("/comments", commentH.Create)
@@ -535,6 +565,24 @@ type noopLookuper struct{}
 
 func (noopLookuper) Lookup(_ context.Context, _ []string) ([]directory.Actor, error) {
 	return nil, nil
+}
+
+// noopBrainLookuper is the /tickets/{id}/docs fallback when brain isn't
+// configured — the route stays live and returns an empty list rather than
+// being absent (goq-refdoc-goquest-brain-client).
+type noopBrainLookuper struct{}
+
+func (noopBrainLookuper) TicketDocs(context.Context, string, string) ([]brainclient.RelatedDoc, error) {
+	return nil, nil
+}
+
+// noopContentFetcher is the /docs/content fallback when the GitHub App isn't
+// configured — always reports not-found rather than erroring differently
+// per-caller.
+type noopContentFetcher struct{}
+
+func (noopContentFetcher) Content(context.Context, string, string, string) (string, error) {
+	return "", githubapp.ErrNotFound
 }
 
 // customerTokenParser adapts magic.ParseCustomerAccessToken to auth.CustomerTokenParser

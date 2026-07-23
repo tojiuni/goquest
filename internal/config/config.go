@@ -61,6 +61,21 @@ type Config struct {
 	LymphhubServiceClientID     string
 	LymphhubServiceClientSecret string
 
+	// brain gRPC (goq-refdoc-goquest-brain-client) — ticket reference-doc
+	// lookup mediation. Empty BrainGRPCAddr disables /tickets/{id}/docs
+	// (always returns {"docs":[]}).
+	BrainGRPCAddr string
+	BrainTenant   string
+
+	// GitHub App (goq-refdoc-goquest-brain-client) — server-side raw content
+	// fetch from the private tojiuni/geneso repo for /docs/content. Empty
+	// GitHubAppID disables /docs/content (always 404s).
+	GitHubAppID             string
+	GitHubAppInstallationID string
+	GitHubAppPrivateKeyPEM  string
+	GenesoRepoOwner         string
+	GenesoRepoName          string
+
 	// CORS
 	CORSOrigins []string
 
@@ -109,6 +124,15 @@ func Load() *Config {
 		LymphhubOIDCHost:            envOrDefault("LYMPHHUB_OIDC_HOST", "toji.idp.toji.homes"),
 		LymphhubServiceClientID:     os.Getenv("LYMPHHUB_SERVICE_CLIENT_ID"),
 		LymphhubServiceClientSecret: os.Getenv("LYMPHHUB_SERVICE_CLIENT_SECRET"),
+
+		BrainGRPCAddr: os.Getenv("BRAIN_GRPC_ADDR"),
+		BrainTenant:   envOrDefault("BRAIN_TENANT", "toji"),
+
+		GitHubAppID:             os.Getenv("GITHUB_APP_ID"),
+		GitHubAppInstallationID: os.Getenv("GITHUB_APP_INSTALLATION_ID"),
+		GitHubAppPrivateKeyPEM:  os.Getenv("GITHUB_APP_PRIVATE_KEY_PEM"),
+		GenesoRepoOwner:         envOrDefault("GENESO_REPO_OWNER", "tojiuni"),
+		GenesoRepoName:          envOrDefault("GENESO_REPO_NAME", "geneso"),
 
 		CORSOrigins: parseStringSlice(os.Getenv("CORS_ALLOWED_ORIGINS"), []string{"https://toji.homes", "https://www.toji.homes"}),
 

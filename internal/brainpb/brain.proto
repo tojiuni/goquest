@@ -1,0 +1,192 @@
+syntax = "proto3";
+package brain.v1;
+
+message Node {
+  string tenant = 1;
+  string table = 2;
+  string id = 3;
+  string properties = 4;
+  repeated float embedding = 5;
+  string raw_payload = 6;
+}
+message Edge {
+  string tenant = 1;
+  string relation = 2;
+  string from = 3;
+  string to = 4;
+  string properties = 5;
+}
+service IngestService {
+  rpc UpsertGraph(UpsertRequest) returns (UpsertResponse);
+  rpc GetManifest(ManifestRequest) returns (ManifestResponse);
+  rpc DeleteDocument(DeleteDocumentRequest) returns (DeleteDocumentResponse);
+}
+message UpsertRequest {
+  string tenant = 1;
+  repeated Node nodes = 2;
+  repeated Edge edges = 3;
+  string idempotency_key = 4;
+  repeated string prune_chunk_ids = 5;   // stringified u64 chunk ids to delete
+}
+message UpsertResponse {
+  uint32 nodes_written = 1;
+  uint32 edges_written = 2;
+}
+message ManifestRequest {
+  string tenant = 1;
+  repeated string doc_ids = 2;
+}
+message ChunkDigest {
+  uint32 index = 1;
+  string chunk_hash = 2;
+}
+message DocManifest {
+  string doc_id = 1;
+  string doc_hash = 2;            // "" when the document is not present
+  repeated ChunkDigest chunks = 3;
+}
+message ManifestResponse {
+  repeated DocManifest docs = 1;
+}
+
+// ---- document delete (hard delete; hub nodes stay) ----
+message DeleteDocumentRequest {
+  string tenant = 1;
+  string doc_id = 2;   // bare document id, e.g. "d1" (NOT "document:d1")
+}
+message DeleteDocumentResponse {
+  uint32 chunks_removed = 1;
+  bool existed = 2;    // false when neither the doc node nor any chunk existed
+}
+
+service SearchService {
+  rpc Search(SearchRequest) returns (SearchResponse);
+  rpc ExpandQuery(ExpandQueryRequest) returns (ExpandQueryResponse);
+  rpc ExportQueryLog(ExportQueryLogRequest) returns (ExportQueryLogResponse);
+}
+message SearchRequest {
+  string tenant = 1;
+  string user = 2;
+  repeated float query = 3;
+  uint32 k = 4;
+  string query_text = 5;  // raw text for the sparse (FULLTEXT/BM25) signal; "" = dense-only
+  optional float w_dense = 6;   // unset → server default W_DENSE (1.0); 0.0 disables dense
+  optional float w_sparse = 7;  // unset → server default W_SPARSE (0.5); 0.0 disables sparse
+  optional float k_rrf = 8;     // unset → server default K_RRF (60.0)
+  optional bool dedup_by_doc = 9;  // true → return top-k DISTINCT docs (best chunk per doc) from a deeper pool
+  string filter_hub_id = 10;  // e.g. "project:apollo"; "" = no filter (single dimension facet)
+  string filter_dimension = 11;  // e.g. "project"; "" = unset. Requires filter_value.
+  string filter_value     = 12;  // raw/typo value; server normalizes → hub_id. Requires filter_dimension.
+  optional float w_keywords = 13;  // unset → server default W_KEYWORDS (0.0 = off); >0 fuses the props.keywords BM25 list at this weight
+}
+message Hit {
+  uint64 chunk_id = 1;
+  float score = 2;
+  string properties = 3;
+  string raw_payload = 4;
+}
+message SearchResponse {
+  repeated Hit hits = 1;
+}
+
+message ExportQueryLogRequest {
+  string tenant = 1;
+  int64 since_ts = 2;   // unix seconds; 0 = all
+  uint32 limit = 3;     // 0 => 1000; clamped to [1, 10000]
+}
+message QueryLogRow {
+  int64 ts = 1;
+  string query_text = 2;
+  uint32 k = 3;
+  float top1_score = 4;
+  string top1_doc = 5;
+  uint32 n_hits = 6;
+}
+message ExportQueryLogResponse { repeated QueryLogRow rows = 1; }
+
+// ---- Glossary Module (BRN-glossary-module): deterministic query expansion ----
+message ExpandQueryRequest {
+  string tenant = 1;  // reserved for future per-tenant dictionaries; unused today
+  string text = 2;
+}
+message MatchedTerm {
+  string surface = 1;    // the surface form found in the query
+  string canonical = 2;  // its dictionary canonical
+}
+message ExpandQueryResponse {
+  string expanded_text = 1;             // 병기-rewritten query (== text when no match)
+  repeated MatchedTerm matched = 2;
+}
+
+service AccessService {
+  rpc RevokeView(RevokeViewRequest) returns (RevokeViewResponse);
+  rpc InvalidateUser(InvalidateUserRequest) returns (InvalidateUserResponse);
+}
+message RevokeViewRequest {
+  string tenant = 1;
+  string user = 2;
+  string document = 3;
+}
+message RevokeViewResponse {
+  uint32 removed = 1;
+}
+message InvalidateUserRequest {
+  string tenant = 1;
+  string user = 2;
+}
+message InvalidateUserResponse {}
+
+// ---- P4b: cross-domain document traceability traversal ----
+service GraphService {
+  rpc RelatedDocs(RelatedDocsRequest) returns (RelatedDocsResponse);
+  rpc TicketDocs(TicketDocsRequest) returns (TicketDocsResponse);
+}
+
+enum TraverseDirection {
+  BOTH = 0;  // proto3 default: follow edges in both directions
+  OUT = 1;   // follow edges where start is the `in` endpoint
+  IN = 2;    // follow edges where start is the `out` endpoint
+}
+
+message RelatedDocsRequest {
+  string tenant = 1;
+  string user = 2;                 // authz subject, e.g. "user:u0"
+  string start = 3;                // "document:d1", "chunk:42", or bare chunk id "42"
+  repeated string edge_types = 4;  // empty = server TRACE_RELATIONS default
+  TraverseDirection direction = 5; // default BOTH
+  uint32 max_hops = 6;             // 0 => server default 2; clamped to [1,4]
+  uint32 limit = 7;                // 0 => server default 50; clamped to [1,200]
+}
+
+message PathEdge {
+  string relation = 1;
+  string from = 2;                 // "document:d1"
+  string to = 3;                   // "document:d7"
+  TraverseDirection dir = 4;       // OUT or IN (concrete per hop)
+}
+
+message RelatedNode {
+  string record_id = 1;            // "document:d7"
+  string table = 2;                // "document"
+  uint32 hops = 3;                 // distance from start (1..=max_hops)
+  repeated PathEdge path = 4;      // ordered edges start -> node
+  // Selection metadata for the reading agent (agentic expansion judges a
+  // neighbor by title/path without fetching its body). Empty when the node
+  // is not a document or has no stored meta.
+  string title = 5;
+  string source_path = 6;
+}
+
+message RelatedDocsResponse {
+  repeated RelatedNode nodes = 1;
+}
+
+message TicketDocsRequest {
+  string tenant = 1;
+  string user = 2;        // authz subject, e.g. "user:u0" — 토큰 subject와 일치해야 함
+  string ticket_id = 3;   // goquest 티켓 UUID (raw, md5 해싱은 서버 내부에서 수행)
+}
+
+message TicketDocsResponse {
+  repeated RelatedNode nodes = 1;  // RelatedDocsResponse와 동일 RelatedNode 메시지 재사용
+}
