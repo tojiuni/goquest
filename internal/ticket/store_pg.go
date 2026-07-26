@@ -725,14 +725,15 @@ func scanTicket(s scanner) (*Ticket, error) {
 
 // valid transitions; terminal states have no outgoing edges
 var transitions = map[Status][]Status{
-	StatusPending:         {StatusAssigned, StatusCancelled, StatusPendingApproval},
-	StatusAssigned:        {StatusInProgress, StatusPending, StatusCancelled, StatusPendingApproval},
-	StatusInProgress:      {StatusCompleted, StatusFailed, StatusPending, StatusPendingApproval},
+	StatusPending:         {StatusAssigned, StatusCancelled, StatusPendingApproval, StatusOnHold},
+	StatusAssigned:        {StatusInProgress, StatusPending, StatusCancelled, StatusPendingApproval, StatusOnHold},
+	StatusInProgress:      {StatusCompleted, StatusFailed, StatusPending, StatusPendingApproval, StatusOnHold},
 	StatusCompleted:       {},
 	StatusFailed:          {StatusPending},
 	StatusCancelled:       {},
 	StatusPendingApproval: {StatusAssigned, StatusCancelled, StatusPendingRevision},
 	StatusPendingRevision: {StatusInProgress, StatusCancelled, StatusPendingApproval},
+	StatusOnHold:          {StatusPending},
 }
 
 func validateTransition(from, to Status) error {
