@@ -20,6 +20,17 @@ func TestValidateTransition(t *testing.T) {
 		{StatusInProgress, StatusFailed, false},
 		{StatusInProgress, StatusPending, false},
 		{StatusFailed, StatusPending, false},
+		// on_hold transitions (goq-ticket-on-hold-status)
+		{StatusPending, StatusOnHold, false},
+		{StatusAssigned, StatusOnHold, false},
+		{StatusInProgress, StatusOnHold, false},
+		{StatusOnHold, StatusPending, false},
+		// on_hold must not skip straight back into active work
+		{StatusOnHold, StatusAssigned, true},
+		{StatusOnHold, StatusInProgress, true},
+		{StatusOnHold, StatusCompleted, true},
+		// on_hold is not itself a valid source for pending_approval/pending_revision moves
+		{StatusOnHold, StatusPendingApproval, true},
 		// terminal → anything: error
 		{StatusCompleted, StatusPending, true},
 		{StatusCompleted, StatusCancelled, true},

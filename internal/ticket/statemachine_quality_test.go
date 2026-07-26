@@ -12,6 +12,7 @@ import "testing"
 var allStatuses = []Status{
 	StatusPending, StatusAssigned, StatusInProgress, StatusCompleted,
 	StatusFailed, StatusCancelled, StatusPendingApproval, StatusPendingRevision,
+	StatusOnHold,
 }
 
 // terminals must have no outgoing transitions.

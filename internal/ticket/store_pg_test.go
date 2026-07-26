@@ -3,6 +3,7 @@ package ticket_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -219,4 +220,46 @@ func TestStoreGet_ParentTitleEmptyWhenNoParent(t *testing.T) {
 	got, err := store.Get(ctx, root.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "", got.ParentTitle)
+}
+
+func TestListOverdue_ExcludesOnHold(t *testing.T) {
+	ctx, store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	past := time.Now().Add(-24 * time.Hour)
+	onHoldStatus := ticket.StatusOnHold
+
+	onHold := createTicket(t, ctx, store, "on hold, past due")
+	_, err := store.Update(ctx, onHold.ID, ticket.UpdateTicketReq{Status: &onHoldStatus, DueAt: &past})
+	require.NoError(t, err)
+
+	active := createTicket(t, ctx, store, "pending, past due")
+	_, err = store.Update(ctx, active.ID, ticket.UpdateTicketReq{DueAt: &past})
+	require.NoError(t, err)
+
+	overdue, err := store.ListOverdue(ctx)
+	require.NoError(t, err)
+
+	var ids []uuid.UUID
+	for _, tk := range overdue {
+		ids = append(ids, tk.ID)
+	}
+	assert.NotContains(t, ids, onHold.ID, "on_hold ticket must not be returned as overdue (SLA worker would auto-fail it)")
+	assert.Contains(t, ids, active.ID, "a genuinely overdue pending ticket must still be returned")
+}
+
+func TestAllSubtasksTerminal_OnHoldChildBlocksParent(t *testing.T) {
+	ctx, store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	parent := createTicket(t, ctx, store, "parent epic")
+	child := createSubTicket(t, ctx, store, parent.ID, "child, on hold")
+
+	onHoldStatus := ticket.StatusOnHold
+	_, err := store.Update(ctx, child.ID, ticket.UpdateTicketReq{Status: &onHoldStatus})
+	require.NoError(t, err)
+
+	terminal, err := store.AllSubtasksTerminal(ctx, parent.ID)
+	require.NoError(t, err)
+	assert.False(t, terminal, "an on_hold child must keep the parent from being considered all-terminal")
 }
