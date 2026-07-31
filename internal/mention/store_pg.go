@@ -54,6 +54,39 @@ func (s *pgStore) ListByActor(ctx context.Context, actorID string, limit, offset
 	return out, rows.Err()
 }
 
+func (s *pgStore) ListViewsByActor(ctx context.Context, actorID string, limit, offset int) ([]*View, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT m.id, m.ticket_id, m.comment_id, m.mentioned_actor_id, m.source,
+		       m.created_at, m.created_by, m.seen_at,
+		       t.title, COALESCE(LEFT(c.body, 200), '')
+		FROM ticket_mentions m
+		JOIN tickets t ON t.id = m.ticket_id
+		LEFT JOIN ticket_comments c ON c.id = m.comment_id
+		WHERE m.mentioned_actor_id=$1
+		ORDER BY m.created_at DESC
+		LIMIT $2 OFFSET $3`, actorID, limit, offset)
+	if err != nil {
+		return nil, fmt.Errorf("mention: list views by actor: %w", err)
+	}
+	defer rows.Close()
+
+	var out []*View
+	for rows.Next() {
+		var v View
+		var source string
+		if err := rows.Scan(
+			&v.ID, &v.TicketID, &v.CommentID, &v.MentionedActorID, &source,
+			&v.CreatedAt, &v.CreatedBy, &v.SeenAt,
+			&v.TicketTitle, &v.CommentSnippet,
+		); err != nil {
+			return nil, fmt.Errorf("mention: scan view: %w", err)
+		}
+		v.Source = Source(source)
+		out = append(out, &v)
+	}
+	return out, rows.Err()
+}
+
 func (s *pgStore) CountUnseenByActor(ctx context.Context, actorID string) (int, error) {
 	var n int
 	err := s.db.QueryRow(ctx, `

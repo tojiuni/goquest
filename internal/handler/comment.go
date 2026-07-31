@@ -39,11 +39,19 @@ type MentionSvc interface {
 	CreateFromBody(ctx context.Context, ticketID, projectID uuid.UUID, commentID *uuid.UUID, source mention.Source, authorID, body string) ([]*mention.Mention, error)
 }
 
+// MentionEmitter announces recorded mentions on a secondary channel (nuclex
+// Redis stream → Telegram bot). Best-effort: the stored mention row is the
+// source of truth, an emit failure is ignored.
+type MentionEmitter interface {
+	EmitMentioned(ctx context.Context, t *ticket.Ticket, mentionedActorID string) error
+}
+
 type CommentHandler struct {
 	svc            CommentSvc
 	canSeeInternal CanSeeInternal
 	tickets        TicketGetter
 	mentions       MentionSvc
+	mentionEmitter MentionEmitter
 }
 
 func NewCommentHandler(svc CommentSvc, canSeeInternal CanSeeInternal) *CommentHandler {
@@ -55,12 +63,14 @@ func NewCommentHandler(svc CommentSvc, canSeeInternal CanSeeInternal) *CommentHa
 
 // WithMentions wires @mention extraction into comment creation: after a
 // comment is created, its body is scanned for @mentions of the ticket's
-// project members and recorded via mentions.CreateFromBody. Optional — a
-// handler without this wired simply skips mention extraction (used by tests
-// that construct CommentHandler directly via NewCommentHandler).
-func (h *CommentHandler) WithMentions(tickets TicketGetter, mentions MentionSvc) *CommentHandler {
+// project members and recorded via mentions.CreateFromBody. emitter may be
+// nil (no secondary-channel announcement). Optional — a handler without this
+// wired simply skips mention extraction (used by tests that construct
+// CommentHandler directly via NewCommentHandler).
+func (h *CommentHandler) WithMentions(tickets TicketGetter, mentions MentionSvc, emitter MentionEmitter) *CommentHandler {
 	h.tickets = tickets
 	h.mentions = mentions
+	h.mentionEmitter = emitter
 	return h
 }
 
@@ -100,7 +110,13 @@ func (h *CommentHandler) extractMentions(ctx context.Context, ticketID, commentI
 	if err != nil || t.ProjectID == nil {
 		return
 	}
-	_, _ = h.mentions.CreateFromBody(ctx, ticketID, *t.ProjectID, &commentID, mention.SourceComment, authorID, body)
+	created, err := h.mentions.CreateFromBody(ctx, ticketID, *t.ProjectID, &commentID, mention.SourceComment, authorID, body)
+	if err != nil || h.mentionEmitter == nil {
+		return
+	}
+	for _, m := range created {
+		_ = h.mentionEmitter.EmitMentioned(ctx, t, m.MentionedActorID)
+	}
 }
 
 // GET /tickets/:id/comments

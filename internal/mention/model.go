@@ -34,3 +34,16 @@ type CreateReq struct {
 	Source           Source
 	CreatedBy        string
 }
+
+// View is a Mention joined with just enough ticket/comment context to render
+// an inbox row without N+1 follow-up fetches: the ticket title for the deep
+// link, and a snippet of the comment body the mention appeared in (empty for
+// description mentions).
+type View struct {
+	Mention
+	TicketTitle    string `json:"ticket_title"`
+	CommentSnippet string `json:"comment_snippet,omitempty"`
+	// CreatedByName is filled by the handler from the lymphhub directory
+	// (best-effort; empty when lookup is unavailable — UI falls back to id).
+	CreatedByName string `json:"created_by_name,omitempty"`
+}
