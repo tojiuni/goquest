@@ -57,3 +57,5 @@ repos:
     project: toji-homes
   - repo: Lyckabc/whoami-ui
     project: whoami-ui
+  - repo: Lyckabc/goquest-ui
+    project: goquest
