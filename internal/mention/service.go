@@ -114,6 +114,10 @@ func (svc *Service) ListByActor(ctx context.Context, actorID string, limit, offs
 	return svc.store.ListByActor(ctx, actorID, limit, offset)
 }
 
+func (svc *Service) ListViewsByActor(ctx context.Context, actorID string, limit, offset int) ([]*View, error) {
+	return svc.store.ListViewsByActor(ctx, actorID, limit, offset)
+}
+
 func (svc *Service) CountUnseenByActor(ctx context.Context, actorID string) (int, error) {
 	return svc.store.CountUnseenByActor(ctx, actorID)
 }

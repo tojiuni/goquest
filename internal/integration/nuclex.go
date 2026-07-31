@@ -42,11 +42,26 @@ func (e *NuclexEmitter) EmitCreated(ctx context.Context, t *ticket.Ticket) error
 	return e.emit(ctx, t, "ticket.created", "info", "")
 }
 
+// EmitMentioned announces that mentionedActorID was @mentioned on t. A
+// secondary notification channel next to the in-app mention inbox — callers
+// treat failures as best-effort (the stored mention is the source of truth).
+func (e *NuclexEmitter) EmitMentioned(ctx context.Context, t *ticket.Ticket, mentionedActorID string) error {
+	return e.emitWith(ctx, t, "ticket.mentioned", "info", "notify_only",
+		map[string]any{"mentioned_actor_id": mentionedActorID})
+}
+
 func (e *NuclexEmitter) emit(ctx context.Context, t *ticket.Ticket, eventType, severity, suggestedAction string) error {
+	return e.emitWith(ctx, t, eventType, severity, suggestedAction, nil)
+}
+
+func (e *NuclexEmitter) emitWith(ctx context.Context, t *ticket.Ticket, eventType, severity, suggestedAction string, extra map[string]any) error {
 	ctx2 := map[string]any{
 		"ticket_id": t.ID.String(),
 		"title":     t.Title,
 		"domain":    string(t.Domain),
+	}
+	for k, v := range extra {
+		ctx2[k] = v
 	}
 
 	if t.Metadata != nil {

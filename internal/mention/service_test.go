@@ -61,6 +61,15 @@ func (m *mockStore) CountUnseenByActor(_ context.Context, actorID string) (int, 
 	}
 	return n, nil
 }
+func (m *mockStore) ListViewsByActor(_ context.Context, actorID string, _, _ int) ([]*mention.View, error) {
+	var out []*mention.View
+	for _, mm := range m.created {
+		if mm.MentionedActorID == actorID {
+			out = append(out, &mention.View{Mention: *mm})
+		}
+	}
+	return out, nil
+}
 func (m *mockStore) MarkSeen(_ context.Context, id uuid.UUID, actorID string) error {
 	for _, mm := range m.created {
 		if mm.ID == id && mm.MentionedActorID == actorID {

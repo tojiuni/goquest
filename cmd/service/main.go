@@ -160,7 +160,7 @@ func main() {
 
 	commentH := handler.NewCommentHandler(commentSvc, func(r *http.Request) bool {
 		return canSeeInternal(r, wsSvc)
-	}).WithMentions(svc, mentionSvc)
+	}).WithMentions(svc, mentionSvc, nuclexEmitter)
 
 	// vcsSvc must be constructed before ticketH, which takes it as the
 	// ticket-GET links provider (embeds vcs_links without ticket->vcs import).
@@ -220,6 +220,7 @@ func main() {
 		userLookup = directory.NewCachedLookuper(directoryClient, 5*time.Minute)
 	}
 	usersH := handler.NewUsersHandler(userLookup)
+	mentionH := handler.NewMentionHandler(mentionSvc, userLookup)
 
 	// brain-backed ticket reference docs + GitHub-backed content
 	// (goq-refdoc-goquest-brain-client). Both degrade to inert responses
@@ -339,6 +340,10 @@ func main() {
 			r.With(idempotent).Post("/tickets", ticketH.Create)
 			r.Get("/tickets", ticketH.List)
 			r.Get("/users/lookup", usersH.Lookup)
+			// Mention inbox (goq-mention-api): scoped to the caller's own
+			// identity — the actor id comes from auth, never a parameter.
+			r.Get("/users/mentions", mentionH.ListMine)
+			r.Post("/mentions/{id}/seen", mentionH.MarkSeen)
 			// GitHub-backed doc content (goq-refdoc-goquest-brain-client)
 			r.Get("/docs/content", refDocsH.Content)
 			// Ticket analytics: COUNT(*) grouped by a whitelisted column. The
