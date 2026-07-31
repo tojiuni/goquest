@@ -33,6 +33,7 @@ import (
 	"github.com/tojiuni/goquest/internal/integration"
 	"github.com/tojiuni/goquest/internal/macro"
 	"github.com/tojiuni/goquest/internal/magic"
+	"github.com/tojiuni/goquest/internal/mention"
 	"github.com/tojiuni/goquest/internal/migrate"
 	"github.com/tojiuni/goquest/internal/notify"
 	"github.com/tojiuni/goquest/internal/observability"
@@ -153,9 +154,13 @@ func main() {
 
 	commentStore := comment.NewPGStore(pool)
 	commentSvc := comment.NewService(commentStore)
+
+	mentionStore := mention.NewPGStore(pool)
+	mentionSvc := mention.NewService(mentionStore, projectMemberLister{pjSvc})
+
 	commentH := handler.NewCommentHandler(commentSvc, func(r *http.Request) bool {
 		return canSeeInternal(r, wsSvc)
-	})
+	}).WithMentions(svc, mentionSvc)
 
 	// vcsSvc must be constructed before ticketH, which takes it as the
 	// ticket-GET links provider (embeds vcs_links without ticket->vcs import).
@@ -571,6 +576,24 @@ type noopLookuper struct{}
 
 func (noopLookuper) Lookup(_ context.Context, _ []string) ([]directory.Actor, error) {
 	return nil, nil
+}
+
+// projectMemberLister adapts project.Service to mention.MemberLister —
+// mention deliberately doesn't import project (its dependency is just
+// {UserID string}), so this small shape conversion lives at the wiring
+// layer instead.
+type projectMemberLister struct{ svc *project.Service }
+
+func (a projectMemberLister) ListMembers(ctx context.Context, projectID uuid.UUID) ([]*mention.ProjectMember, error) {
+	members, err := a.svc.ListMembers(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*mention.ProjectMember, len(members))
+	for i, m := range members {
+		out[i] = &mention.ProjectMember{UserID: m.UserID}
+	}
+	return out, nil
 }
 
 // noopBrainLookuper is the /tickets/{id}/docs fallback when brain isn't
