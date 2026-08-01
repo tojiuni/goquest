@@ -68,3 +68,12 @@ type UpdateReq struct {
 type SetRoleReq struct {
 	Role Role `json:"role"`
 }
+
+// AddMemberReq is the POST /members body. Unlike SetMemberRole/RemoveMember
+// (which target an existing member via the {uid} URL segment), AddMember has
+// no {uid} in its route -- the user being added is a property of the new
+// membership being created, so it belongs in the body.
+type AddMemberReq struct {
+	UserID string `json:"user_id"`
+	Role   Role   `json:"role"`
+}

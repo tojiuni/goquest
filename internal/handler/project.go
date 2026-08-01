@@ -139,13 +139,16 @@ func (h *ProjectHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid project id")
 		return
 	}
-	var req project.SetRoleReq
+	var req project.AddMemberReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	targetUID := chi.URLParam(r, "uid")
-	if err := h.svc.AddMember(r.Context(), pid, req, targetUID); err != nil {
+	if req.UserID == "" {
+		writeError(w, http.StatusBadRequest, "user_id is required")
+		return
+	}
+	if err := h.svc.AddMember(r.Context(), pid, project.SetRoleReq{Role: req.Role}, req.UserID); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
