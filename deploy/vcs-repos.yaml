@@ -29,7 +29,7 @@ defaults:
 repos:
   - repo: tojiuni/goquest
     project: goquest
-  - repo: tojiuni/goquest-mcp
+  - repo: tojiuni/goquest-iim
     project: goquest
   - repo: tojiuni/cogito
     project: cogito
