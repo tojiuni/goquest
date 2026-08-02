@@ -545,6 +545,82 @@ func (h *TicketHandler) BulkUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, bulkUpdateResp{Results: results, Updated: len(updated)})
 }
 
+// maxBulkCreateItems bounds a single bulk-create request so one call cannot
+// fan out into an unbounded number of child tickets. Modeled directly on
+// maxBulkUpdateIDs above; 50 is proposed to match content-split's section
+// count upper bound (goq-cogito-bulk-create-api design doc §3.1/§8 — revisit
+// once real content-split output sizes are known).
+const maxBulkCreateItems = 50
+
+// BulkCreate creates many child tickets under one parent in a single request
+// (the cogito content-split / question-decomposition consumer). Manage authz
+// is checked once against the parent — mirroring RequireTicketManage's
+// project-less legacy bypass, same as BulkUpdate's per-id check above — since
+// items are not-yet-existing resources and a write grant on the parent is what
+// gates creating children under it. A single item's failure (bad title, etc.)
+// is reported in its result row without aborting the rest; response is always
+// 200 with a per-item result list once the parent lookup/authz gate passes.
+func (h *TicketHandler) BulkCreate(w http.ResponseWriter, r *http.Request) {
+	var req ticket.BulkCreateReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if req.ParentID == uuid.Nil {
+		writeError(w, http.StatusBadRequest, "parent_id is required")
+		return
+	}
+	if len(req.Items) == 0 {
+		writeError(w, http.StatusBadRequest, "items must be non-empty")
+		return
+	}
+	if len(req.Items) > maxBulkCreateItems {
+		writeError(w, http.StatusBadRequest, "too many items (max "+strconv.Itoa(maxBulkCreateItems)+")")
+		return
+	}
+
+	actor := auth.RequesterID(r)
+
+	// Existence + legacy bypass mirror RequireTicketManage / BulkUpdate: fetch
+	// the parent, and only SpiceDB-gate it when it belongs to a project.
+	parent, err := h.svc.Get(r.Context(), req.ParentID)
+	if err != nil {
+		if errors.Is(err, ticket.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "parent ticket not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "lookup parent ticket: "+err.Error())
+		return
+	}
+	if parent.ProjectID != nil {
+		ok, err := h.checker.CanManageTicket(r.Context(), req.ParentID, actor)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "permission check: "+err.Error())
+			return
+		}
+		if !ok {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
+	}
+
+	resp, err := h.svc.BulkCreate(r.Context(), req, actor)
+	if err != nil {
+		if errors.Is(err, ticket.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "parent ticket not found")
+			return
+		}
+		if errors.Is(err, ticket.ErrValidation) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (h *TicketHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(chi.URLParam(r, "id"))
 	if err != nil {

@@ -195,6 +195,55 @@ type CreateTicketReq struct {
 	RefIDs         []string       `json:"ref_ids,omitempty"`
 }
 
+// BulkCreateSource identifies what produced a bulk-create request, for
+// audit/debugging (goq-cogito-bulk-create-api). Not freeform: only the values
+// below are accepted.
+type BulkCreateSource string
+
+const (
+	BulkCreateSourceContentSplit          BulkCreateSource = "content-split"
+	BulkCreateSourceQuestionDecomposition BulkCreateSource = "question-decomposition"
+	BulkCreateSourceManual                BulkCreateSource = "manual"
+)
+
+// BulkCreateItem is one sub-ticket to create under BulkCreateReq.ParentID.
+// type/domain/priority are not overridable per-item in v1 — they're inherited
+// from the parent (see design doc §3.1); override support is a later addition.
+type BulkCreateItem struct {
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+}
+
+// BulkCreateReq batch-creates child tickets under ParentID in one call (the
+// cogito content-split / question-decomposition consumer, §3.1 of
+// 2026-08-02-cogito-subtask-generation-design.md). Each item is processed
+// independently by Service.BulkCreate; a single bad item does not abort the
+// rest (mirrors BulkUpdate's partial-failure contract).
+type BulkCreateReq struct {
+	ParentID  uuid.UUID        `json:"parent_id"`
+	Items     []BulkCreateItem `json:"items"`
+	Source    BulkCreateSource `json:"source"`
+	SourceRef string           `json:"source_ref,omitempty"`
+}
+
+// BulkCreateResult reports the outcome of one BulkCreateReq.Items entry, keyed
+// by its request index (items don't have an id until created). ID is a string
+// (not uuid.UUID) so a failed item can omit it entirely rather than render the
+// zero UUID (mirrors bulkUpdateResult's string ID in internal/handler).
+type BulkCreateResult struct {
+	Index int    `json:"index"`
+	ID    string `json:"id,omitempty"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+// BulkCreateResp is the Service.BulkCreate response shape: a per-item result
+// list (partial failure allowed) plus a count of tickets actually created.
+type BulkCreateResp struct {
+	Results []BulkCreateResult `json:"results"`
+	Created int                `json:"created"`
+}
+
 type UpdateTicketReq struct {
 	TitleName     *string       `json:"title_name,omitempty"`
 	Title         *string       `json:"title,omitempty"`

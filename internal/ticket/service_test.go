@@ -27,12 +27,17 @@ type mockStore struct {
 
 	reopenedID uuid.UUID
 	reopenErr  error
+
+	// created records every ticket passed to Create, in call order — used by
+	// bulk-create tests to assert per-item field inheritance (goq-cogito-bulk-create-api).
+	created []*ticket.Ticket
 }
 
 func (m *mockStore) Create(_ context.Context, t *ticket.Ticket) error {
 	if m.createErr != nil {
 		return m.createErr
 	}
+	m.created = append(m.created, t)
 	return nil
 }
 

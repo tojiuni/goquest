@@ -117,6 +117,61 @@ paths:
                         ok: { type: boolean }
                         error: { type: string }
         '400': { description: empty or oversized ids, or invalid body }
+  /tickets/bulk-create:
+    post:
+      summary: Create many child tickets under one parent (per-item partial success)
+      description: >
+        Creates each item as a child ticket under parent_id, inheriting the
+        parent's project/type/priority/domain (goq-cogito-bulk-create-api — the
+        cogito content-split / question-decomposition consumer). Manage
+        permission is checked once against parent_id, not per item. A per-item
+        failure (e.g. empty title) is reported in results without aborting the
+        rest. Always 200 once the parent lookup/authz gate passes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [parent_id, items, source]
+              properties:
+                parent_id: { type: string, format: uuid }
+                items:
+                  type: array
+                  description: 1 to 50 items
+                  items:
+                    type: object
+                    required: [title]
+                    properties:
+                      title: { type: string }
+                      description: { type: string }
+                source:
+                  type: string
+                  enum: [content-split, question-decomposition, manual]
+                source_ref:
+                  type: string
+                  description: optional freeform reference to the originating text/chat message
+      responses:
+        '200':
+          description: per-item results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  created: { type: integer }
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        index: { type: integer }
+                        id: { type: string }
+                        ok: { type: boolean }
+                        error: { type: string }
+        '400': { description: empty or oversized items, invalid source, or invalid body }
+        '403': { description: caller lacks manage permission on parent_id }
+        '404': { description: parent_id not found }
   /analytics/tickets:
     get:
       summary: Aggregate ticket counts grouped by one whitelisted column
