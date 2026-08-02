@@ -353,6 +353,10 @@ func main() {
 			// (ids arrive in the body, not the path), so this stays out of the
 			// /tickets/{id} manage-gated subrouter.
 			r.Post("/tickets/bulk", ticketH.BulkUpdate)
+			// Bulk create: manage authz is enforced once against parent_id inside
+			// the handler (goq-cogito-bulk-create-api) — items are not-yet-existing
+			// resources, so this also stays out of the /tickets/{id} subrouter.
+			r.Post("/tickets/bulk-create", ticketH.BulkCreate)
 			r.Get("/tickets/doc/{doc_id}", ticketH.GetDoc)
 			r.Get("/tickets/by-name/{title_name}", ticketH.GetByName)
 			r.Route("/tickets/{id}", func(r chi.Router) {

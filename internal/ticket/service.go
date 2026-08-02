@@ -192,6 +192,67 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 	return t, nil
 }
 
+// BulkCreate creates req.Items as child tickets under req.ParentID in one call
+// (goq-cogito-bulk-create-api — the cogito content-split / question-decomposition
+// consumer, design doc §3.1). It fetches the parent once to fail fast with
+// ErrNotFound; per-item creation is then delegated to Create so type/domain/
+// priority inheritance and project inheritance stay defined in exactly one
+// place (service.go:~111-115) instead of being duplicated here. Authz (manage
+// permission on the parent) is the caller's responsibility — Service has no
+// SpiceDB dependency, so the HTTP handler checks it once before calling this
+// (mirrors BulkUpdate's per-id authz-in-handler pattern).
+//
+// Each item is processed independently: one item's failure (e.g. empty title)
+// is recorded in its result row and does not abort the rest, matching
+// BulkUpdate's partial-failure contract.
+func (s *Service) BulkCreate(ctx context.Context, req BulkCreateReq, actorID string) (BulkCreateResp, error) {
+	if err := validateBulkCreateSource(req.Source); err != nil {
+		return BulkCreateResp{}, err
+	}
+	if len(req.Items) == 0 {
+		return BulkCreateResp{}, fmt.Errorf("%w: items must be non-empty", ErrValidation)
+	}
+
+	parent, err := s.store.Get(ctx, req.ParentID)
+	if err != nil {
+		return BulkCreateResp{}, err
+	}
+
+	results := make([]BulkCreateResult, 0, len(req.Items))
+	created := 0
+	for i, item := range req.Items {
+		res := BulkCreateResult{Index: i}
+
+		itemReq := CreateTicketReq{
+			Title:       item.Title,
+			Description: item.Description,
+			ParentID:    &req.ParentID,
+			Type:        parent.Type,
+			Priority:    parent.Priority,
+			Domain:      parent.Domain,
+			Metadata: map[string]any{
+				"bulk_create_source": string(req.Source),
+			},
+		}
+		if req.SourceRef != "" {
+			itemReq.Metadata["bulk_create_source_ref"] = req.SourceRef
+		}
+
+		t, cerr := s.Create(ctx, itemReq, actorID)
+		if cerr != nil {
+			res.Error = cerr.Error()
+			results = append(results, res)
+			continue
+		}
+		res.OK = true
+		res.ID = t.ID.String()
+		results = append(results, res)
+		created++
+	}
+
+	return BulkCreateResp{Results: results, Created: created}, nil
+}
+
 func (s *Service) Get(ctx context.Context, id uuid.UUID) (*Ticket, error) {
 	return s.store.Get(ctx, id)
 }
@@ -490,6 +551,20 @@ var validDomains = map[Domain]struct{}{
 func validateDomain(d Domain) error {
 	if _, ok := validDomains[d]; !ok {
 		return fmt.Errorf("%w: invalid domain: %s", ErrValidation, d)
+	}
+	return nil
+}
+
+var validBulkCreateSources = map[BulkCreateSource]struct{}{
+	BulkCreateSourceContentSplit: {}, BulkCreateSourceQuestionDecomposition: {}, BulkCreateSourceManual: {},
+}
+
+// validateBulkCreateSource rejects an empty or unknown source — unlike
+// risk_tier, source has no server-side default (it's an audit/debugging field
+// the caller must always supply, per design doc §3.1).
+func validateBulkCreateSource(src BulkCreateSource) error {
+	if _, ok := validBulkCreateSources[src]; !ok {
+		return fmt.Errorf("%w: invalid source: %q", ErrValidation, src)
 	}
 	return nil
 }
