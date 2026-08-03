@@ -6,6 +6,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 
 	"github.com/tojiuni/goquest/internal/cogitopb"
 )
@@ -20,27 +21,38 @@ type Section struct {
 
 // Client wraps cogito's CogitoService for content-splitting calls.
 type Client struct {
-	conn   *grpc.ClientConn
-	cogito cogitopb.CogitoServiceClient
+	conn        *grpc.ClientConn
+	cogito      cogitopb.CogitoServiceClient
+	bearerToken string
 }
 
 // New dials cogito's gRPC endpoint (plaintext — in-cluster, same trust model
-// as brainclient.New).
-func New(addr string) (*Client, error) {
+// as brainclient.New). bearerToken is the shared secret cogito's
+// bearer_auth_interceptor checks on every RPC (cogito
+// src/cogito/server/interceptors.py — a single fixed value ALL callers must
+// present, not per-caller identity); every call below attaches it as
+// "authorization: Bearer <token>" metadata, or every RPC fails with
+// UNAUTHENTICATED "invalid bearer token".
+func New(addr, bearerToken string) (*Client, error) {
 	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, fmt.Errorf("cogitoclient: dial %s: %w", addr, err)
 	}
-	return &Client{conn: conn, cogito: cogitopb.NewCogitoServiceClient(conn)}, nil
+	return &Client{conn: conn, cogito: cogitopb.NewCogitoServiceClient(conn), bearerToken: bearerToken}, nil
 }
 
 // Close closes the underlying gRPC connection.
 func (c *Client) Close() error { return c.conn.Close() }
 
+// withAuth attaches the shared bearer token as outgoing gRPC metadata.
+func (c *Client) withAuth(ctx context.Context) context.Context {
+	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+c.bearerToken)
+}
+
 // SplitContent splits text into a table of contents and hierarchical
 // sections via cogito's SplitContent RPC. title is optional prompt context.
 func (c *Client) SplitContent(ctx context.Context, text, title string) ([]Section, []string, error) {
-	resp, err := c.cogito.SplitContent(ctx, &cogitopb.SplitContentRequest{
+	resp, err := c.cogito.SplitContent(c.withAuth(ctx), &cogitopb.SplitContentRequest{
 		Text:  text,
 		Title: title,
 	})
@@ -96,7 +108,7 @@ func (m DecomposeMode) toProto() cogitopb.DecomposeMode {
 // DecomposeModeSubQuestions). history carries prior chat turns for context —
 // nil/empty is fine for a single-turn call.
 func (c *Client) DecomposeQuestion(ctx context.Context, message string, mode DecomposeMode, history []ChatTurn) ([]SubQuestion, []TaskCandidate, error) {
-	resp, err := c.cogito.DecomposeQuestion(ctx, &cogitopb.DecomposeQuestionRequest{
+	resp, err := c.cogito.DecomposeQuestion(c.withAuth(ctx), &cogitopb.DecomposeQuestionRequest{
 		Message: message,
 		History: toPBChatTurns(history),
 		Mode:    mode.toProto(),

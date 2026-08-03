@@ -67,15 +67,18 @@ type Config struct {
 	BrainGRPCAddr string
 	BrainTenant   string
 
-	// cogito gRPC (goq-cogito-subtasks-from-text) — SplitContent RPC backing
-	// POST /tickets/{parent_id}/subtasks/from-text. Empty CogitoGRPCAddr
-	// disables the endpoint (always 502s). No in-cluster default is set here
-	// (mirrors BrainGRPCAddr) since this codebase has no prior direct
-	// goquest->cogito wiring to confirm one from; whoami's existing client
-	// (neunexus deploy/whoami/configmap.yaml COGITO_GRPC_ENDPOINT) points at
-	// "cogito-svc.cogito-svc.svc:50051" — the likely real value, but flagged
-	// here rather than defaulted since it's inferred, not goquest-confirmed.
-	CogitoGRPCAddr string
+	// cogito gRPC (goq-cogito-subtasks-from-text/-chat) — SplitContent/
+	// DecomposeQuestion RPCs backing POST /tickets/{parent_id}/subtasks/
+	// from-text and /subtasks/from-chat. Empty CogitoGRPCAddr disables both
+	// endpoints (always 502s). Confirmed real in-cluster value via live E2E:
+	// "cogito-svc.cogito-svc.svc:50051" (also matches whoami's
+	// COGITO_GRPC_ENDPOINT). CogitoBearerToken is the shared secret cogito's
+	// gRPC interceptor checks on every call (WHOAMI_TO_COGITO_TOKEN
+	// server-side, Vault secret/neunexus/cogito-svc#whoami-token) — without
+	// it every call fails UNAUTHENTICATED "invalid bearer token" even with a
+	// reachable address.
+	CogitoGRPCAddr    string
+	CogitoBearerToken string
 
 	// GitHub App (goq-refdoc-goquest-brain-client) — server-side raw content
 	// fetch from the private tojiuni/geneso repo for /docs/content. Empty
@@ -138,7 +141,8 @@ func Load() *Config {
 		BrainGRPCAddr: os.Getenv("BRAIN_GRPC_ADDR"),
 		BrainTenant:   envOrDefault("BRAIN_TENANT", "toji"),
 
-		CogitoGRPCAddr: os.Getenv("COGITO_GRPC_ADDR"),
+		CogitoGRPCAddr:    os.Getenv("COGITO_GRPC_ADDR"),
+		CogitoBearerToken: os.Getenv("COGITO_BEARER_TOKEN"),
 
 		GitHubAppID:             os.Getenv("GITHUB_APP_ID"),
 		GitHubAppInstallationID: os.Getenv("GITHUB_APP_INSTALLATION_ID"),
