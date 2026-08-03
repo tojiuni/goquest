@@ -217,6 +217,59 @@ paths:
         '403': { description: caller lacks manage permission on id }
         '404': { description: id not found }
         '502': { description: cogito client unavailable or SplitContent RPC failed }
+  /tickets/{id}/subtasks/from-chat:
+    post:
+      summary: Decompose a chat question into task-candidate child tickets via cogito (goq-cogito-subtasks-from-chat)
+      description: >
+        Calls cogito's DecomposeQuestion RPC on message (with optional prior
+        chat history for context), always in TASK_CANDIDATES mode, then
+        bulk-creates each returned task candidate (title/description) as a
+        child ticket under {id} using the same path as POST
+        /tickets/bulk-create with source=question-decomposition. Manage
+        permission is checked once against {id}. message is stored as
+        source_ref (surfaced in each created ticket's metadata), the same way
+        SubtasksFromText passes its source_ref.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message: { type: string }
+                history:
+                  type: array
+                  description: optional prior conversation turns passed through to cogito
+                  items:
+                    type: object
+                    properties:
+                      role: { type: string }
+                      content: { type: string }
+      responses:
+        '200':
+          description: per-item results (same shape as POST /tickets/bulk-create)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  created: { type: integer }
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        index: { type: integer }
+                        id: { type: string }
+                        ok: { type: boolean }
+                        error: { type: string }
+        '400': { description: empty message, invalid body, or cogito produced zero task candidates }
+        '403': { description: caller lacks manage permission on id }
+        '404': { description: id not found }
+        '502': { description: cogito client unavailable or DecomposeQuestion RPC failed }
   /analytics/tickets:
     get:
       summary: Aggregate ticket counts grouped by one whitelisted column
