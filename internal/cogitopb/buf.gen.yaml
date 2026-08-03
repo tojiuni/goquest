@@ -1,0 +1,12 @@
+version: v2
+plugins:
+  - local: protoc-gen-go
+    out: .
+    opt:
+      - Mcogito.proto=github.com/tojiuni/goquest/internal/cogitopb
+      - paths=source_relative
+  - local: protoc-gen-go-grpc
+    out: .
+    opt:
+      - Mcogito.proto=github.com/tojiuni/goquest/internal/cogitopb
+      - paths=source_relative
