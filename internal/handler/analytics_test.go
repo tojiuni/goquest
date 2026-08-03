@@ -70,7 +70,7 @@ func TestTicketAnalytics_GroupByAndValidation(t *testing.T) {
 	store := &aggStore{memStore: newMemStore(mk(ticket.StatusPending), mk(ticket.StatusPending), mk(ticket.StatusCompleted))}
 	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
 	// NoopChecker → unrestricted visibility → every ticket is counted.
-	h := handler.NewTicketHandler(svc, &spicedb.NoopChecker{}, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, &spicedb.NoopChecker{}, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil, nil)
 	r := chi.NewRouter()
 	r.Get("/analytics/tickets", h.TicketAnalytics)
 
@@ -127,7 +127,7 @@ func TestTicketAnalytics_GroupByAndValidation(t *testing.T) {
 func TestTicketAnalytics_OrgCaller_ScopesByOrgNotSpiceDB(t *testing.T) {
 	store := &aggStore{memStore: newMemStore()}
 	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
-	h := handler.NewTicketHandler(svc, &spicedb.NoopChecker{}, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, &spicedb.NoopChecker{}, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil, nil)
 	r := chi.NewRouter()
 	r.Get("/analytics/tickets", h.TicketAnalytics)
 
@@ -166,7 +166,7 @@ func TestTicketAnalytics_OrgCaller_ScopesByOrgNotSpiceDB(t *testing.T) {
 func TestTicketAnalytics_OrgCallerWithoutSide_UsesSpiceDBVisibility(t *testing.T) {
 	store := &aggStore{memStore: newMemStore()}
 	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
-	h := handler.NewTicketHandler(svc, &spicedb.NoopChecker{}, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, &spicedb.NoopChecker{}, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil, nil)
 	r := chi.NewRouter()
 	r.Get("/analytics/tickets", h.TicketAnalytics)
 

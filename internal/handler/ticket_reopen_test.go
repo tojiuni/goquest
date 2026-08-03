@@ -43,7 +43,7 @@ func (s *reopenStore) ReopenTerminal(_ context.Context, id uuid.UUID) (*ticket.T
 // requireTicketView-gated /tickets/{id} group, additionally gated by
 // requireTicketManage (same as Update/Cancel/Approve).
 func reopenRouter(svc *ticket.Service, checker spicedb.PermissionChecker) http.Handler {
-	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil, nil)
 	r := chi.NewRouter()
 	r.Route("/tickets/{id}", func(r chi.Router) {
 		r.Use(auth.RequireTicketView(svc, checker))

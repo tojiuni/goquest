@@ -66,7 +66,7 @@ func nameRefBody(t *testing.T) *bytes.Reader {
 
 func TestTicketCreate_ResolveWorkspaceNotFound_400(t *testing.T) {
 	resolver := &stubResolver{err: resolve.ErrWorkspaceNotFound}
-	h := handler.NewTicketHandler(nil, nil, nil, resolver, nil, nil, nil)
+	h := handler.NewTicketHandler(nil, nil, nil, resolver, nil, nil, nil, nil)
 
 	r := ticketRouter(h)
 	req := httptest.NewRequest(http.MethodPost, "/tickets", nameRefBody(t))
@@ -81,7 +81,7 @@ func TestTicketCreate_ResolveWorkspaceNotFound_400(t *testing.T) {
 
 func TestTicketCreate_ResolveIncompleteRef_400(t *testing.T) {
 	resolver := &stubResolver{err: resolve.ErrIncompleteRef}
-	h := handler.NewTicketHandler(nil, nil, nil, resolver, nil, nil, nil)
+	h := handler.NewTicketHandler(nil, nil, nil, resolver, nil, nil, nil, nil)
 
 	r := ticketRouter(h)
 	req := httptest.NewRequest(http.MethodPost, "/tickets", nameRefBody(t))
@@ -96,7 +96,7 @@ func TestTicketCreate_ResolveIncompleteRef_400(t *testing.T) {
 
 func TestTicketCreate_ResolveGenericError_500(t *testing.T) {
 	resolver := &stubResolver{err: errors.New("db down")}
-	h := handler.NewTicketHandler(nil, nil, nil, resolver, nil, nil, nil)
+	h := handler.NewTicketHandler(nil, nil, nil, resolver, nil, nil, nil, nil)
 
 	r := ticketRouter(h)
 	req := httptest.NewRequest(http.MethodPost, "/tickets", nameRefBody(t))
@@ -128,7 +128,7 @@ func TestGetByName_OK(t *testing.T) {
 	}
 	store := newMemStore(tk)
 	svc := ticket.NewService(store, nil, nil, nil, nil, nil)
-	h := handler.NewTicketHandler(svc, nil, nil, &stubResolver{id: &pid}, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, nil, nil, &stubResolver{id: &pid}, nil, nil, nil, nil)
 
 	r := byNameRouter(h)
 	req := httptest.NewRequest(http.MethodGet, "/tickets/by-name/goq-byname-x?workspace=w&project=p", nil)
@@ -152,7 +152,7 @@ func TestGetByName_OK(t *testing.T) {
 func TestGetByName_MissingProject_400(t *testing.T) {
 	store := newMemStore()
 	svc := ticket.NewService(store, nil, nil, nil, nil, nil)
-	h := handler.NewTicketHandler(svc, nil, nil, &stubResolver{}, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, nil, nil, &stubResolver{}, nil, nil, nil, nil)
 
 	r := byNameRouter(h)
 	req := httptest.NewRequest(http.MethodGet, "/tickets/by-name/goq-byname-x", nil)
@@ -198,7 +198,7 @@ func TestCreate_TagResolveProjectNotFound_400(t *testing.T) {
 	pid := uuid.New()
 	resolver := &stubResolver{id: &pid}
 	tags := stubTagResolver{err: project.ErrNotFound}
-	h := handler.NewTicketHandler(nil, nil, nil, resolver, tags, nil, nil)
+	h := handler.NewTicketHandler(nil, nil, nil, resolver, tags, nil, nil, nil)
 
 	r := ticketRouter(h)
 	req := httptest.NewRequest(http.MethodPost, "/tickets", tagNamesRefBody(t))
@@ -218,7 +218,7 @@ func TestCreate_TagResolveInfraError_500(t *testing.T) {
 	pid := uuid.New()
 	resolver := &stubResolver{id: &pid}
 	tags := stubTagResolver{err: errors.New("db down")}
-	h := handler.NewTicketHandler(nil, nil, nil, resolver, tags, nil, nil)
+	h := handler.NewTicketHandler(nil, nil, nil, resolver, tags, nil, nil, nil)
 
 	r := ticketRouter(h)
 	req := httptest.NewRequest(http.MethodPost, "/tickets", tagNamesRefBody(t))
@@ -245,7 +245,7 @@ func TestCreate_DuplicateTitleNameReplays(t *testing.T) {
 	}
 	store := newMemStore(existing)
 	svc := ticket.NewService(store, nil, nil, nil, nil, nil)
-	h := handler.NewTicketHandler(svc, nil, nil, &stubResolver{}, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, nil, nil, &stubResolver{}, nil, nil, nil, nil)
 
 	r := ticketRouter(h)
 	body, _ := json.Marshal(map[string]any{
@@ -278,7 +278,7 @@ func TestCreate_DuplicateTitleNameReplays(t *testing.T) {
 // is rejected with 400, even when a TagResolver is wired in.
 func TestCreate_TagNamesRequiresProject(t *testing.T) {
 	resolver := &stubResolver{}
-	h := handler.NewTicketHandler(nil, nil, nil, resolver, stubTagResolver{}, nil, nil)
+	h := handler.NewTicketHandler(nil, nil, nil, resolver, stubTagResolver{}, nil, nil, nil)
 
 	r := ticketRouter(h)
 	body, _ := json.Marshal(map[string]any{
@@ -343,7 +343,7 @@ func TestCreate_WritesSpiceDBSynchronously(t *testing.T) {
 	store := newMemStore()
 	svc := ticket.NewService(store, stubPublisher{}, nil, nil, nil, nil)
 	w := &recordingWriter{entered: make(chan struct{}), release: make(chan struct{})}
-	h := handler.NewTicketHandler(svc, nil, w, &stubResolver{id: &pid}, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, nil, w, &stubResolver{id: &pid}, nil, nil, nil, nil)
 
 	r := ticketRouter(h)
 	body, _ := json.Marshal(map[string]any{
