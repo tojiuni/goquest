@@ -1,0 +1,29 @@
+syntax = "proto3";
+package cogito.v1;
+
+// Trimmed vendor of cogito's proto/cogito/v1/cogito.proto — only the
+// SplitContent RPC and the messages it depends on (cogito-content-split-pipeline).
+// Field numbers copied verbatim from the real deployed service so wire format
+// stays compatible; the other ~15 RPCs on CogitoService are intentionally
+// omitted (goquest only needs to encode what it calls).
+service CogitoService {
+  rpc SplitContent(SplitContentRequest) returns (SplitContentResponse);
+}
+
+// 일반 텍스트를 TOC + 계층형 section(title, contents)으로 분할한다. summary는
+// 포함하지 않는다 — 별도 요약 파이프라인이 채운다. 스펙: COG-SPC-DRAFT-20260802 §3.
+message SplitContentRequest {
+  string text  = 1;
+  string title = 2;  // optional, 프롬프트 컨텍스트용
+}
+
+message Section {
+  string title              = 1;
+  string contents           = 2;
+  repeated Section sub_sections = 3;
+}
+
+message SplitContentResponse {
+  repeated string  toc      = 1;
+  repeated Section sections = 2;
+}
