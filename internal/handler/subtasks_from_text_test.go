@@ -40,6 +40,14 @@ func (f *fakeCogitoSplitter) SplitContent(_ context.Context, _, _ string) ([]cog
 	return f.sections, nil, nil
 }
 
+// DecomposeQuestion is a no-op stub so fakeCogitoSplitter satisfies the
+// (now two-RPC) handler.CogitoSplitter interface; the from-text tests never
+// exercise this path. subtasks_from_chat_test.go's fakeCogitoDecomposer
+// embeds fakeCogitoSplitter and overrides this method with real behavior.
+func (f *fakeCogitoSplitter) DecomposeQuestion(_ context.Context, _ string, _ cogitoclient.DecomposeMode, _ []cogitoclient.ChatTurn) ([]cogitoclient.SubQuestion, []cogitoclient.TaskCandidate, error) {
+	return nil, nil, nil
+}
+
 func TestSubtasksFromText_Success(t *testing.T) {
 	pid := uuid.New()
 	parent := &ticket.Ticket{

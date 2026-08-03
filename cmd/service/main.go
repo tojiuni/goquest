@@ -174,15 +174,16 @@ func main() {
 	// further down.
 	auditLogger := audit.New(pool)
 
-	// cogito-backed subtask generation (goq-cogito-subtasks-from-text) —
-	// POST /tickets/{parent_id}/subtasks/from-text. Non-fatal on dial failure,
-	// same pattern as brainClient below: log and leave the endpoint 502'ing
-	// until cogito is reachable, rather than failing goquest-service startup.
+	// cogito-backed subtask generation (goq-cogito-subtasks-from-text,
+	// goq-cogito-subtasks-from-chat) — POST /tickets/{parent_id}/subtasks/from-text
+	// and /subtasks/from-chat. Non-fatal on dial failure, same pattern as
+	// brainClient below: log and leave the endpoints 502'ing until cogito is
+	// reachable, rather than failing goquest-service startup.
 	var cogitoClient handler.CogitoSplitter
 	if cfg.CogitoGRPCAddr != "" {
 		cc, err := cogitoclient.New(cfg.CogitoGRPCAddr)
 		if err != nil {
-			log.Printf("warn: cogitoclient.New: %v (subtasks/from-text will be unavailable)", err)
+			log.Printf("warn: cogitoclient.New: %v (subtasks/from-text, subtasks/from-chat will be unavailable)", err)
 		} else {
 			cogitoClient = cc
 		}
@@ -379,6 +380,11 @@ func main() {
 			// Service.BulkCreate for the created children (also not-yet-existing
 			// resources), so this stays out of the /tickets/{id} subrouter too.
 			r.Post("/tickets/{id}/subtasks/from-text", ticketH.SubtasksFromText)
+			// Subtasks-from-chat: same reasoning as subtasks/from-text above
+			// (goq-cogito-subtasks-from-chat) — manage authz enforced once
+			// against {id} inside the handler, children are not-yet-existing
+			// resources, so this stays out of the /tickets/{id} subrouter too.
+			r.Post("/tickets/{id}/subtasks/from-chat", ticketH.SubtasksFromChat)
 			r.Get("/tickets/doc/{doc_id}", ticketH.GetDoc)
 			r.Get("/tickets/by-name/{title_name}", ticketH.GetByName)
 			r.Route("/tickets/{id}", func(r chi.Router) {
