@@ -2,12 +2,14 @@ syntax = "proto3";
 package cogito.v1;
 
 // Trimmed vendor of cogito's proto/cogito/v1/cogito.proto — only the
-// SplitContent RPC and the messages it depends on (cogito-content-split-pipeline).
+// SplitContent and DecomposeQuestion RPCs and the messages they depend on
+// (cogito-content-split-pipeline, cogito-question-decomposition-pipeline).
 // Field numbers copied verbatim from the real deployed service so wire format
-// stays compatible; the other ~15 RPCs on CogitoService are intentionally
+// stays compatible; the other ~14 RPCs on CogitoService are intentionally
 // omitted (goquest only needs to encode what it calls).
 service CogitoService {
   rpc SplitContent(SplitContentRequest) returns (SplitContentResponse);
+  rpc DecomposeQuestion(DecomposeQuestionRequest) returns (DecomposeQuestionResponse);
 }
 
 // 일반 텍스트를 TOC + 계층형 section(title, contents)으로 분할한다. summary는
@@ -26,4 +28,38 @@ message Section {
 message SplitContentResponse {
   repeated string  toc      = 1;
   repeated Section sections = 2;
+}
+
+// ─── DecomposeQuestion (cogito-question-decomposition-pipeline) ──────────────
+//
+// 질문을 sub-question으로 분할하거나(SUB_QUESTIONS), 분할 후 goquest 티켓
+// 후보(title+description)까지 만든다(TASK_CANDIDATES). 실제 goquest 티켓
+// 생성은 이 RPC의 책임이 아니다 — 호출자가 반환된 task_candidates로 별도
+// 진행한다. 스펙: COG-SPC-DRAFT-20260802 §4, §7.
+
+message ChatTurn {
+  string role    = 1;  // "user" | "assistant"
+  string content = 2;
+}
+
+enum DecomposeMode {
+  DECOMPOSE_MODE_UNSPECIFIED = 0;
+  SUB_QUESTIONS              = 1;
+  TASK_CANDIDATES            = 2;
+}
+
+message DecomposeQuestionRequest {
+  string message            = 1;
+  repeated ChatTurn history  = 2;
+  DecomposeMode mode         = 3;
+}
+
+message TaskCandidateProto {
+  string title       = 1;
+  string description = 2;
+}
+
+message DecomposeQuestionResponse {
+  repeated string sub_questions               = 1;
+  repeated TaskCandidateProto task_candidates  = 2;  // mode=TASK_CANDIDATES일 때만 채움
 }

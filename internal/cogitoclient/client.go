@@ -51,6 +51,101 @@ func (c *Client) SplitContent(ctx context.Context, text, title string) ([]Sectio
 	return toSections(resp.Sections), resp.Toc, nil
 }
 
+// ChatTurn is a locally-shaped mirror of cogitopb.ChatTurn — one turn of
+// prior conversation history passed as context to DecomposeQuestion.
+type ChatTurn struct {
+	Role    string
+	Content string
+}
+
+// SubQuestion is a locally-shaped mirror of one entry in
+// cogitopb.DecomposeQuestionResponse.sub_questions.
+type SubQuestion struct {
+	Text string
+}
+
+// TaskCandidate is a locally-shaped mirror of cogitopb.TaskCandidateProto —
+// a goquest ticket candidate (title, description) suggested by cogito.
+type TaskCandidate struct {
+	Title       string
+	Description string
+}
+
+// DecomposeMode selects whether DecomposeQuestion returns plain sub-questions
+// or sub-questions plus goquest ticket candidates.
+type DecomposeMode int
+
+const (
+	// DecomposeModeSubQuestions maps to cogitopb.DecomposeMode_SUB_QUESTIONS.
+	DecomposeModeSubQuestions DecomposeMode = iota
+	// DecomposeModeTaskCandidates maps to cogitopb.DecomposeMode_TASK_CANDIDATES.
+	DecomposeModeTaskCandidates
+)
+
+// toProto maps a local DecomposeMode to its cogitopb.DecomposeMode wire value.
+func (m DecomposeMode) toProto() cogitopb.DecomposeMode {
+	if m == DecomposeModeTaskCandidates {
+		return cogitopb.DecomposeMode_TASK_CANDIDATES
+	}
+	return cogitopb.DecomposeMode_SUB_QUESTIONS
+}
+
+// DecomposeQuestion splits a question into sub-questions via cogito's
+// DecomposeQuestion RPC, optionally also returning goquest ticket candidates
+// when mode is DecomposeModeTaskCandidates (task_candidates is empty for
+// DecomposeModeSubQuestions). history carries prior chat turns for context —
+// nil/empty is fine for a single-turn call.
+func (c *Client) DecomposeQuestion(ctx context.Context, message string, mode DecomposeMode, history []ChatTurn) ([]SubQuestion, []TaskCandidate, error) {
+	resp, err := c.cogito.DecomposeQuestion(ctx, &cogitopb.DecomposeQuestionRequest{
+		Message: message,
+		History: toPBChatTurns(history),
+		Mode:    mode.toProto(),
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("cogitoclient: DecomposeQuestion: %w", err)
+	}
+
+	return toSubQuestions(resp.SubQuestions), toTaskCandidates(resp.TaskCandidates), nil
+}
+
+// toPBChatTurns maps the local ChatTurn type to cogitopb's ChatTurn message.
+func toPBChatTurns(history []ChatTurn) []*cogitopb.ChatTurn {
+	if len(history) == 0 {
+		return nil
+	}
+	turns := make([]*cogitopb.ChatTurn, 0, len(history))
+	for _, h := range history {
+		turns = append(turns, &cogitopb.ChatTurn{Role: h.Role, Content: h.Content})
+	}
+	return turns
+}
+
+// toSubQuestions maps cogitopb's sub_questions strings to the local
+// SubQuestion type.
+func toSubQuestions(subQuestions []string) []SubQuestion {
+	if len(subQuestions) == 0 {
+		return nil
+	}
+	out := make([]SubQuestion, 0, len(subQuestions))
+	for _, q := range subQuestions {
+		out = append(out, SubQuestion{Text: q})
+	}
+	return out
+}
+
+// toTaskCandidates maps cogitopb's TaskCandidateProto message to the local
+// TaskCandidate type.
+func toTaskCandidates(pbCandidates []*cogitopb.TaskCandidateProto) []TaskCandidate {
+	if len(pbCandidates) == 0 {
+		return nil
+	}
+	out := make([]TaskCandidate, 0, len(pbCandidates))
+	for _, c := range pbCandidates {
+		out = append(out, TaskCandidate{Title: c.Title, Description: c.Description})
+	}
+	return out
+}
+
 // toSections maps cogitopb's recursive Section message to the local Section
 // type, preserving nesting.
 func toSections(pbSections []*cogitopb.Section) []Section {

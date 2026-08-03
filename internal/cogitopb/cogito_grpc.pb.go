@@ -19,7 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	CogitoService_SplitContent_FullMethodName = "/cogito.v1.CogitoService/SplitContent"
+	CogitoService_SplitContent_FullMethodName      = "/cogito.v1.CogitoService/SplitContent"
+	CogitoService_DecomposeQuestion_FullMethodName = "/cogito.v1.CogitoService/DecomposeQuestion"
 )
 
 // CogitoServiceClient is the client API for CogitoService service.
@@ -27,12 +28,14 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // Trimmed vendor of cogito's proto/cogito/v1/cogito.proto — only the
-// SplitContent RPC and the messages it depends on (cogito-content-split-pipeline).
+// SplitContent and DecomposeQuestion RPCs and the messages they depend on
+// (cogito-content-split-pipeline, cogito-question-decomposition-pipeline).
 // Field numbers copied verbatim from the real deployed service so wire format
-// stays compatible; the other ~15 RPCs on CogitoService are intentionally
+// stays compatible; the other ~14 RPCs on CogitoService are intentionally
 // omitted (goquest only needs to encode what it calls).
 type CogitoServiceClient interface {
 	SplitContent(ctx context.Context, in *SplitContentRequest, opts ...grpc.CallOption) (*SplitContentResponse, error)
+	DecomposeQuestion(ctx context.Context, in *DecomposeQuestionRequest, opts ...grpc.CallOption) (*DecomposeQuestionResponse, error)
 }
 
 type cogitoServiceClient struct {
@@ -53,17 +56,29 @@ func (c *cogitoServiceClient) SplitContent(ctx context.Context, in *SplitContent
 	return out, nil
 }
 
+func (c *cogitoServiceClient) DecomposeQuestion(ctx context.Context, in *DecomposeQuestionRequest, opts ...grpc.CallOption) (*DecomposeQuestionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DecomposeQuestionResponse)
+	err := c.cc.Invoke(ctx, CogitoService_DecomposeQuestion_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CogitoServiceServer is the server API for CogitoService service.
 // All implementations must embed UnimplementedCogitoServiceServer
 // for forward compatibility.
 //
 // Trimmed vendor of cogito's proto/cogito/v1/cogito.proto — only the
-// SplitContent RPC and the messages it depends on (cogito-content-split-pipeline).
+// SplitContent and DecomposeQuestion RPCs and the messages they depend on
+// (cogito-content-split-pipeline, cogito-question-decomposition-pipeline).
 // Field numbers copied verbatim from the real deployed service so wire format
-// stays compatible; the other ~15 RPCs on CogitoService are intentionally
+// stays compatible; the other ~14 RPCs on CogitoService are intentionally
 // omitted (goquest only needs to encode what it calls).
 type CogitoServiceServer interface {
 	SplitContent(context.Context, *SplitContentRequest) (*SplitContentResponse, error)
+	DecomposeQuestion(context.Context, *DecomposeQuestionRequest) (*DecomposeQuestionResponse, error)
 	mustEmbedUnimplementedCogitoServiceServer()
 }
 
@@ -76,6 +91,9 @@ type UnimplementedCogitoServiceServer struct{}
 
 func (UnimplementedCogitoServiceServer) SplitContent(context.Context, *SplitContentRequest) (*SplitContentResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SplitContent not implemented")
+}
+func (UnimplementedCogitoServiceServer) DecomposeQuestion(context.Context, *DecomposeQuestionRequest) (*DecomposeQuestionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DecomposeQuestion not implemented")
 }
 func (UnimplementedCogitoServiceServer) mustEmbedUnimplementedCogitoServiceServer() {}
 func (UnimplementedCogitoServiceServer) testEmbeddedByValue()                       {}
@@ -116,6 +134,24 @@ func _CogitoService_SplitContent_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _CogitoService_DecomposeQuestion_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DecomposeQuestionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(CogitoServiceServer).DecomposeQuestion(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: CogitoService_DecomposeQuestion_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(CogitoServiceServer).DecomposeQuestion(ctx, req.(*DecomposeQuestionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // CogitoService_ServiceDesc is the grpc.ServiceDesc for CogitoService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -126,6 +162,10 @@ var CogitoService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SplitContent",
 			Handler:    _CogitoService_SplitContent_Handler,
+		},
+		{
+			MethodName: "DecomposeQuestion",
+			Handler:    _CogitoService_DecomposeQuestion_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
