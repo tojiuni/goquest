@@ -23,6 +23,10 @@ type fakeCogitoService struct {
 	lastReq  *cogitopb.SplitContentRequest
 	response *cogitopb.SplitContentResponse
 	err      error
+
+	lastDecomposeReq  *cogitopb.DecomposeQuestionRequest
+	decomposeResponse *cogitopb.DecomposeQuestionResponse
+	decomposeErr      error
 }
 
 func (f *fakeCogitoService) SplitContent(_ context.Context, req *cogitopb.SplitContentRequest) (*cogitopb.SplitContentResponse, error) {
@@ -31,6 +35,14 @@ func (f *fakeCogitoService) SplitContent(_ context.Context, req *cogitopb.SplitC
 		return nil, f.err
 	}
 	return f.response, nil
+}
+
+func (f *fakeCogitoService) DecomposeQuestion(_ context.Context, req *cogitopb.DecomposeQuestionRequest) (*cogitopb.DecomposeQuestionResponse, error) {
+	f.lastDecomposeReq = req
+	if f.decomposeErr != nil {
+		return nil, f.decomposeErr
+	}
+	return f.decomposeResponse, nil
 }
 
 // startFakeCogito runs fakeCogitoService on an in-process bufconn listener
@@ -130,6 +142,67 @@ func TestSplitContent_CogitoError_Propagates(t *testing.T) {
 	c := newTestClient(t, dialer)
 
 	_, _, err := c.SplitContent(context.Background(), "text", "")
+	require.Error(t, err)
+}
+
+func TestDecomposeQuestion_SubQuestionsMode_ReturnsSubQuestionsOnly(t *testing.T) {
+	svc := &fakeCogitoService{decomposeResponse: &cogitopb.DecomposeQuestionResponse{
+		SubQuestions: []string{"What is X?", "How does Y relate to X?"},
+	}}
+	dialer := startFakeCogito(t, svc)
+	c := newTestClient(t, dialer)
+
+	subQuestions, taskCandidates, err := c.DecomposeQuestion(context.Background(), "What is X and how does Y relate?", DecomposeModeSubQuestions, nil)
+	require.NoError(t, err)
+
+	assert.Equal(t, []SubQuestion{{Text: "What is X?"}, {Text: "How does Y relate to X?"}}, subQuestions)
+	assert.Empty(t, taskCandidates)
+
+	require.NotNil(t, svc.lastDecomposeReq)
+	assert.Equal(t, "What is X and how does Y relate?", svc.lastDecomposeReq.Message)
+	assert.Equal(t, cogitopb.DecomposeMode_SUB_QUESTIONS, svc.lastDecomposeReq.Mode)
+	assert.Empty(t, svc.lastDecomposeReq.History)
+}
+
+func TestDecomposeQuestion_TaskCandidatesMode_ReturnsTaskCandidates(t *testing.T) {
+	svc := &fakeCogitoService{decomposeResponse: &cogitopb.DecomposeQuestionResponse{
+		SubQuestions: []string{"What is X?"},
+		TaskCandidates: []*cogitopb.TaskCandidateProto{
+			{Title: "Investigate X", Description: "Look into what X is"},
+			{Title: "Document Y", Description: "Write up how Y relates to X"},
+		},
+	}}
+	dialer := startFakeCogito(t, svc)
+	c := newTestClient(t, dialer)
+
+	history := []ChatTurn{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: "hello, how can I help?"},
+	}
+	subQuestions, taskCandidates, err := c.DecomposeQuestion(context.Background(), "What is X?", DecomposeModeTaskCandidates, history)
+	require.NoError(t, err)
+
+	assert.Equal(t, []SubQuestion{{Text: "What is X?"}}, subQuestions)
+	assert.Equal(t, []TaskCandidate{
+		{Title: "Investigate X", Description: "Look into what X is"},
+		{Title: "Document Y", Description: "Write up how Y relates to X"},
+	}, taskCandidates)
+
+	require.NotNil(t, svc.lastDecomposeReq)
+	assert.Equal(t, cogitopb.DecomposeMode_TASK_CANDIDATES, svc.lastDecomposeReq.Mode)
+	require.Len(t, svc.lastDecomposeReq.History, 2)
+	assert.Equal(t, "user", svc.lastDecomposeReq.History[0].Role)
+	assert.Equal(t, "hi", svc.lastDecomposeReq.History[0].Content)
+	assert.Equal(t, "assistant", svc.lastDecomposeReq.History[1].Role)
+	assert.Equal(t, "hello, how can I help?", svc.lastDecomposeReq.History[1].Content)
+}
+
+func TestDecomposeQuestion_CogitoError_Propagates(t *testing.T) {
+	svc := &fakeCogitoService{decomposeErr: assertErr{}}
+	dialer := startFakeCogito(t, svc)
+	c := newTestClient(t, dialer)
+
+	_, _, err := c.DecomposeQuestion(context.Background(), "text", DecomposeModeSubQuestions, nil)
 	require.Error(t, err)
 }
 

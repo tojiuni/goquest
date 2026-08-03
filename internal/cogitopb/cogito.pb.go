@@ -21,6 +21,55 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type DecomposeMode int32
+
+const (
+	DecomposeMode_DECOMPOSE_MODE_UNSPECIFIED DecomposeMode = 0
+	DecomposeMode_SUB_QUESTIONS              DecomposeMode = 1
+	DecomposeMode_TASK_CANDIDATES            DecomposeMode = 2
+)
+
+// Enum value maps for DecomposeMode.
+var (
+	DecomposeMode_name = map[int32]string{
+		0: "DECOMPOSE_MODE_UNSPECIFIED",
+		1: "SUB_QUESTIONS",
+		2: "TASK_CANDIDATES",
+	}
+	DecomposeMode_value = map[string]int32{
+		"DECOMPOSE_MODE_UNSPECIFIED": 0,
+		"SUB_QUESTIONS":              1,
+		"TASK_CANDIDATES":            2,
+	}
+)
+
+func (x DecomposeMode) Enum() *DecomposeMode {
+	p := new(DecomposeMode)
+	*p = x
+	return p
+}
+
+func (x DecomposeMode) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (DecomposeMode) Descriptor() protoreflect.EnumDescriptor {
+	return file_cogito_proto_enumTypes[0].Descriptor()
+}
+
+func (DecomposeMode) Type() protoreflect.EnumType {
+	return &file_cogito_proto_enumTypes[0]
+}
+
+func (x DecomposeMode) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use DecomposeMode.Descriptor instead.
+func (DecomposeMode) EnumDescriptor() ([]byte, []int) {
+	return file_cogito_proto_rawDescGZIP(), []int{0}
+}
+
 // 일반 텍스트를 TOC + 계층형 section(title, contents)으로 분할한다. summary는
 // 포함하지 않는다 — 별도 요약 파이프라인이 채운다. 스펙: COG-SPC-DRAFT-20260802 §3.
 type SplitContentRequest struct {
@@ -187,6 +236,222 @@ func (x *SplitContentResponse) GetSections() []*Section {
 	return nil
 }
 
+type ChatTurn struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Role          string                 `protobuf:"bytes,1,opt,name=role,proto3" json:"role,omitempty"` // "user" | "assistant"
+	Content       string                 `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChatTurn) Reset() {
+	*x = ChatTurn{}
+	mi := &file_cogito_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatTurn) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatTurn) ProtoMessage() {}
+
+func (x *ChatTurn) ProtoReflect() protoreflect.Message {
+	mi := &file_cogito_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatTurn.ProtoReflect.Descriptor instead.
+func (*ChatTurn) Descriptor() ([]byte, []int) {
+	return file_cogito_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ChatTurn) GetRole() string {
+	if x != nil {
+		return x.Role
+	}
+	return ""
+}
+
+func (x *ChatTurn) GetContent() string {
+	if x != nil {
+		return x.Content
+	}
+	return ""
+}
+
+type DecomposeQuestionRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Message       string                 `protobuf:"bytes,1,opt,name=message,proto3" json:"message,omitempty"`
+	History       []*ChatTurn            `protobuf:"bytes,2,rep,name=history,proto3" json:"history,omitempty"`
+	Mode          DecomposeMode          `protobuf:"varint,3,opt,name=mode,proto3,enum=cogito.v1.DecomposeMode" json:"mode,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DecomposeQuestionRequest) Reset() {
+	*x = DecomposeQuestionRequest{}
+	mi := &file_cogito_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DecomposeQuestionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DecomposeQuestionRequest) ProtoMessage() {}
+
+func (x *DecomposeQuestionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cogito_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DecomposeQuestionRequest.ProtoReflect.Descriptor instead.
+func (*DecomposeQuestionRequest) Descriptor() ([]byte, []int) {
+	return file_cogito_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *DecomposeQuestionRequest) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *DecomposeQuestionRequest) GetHistory() []*ChatTurn {
+	if x != nil {
+		return x.History
+	}
+	return nil
+}
+
+func (x *DecomposeQuestionRequest) GetMode() DecomposeMode {
+	if x != nil {
+		return x.Mode
+	}
+	return DecomposeMode_DECOMPOSE_MODE_UNSPECIFIED
+}
+
+type TaskCandidateProto struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Title         string                 `protobuf:"bytes,1,opt,name=title,proto3" json:"title,omitempty"`
+	Description   string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TaskCandidateProto) Reset() {
+	*x = TaskCandidateProto{}
+	mi := &file_cogito_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TaskCandidateProto) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TaskCandidateProto) ProtoMessage() {}
+
+func (x *TaskCandidateProto) ProtoReflect() protoreflect.Message {
+	mi := &file_cogito_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TaskCandidateProto.ProtoReflect.Descriptor instead.
+func (*TaskCandidateProto) Descriptor() ([]byte, []int) {
+	return file_cogito_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *TaskCandidateProto) GetTitle() string {
+	if x != nil {
+		return x.Title
+	}
+	return ""
+}
+
+func (x *TaskCandidateProto) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+type DecomposeQuestionResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	SubQuestions   []string               `protobuf:"bytes,1,rep,name=sub_questions,json=subQuestions,proto3" json:"sub_questions,omitempty"`
+	TaskCandidates []*TaskCandidateProto  `protobuf:"bytes,2,rep,name=task_candidates,json=taskCandidates,proto3" json:"task_candidates,omitempty"` // mode=TASK_CANDIDATES일 때만 채움
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *DecomposeQuestionResponse) Reset() {
+	*x = DecomposeQuestionResponse{}
+	mi := &file_cogito_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DecomposeQuestionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DecomposeQuestionResponse) ProtoMessage() {}
+
+func (x *DecomposeQuestionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cogito_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DecomposeQuestionResponse.ProtoReflect.Descriptor instead.
+func (*DecomposeQuestionResponse) Descriptor() ([]byte, []int) {
+	return file_cogito_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *DecomposeQuestionResponse) GetSubQuestions() []string {
+	if x != nil {
+		return x.SubQuestions
+	}
+	return nil
+}
+
+func (x *DecomposeQuestionResponse) GetTaskCandidates() []*TaskCandidateProto {
+	if x != nil {
+		return x.TaskCandidates
+	}
+	return nil
+}
+
 var File_cogito_proto protoreflect.FileDescriptor
 
 const file_cogito_proto_rawDesc = "" +
@@ -201,9 +466,27 @@ const file_cogito_proto_rawDesc = "" +
 	"\fsub_sections\x18\x03 \x03(\v2\x12.cogito.v1.SectionR\vsubSections\"X\n" +
 	"\x14SplitContentResponse\x12\x10\n" +
 	"\x03toc\x18\x01 \x03(\tR\x03toc\x12.\n" +
-	"\bsections\x18\x02 \x03(\v2\x12.cogito.v1.SectionR\bsections2`\n" +
+	"\bsections\x18\x02 \x03(\v2\x12.cogito.v1.SectionR\bsections\"8\n" +
+	"\bChatTurn\x12\x12\n" +
+	"\x04role\x18\x01 \x01(\tR\x04role\x12\x18\n" +
+	"\acontent\x18\x02 \x01(\tR\acontent\"\x91\x01\n" +
+	"\x18DecomposeQuestionRequest\x12\x18\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage\x12-\n" +
+	"\ahistory\x18\x02 \x03(\v2\x13.cogito.v1.ChatTurnR\ahistory\x12,\n" +
+	"\x04mode\x18\x03 \x01(\x0e2\x18.cogito.v1.DecomposeModeR\x04mode\"L\n" +
+	"\x12TaskCandidateProto\x12\x14\n" +
+	"\x05title\x18\x01 \x01(\tR\x05title\x12 \n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\"\x88\x01\n" +
+	"\x19DecomposeQuestionResponse\x12#\n" +
+	"\rsub_questions\x18\x01 \x03(\tR\fsubQuestions\x12F\n" +
+	"\x0ftask_candidates\x18\x02 \x03(\v2\x1d.cogito.v1.TaskCandidateProtoR\x0etaskCandidates*W\n" +
+	"\rDecomposeMode\x12\x1e\n" +
+	"\x1aDECOMPOSE_MODE_UNSPECIFIED\x10\x00\x12\x11\n" +
+	"\rSUB_QUESTIONS\x10\x01\x12\x13\n" +
+	"\x0fTASK_CANDIDATES\x10\x022\xc0\x01\n" +
 	"\rCogitoService\x12O\n" +
-	"\fSplitContent\x12\x1e.cogito.v1.SplitContentRequest\x1a\x1f.cogito.v1.SplitContentResponseb\x06proto3"
+	"\fSplitContent\x12\x1e.cogito.v1.SplitContentRequest\x1a\x1f.cogito.v1.SplitContentResponse\x12^\n" +
+	"\x11DecomposeQuestion\x12#.cogito.v1.DecomposeQuestionRequest\x1a$.cogito.v1.DecomposeQuestionResponseb\x06proto3"
 
 var (
 	file_cogito_proto_rawDescOnce sync.Once
@@ -217,22 +500,33 @@ func file_cogito_proto_rawDescGZIP() []byte {
 	return file_cogito_proto_rawDescData
 }
 
-var file_cogito_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_cogito_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_cogito_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
 var file_cogito_proto_goTypes = []any{
-	(*SplitContentRequest)(nil),  // 0: cogito.v1.SplitContentRequest
-	(*Section)(nil),              // 1: cogito.v1.Section
-	(*SplitContentResponse)(nil), // 2: cogito.v1.SplitContentResponse
+	(DecomposeMode)(0),                // 0: cogito.v1.DecomposeMode
+	(*SplitContentRequest)(nil),       // 1: cogito.v1.SplitContentRequest
+	(*Section)(nil),                   // 2: cogito.v1.Section
+	(*SplitContentResponse)(nil),      // 3: cogito.v1.SplitContentResponse
+	(*ChatTurn)(nil),                  // 4: cogito.v1.ChatTurn
+	(*DecomposeQuestionRequest)(nil),  // 5: cogito.v1.DecomposeQuestionRequest
+	(*TaskCandidateProto)(nil),        // 6: cogito.v1.TaskCandidateProto
+	(*DecomposeQuestionResponse)(nil), // 7: cogito.v1.DecomposeQuestionResponse
 }
 var file_cogito_proto_depIdxs = []int32{
-	1, // 0: cogito.v1.Section.sub_sections:type_name -> cogito.v1.Section
-	1, // 1: cogito.v1.SplitContentResponse.sections:type_name -> cogito.v1.Section
-	0, // 2: cogito.v1.CogitoService.SplitContent:input_type -> cogito.v1.SplitContentRequest
-	2, // 3: cogito.v1.CogitoService.SplitContent:output_type -> cogito.v1.SplitContentResponse
-	3, // [3:4] is the sub-list for method output_type
-	2, // [2:3] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	2, // 0: cogito.v1.Section.sub_sections:type_name -> cogito.v1.Section
+	2, // 1: cogito.v1.SplitContentResponse.sections:type_name -> cogito.v1.Section
+	4, // 2: cogito.v1.DecomposeQuestionRequest.history:type_name -> cogito.v1.ChatTurn
+	0, // 3: cogito.v1.DecomposeQuestionRequest.mode:type_name -> cogito.v1.DecomposeMode
+	6, // 4: cogito.v1.DecomposeQuestionResponse.task_candidates:type_name -> cogito.v1.TaskCandidateProto
+	1, // 5: cogito.v1.CogitoService.SplitContent:input_type -> cogito.v1.SplitContentRequest
+	5, // 6: cogito.v1.CogitoService.DecomposeQuestion:input_type -> cogito.v1.DecomposeQuestionRequest
+	3, // 7: cogito.v1.CogitoService.SplitContent:output_type -> cogito.v1.SplitContentResponse
+	7, // 8: cogito.v1.CogitoService.DecomposeQuestion:output_type -> cogito.v1.DecomposeQuestionResponse
+	7, // [7:9] is the sub-list for method output_type
+	5, // [5:7] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_cogito_proto_init() }
@@ -245,13 +539,14 @@ func file_cogito_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cogito_proto_rawDesc), len(file_cogito_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   3,
+			NumEnums:      1,
+			NumMessages:   7,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_cogito_proto_goTypes,
 		DependencyIndexes: file_cogito_proto_depIdxs,
+		EnumInfos:         file_cogito_proto_enumTypes,
 		MessageInfos:      file_cogito_proto_msgTypes,
 	}.Build()
 	File_cogito_proto = out.File
