@@ -172,6 +172,51 @@ paths:
         '400': { description: empty or oversized items, invalid source, or invalid body }
         '403': { description: caller lacks manage permission on parent_id }
         '404': { description: parent_id not found }
+  /tickets/{id}/subtasks/from-text:
+    post:
+      summary: Split free-form text into child tickets via cogito (goq-cogito-subtasks-from-text)
+      description: >
+        Calls cogito's SplitContent RPC on text, then bulk-creates each
+        top-level returned section (title/contents) as a child ticket under
+        {id} using the same path as POST /tickets/bulk-create with
+        source=content-split. Manage permission is checked once against {id}.
+        v1 only uses top-level sections; sub_sections are not recursed into.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              properties:
+                text: { type: string }
+                title:
+                  type: string
+                  description: optional prompt context passed through to cogito
+      responses:
+        '200':
+          description: per-item results (same shape as POST /tickets/bulk-create)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  created: { type: integer }
+                  results:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        index: { type: integer }
+                        id: { type: string }
+                        ok: { type: boolean }
+                        error: { type: string }
+        '400': { description: empty text, invalid body, or cogito produced zero sections }
+        '403': { description: caller lacks manage permission on id }
+        '404': { description: id not found }
+        '502': { description: cogito client unavailable or SplitContent RPC failed }
   /analytics/tickets:
     get:
       summary: Aggregate ticket counts grouped by one whitelisted column

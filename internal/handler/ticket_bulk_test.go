@@ -74,7 +74,7 @@ func TestBulkUpdate_PerIDAuthzAndPartialFailure(t *testing.T) {
 	store := &bulkStore{newMemStore(t1, t2, t3)}
 	checker := &manageChecker{worldChecker: &worldChecker{}, allow: map[uuid.UUID]bool{t1.ID: true, t2.ID: true}}
 	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
-	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil, nil)
 
 	r := chi.NewRouter()
 	r.Post("/tickets/bulk", h.BulkUpdate)
@@ -139,7 +139,7 @@ func TestBulkUpdate_PerIDAuthzAndPartialFailure(t *testing.T) {
 // TestBulkUpdate_RejectsEmptyAndOversizedIDs covers the request-level guards.
 func TestBulkUpdate_RejectsEmptyAndOversizedIDs(t *testing.T) {
 	svc := ticket.NewService(&bulkStore{newMemStore()}, noopPublisher{}, nil, nil, nil, nil)
-	h := handler.NewTicketHandler(svc, &worldChecker{}, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, &worldChecker{}, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil, nil)
 	r := chi.NewRouter()
 	r.Post("/tickets/bulk", h.BulkUpdate)
 

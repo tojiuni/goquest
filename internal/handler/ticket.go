@@ -56,14 +56,16 @@ type TicketHandler struct {
 	tags     TagResolver
 	audit    audit.Logger
 	links    LinksProvider
+	cogito   CogitoSplitter
 }
 
-// NewTicketHandler wires the ticket HTTP handlers. The audit and links
-// parameters are optional: if nil, audit calls / vcs_links embedding are
-// silently skipped (each call site guards with a nil check). This keeps unit
-// tests that don't care about audit or vcs from needing a fake.
-func NewTicketHandler(svc *ticket.Service, checker spicedb.PermissionChecker, writer spicedb.RelationshipWriter, resolver ProjectResolver, tags TagResolver, auditLogger audit.Logger, links LinksProvider) *TicketHandler {
-	return &TicketHandler{svc: svc, checker: checker, writer: writer, resolver: resolver, tags: tags, audit: auditLogger, links: links}
+// NewTicketHandler wires the ticket HTTP handlers. The audit, links, and
+// cogito parameters are optional: if nil, audit calls / vcs_links embedding /
+// POST .../subtasks/from-text are silently skipped or 502 (each call site
+// guards with a nil check). This keeps unit tests that don't care about
+// audit, vcs, or cogito from needing a fake.
+func NewTicketHandler(svc *ticket.Service, checker spicedb.PermissionChecker, writer spicedb.RelationshipWriter, resolver ProjectResolver, tags TagResolver, auditLogger audit.Logger, links LinksProvider, cogito CogitoSplitter) *TicketHandler {
+	return &TicketHandler{svc: svc, checker: checker, writer: writer, resolver: resolver, tags: tags, audit: auditLogger, links: links, cogito: cogito}
 }
 
 func (h *TicketHandler) Create(w http.ResponseWriter, r *http.Request) {

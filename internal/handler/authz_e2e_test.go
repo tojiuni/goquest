@@ -343,7 +343,7 @@ func e2eRouter(store ticket.Store, checker spicedb.PermissionChecker) http.Handl
 // the TicketHandler. Used by tests that need to verify audit_log behavior.
 func e2eRouterWithAudit(store ticket.Store, checker spicedb.PermissionChecker, auditLogger audit.Logger) http.Handler {
 	svc := ticket.NewService(store, nil, nil, nil, nil, nil)
-	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{}, nil, auditLogger, nil)
+	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{}, nil, auditLogger, nil, nil)
 
 	r := chi.NewRouter()
 	r.Get("/tickets", h.List)

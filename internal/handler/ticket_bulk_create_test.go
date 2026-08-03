@@ -59,7 +59,7 @@ func TestBulkCreate_Success_InheritsParentAndPartialFailure(t *testing.T) {
 	store := &bulkCreateStore{newMemStore(parent)}
 	checker := &manageChecker{worldChecker: &worldChecker{}, allow: map[uuid.UUID]bool{parent.ID: true}}
 	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
-	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil, nil)
 
 	body, _ := json.Marshal(map[string]any{
 		"parent_id": parent.ID.String(),
@@ -133,7 +133,7 @@ func TestBulkCreate_ExceedsMaxItems_400(t *testing.T) {
 	store := &bulkCreateStore{newMemStore(parent)}
 	checker := &manageChecker{worldChecker: &worldChecker{}, allow: map[uuid.UUID]bool{parent.ID: true}}
 	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
-	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil, nil)
 
 	items := make([]map[string]any, 51)
 	for i := range items {
@@ -161,7 +161,7 @@ func TestBulkCreate_ManageDenied_403(t *testing.T) {
 	store := &bulkCreateStore{newMemStore(parent)}
 	checker := &manageChecker{worldChecker: &worldChecker{}, allow: map[uuid.UUID]bool{}} // deny everything
 	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
-	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil, nil)
 
 	body, _ := json.Marshal(map[string]any{
 		"parent_id": parent.ID.String(),
@@ -183,7 +183,7 @@ func TestBulkCreate_ParentNotFound_404(t *testing.T) {
 	store := &bulkCreateStore{newMemStore()}
 	checker := &manageChecker{worldChecker: &worldChecker{}, allow: map[uuid.UUID]bool{}}
 	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
-	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, checker, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil, nil)
 
 	body, _ := json.Marshal(map[string]any{
 		"parent_id": uuid.New().String(),

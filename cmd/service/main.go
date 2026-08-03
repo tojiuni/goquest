@@ -22,6 +22,7 @@ import (
 	"github.com/tojiuni/goquest/internal/audit"
 	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/brainclient"
+	"github.com/tojiuni/goquest/internal/cogitoclient"
 	"github.com/tojiuni/goquest/internal/comment"
 	"github.com/tojiuni/goquest/internal/config"
 	"github.com/tojiuni/goquest/internal/contract"
@@ -172,7 +173,22 @@ func main() {
 	// can record audit entries. The audit handler (auditH) reuses the same logger
 	// further down.
 	auditLogger := audit.New(pool)
-	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter, projectResolver, tagResolver, auditLogger, vcsSvc)
+
+	// cogito-backed subtask generation (goq-cogito-subtasks-from-text) —
+	// POST /tickets/{parent_id}/subtasks/from-text. Non-fatal on dial failure,
+	// same pattern as brainClient below: log and leave the endpoint 502'ing
+	// until cogito is reachable, rather than failing goquest-service startup.
+	var cogitoClient handler.CogitoSplitter
+	if cfg.CogitoGRPCAddr != "" {
+		cc, err := cogitoclient.New(cfg.CogitoGRPCAddr)
+		if err != nil {
+			log.Printf("warn: cogitoclient.New: %v (subtasks/from-text will be unavailable)", err)
+		} else {
+			cogitoClient = cc
+		}
+	}
+
+	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter, projectResolver, tagResolver, auditLogger, vcsSvc, cogitoClient)
 	requireTicketView := auth.RequireTicketView(svc, sdbChecker)
 	requireTicketManage := auth.RequireTicketManage(svc, sdbChecker)
 	idempotent := idempotency.Middleware(idempotency.NewRedisStore(rdb))
@@ -357,6 +373,12 @@ func main() {
 			// the handler (goq-cogito-bulk-create-api) — items are not-yet-existing
 			// resources, so this also stays out of the /tickets/{id} subrouter.
 			r.Post("/tickets/bulk-create", ticketH.BulkCreate)
+			// Subtasks-from-text: same reasoning as bulk-create above — manage
+			// authz is enforced once against the {id} parent inside the handler
+			// (goq-cogito-subtasks-from-text), and the handler itself calls
+			// Service.BulkCreate for the created children (also not-yet-existing
+			// resources), so this stays out of the /tickets/{id} subrouter too.
+			r.Post("/tickets/{id}/subtasks/from-text", ticketH.SubtasksFromText)
 			r.Get("/tickets/doc/{doc_id}", ticketH.GetDoc)
 			r.Get("/tickets/by-name/{title_name}", ticketH.GetByName)
 			r.Route("/tickets/{id}", func(r chi.Router) {

@@ -57,7 +57,7 @@ func (s *updateStore) Update(_ context.Context, id uuid.UUID, req ticket.UpdateT
 // updateRouter mirrors the cmd/service/main.go /tickets/{id} PATCH wiring
 // closely enough to exercise the real error-mapping path in TicketHandler.Update.
 func updateRouter(svc *ticket.Service) http.Handler {
-	h := handler.NewTicketHandler(svc, &worldChecker{}, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil)
+	h := handler.NewTicketHandler(svc, &worldChecker{}, &spicedb.NoopWriter{}, nilResolver{}, nil, nil, nil, nil)
 	r := chi.NewRouter()
 	r.Route("/tickets/{id}", func(r chi.Router) {
 		r.Use(auth.RequireTicketView(svc, &worldChecker{}))

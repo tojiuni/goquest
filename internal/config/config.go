@@ -67,6 +67,16 @@ type Config struct {
 	BrainGRPCAddr string
 	BrainTenant   string
 
+	// cogito gRPC (goq-cogito-subtasks-from-text) — SplitContent RPC backing
+	// POST /tickets/{parent_id}/subtasks/from-text. Empty CogitoGRPCAddr
+	// disables the endpoint (always 502s). No in-cluster default is set here
+	// (mirrors BrainGRPCAddr) since this codebase has no prior direct
+	// goquest->cogito wiring to confirm one from; whoami's existing client
+	// (neunexus deploy/whoami/configmap.yaml COGITO_GRPC_ENDPOINT) points at
+	// "cogito-svc.cogito-svc.svc:50051" — the likely real value, but flagged
+	// here rather than defaulted since it's inferred, not goquest-confirmed.
+	CogitoGRPCAddr string
+
 	// GitHub App (goq-refdoc-goquest-brain-client) — server-side raw content
 	// fetch from the private tojiuni/geneso repo for /docs/content. Empty
 	// GitHubAppID disables /docs/content (always 404s).
@@ -127,6 +137,8 @@ func Load() *Config {
 
 		BrainGRPCAddr: os.Getenv("BRAIN_GRPC_ADDR"),
 		BrainTenant:   envOrDefault("BRAIN_TENANT", "toji"),
+
+		CogitoGRPCAddr: os.Getenv("COGITO_GRPC_ADDR"),
 
 		GitHubAppID:             os.Getenv("GITHUB_APP_ID"),
 		GitHubAppInstallationID: os.Getenv("GITHUB_APP_INSTALLATION_ID"),
