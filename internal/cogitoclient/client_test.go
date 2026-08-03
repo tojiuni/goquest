@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/tojiuni/goquest/internal/cogitopb"
@@ -20,17 +21,23 @@ const bufSize = 1024 * 1024
 // what the client actually sent.
 type fakeCogitoService struct {
 	cogitopb.UnimplementedCogitoServiceServer
-	lastReq  *cogitopb.SplitContentRequest
-	response *cogitopb.SplitContentResponse
-	err      error
+	lastReq    *cogitopb.SplitContentRequest
+	lastAuthMD string
+	response   *cogitopb.SplitContentResponse
+	err        error
 
 	lastDecomposeReq  *cogitopb.DecomposeQuestionRequest
 	decomposeResponse *cogitopb.DecomposeQuestionResponse
 	decomposeErr      error
 }
 
-func (f *fakeCogitoService) SplitContent(_ context.Context, req *cogitopb.SplitContentRequest) (*cogitopb.SplitContentResponse, error) {
+func (f *fakeCogitoService) SplitContent(ctx context.Context, req *cogitopb.SplitContentRequest) (*cogitopb.SplitContentResponse, error) {
 	f.lastReq = req
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if vals := md.Get("authorization"); len(vals) > 0 {
+			f.lastAuthMD = vals[0]
+		}
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -59,8 +66,15 @@ func startFakeCogito(t *testing.T, svc *fakeCogitoService) func(context.Context,
 
 // newTestClient builds a Client whose conn dials the given bufconn dialer
 // instead of a real address — bypasses New()'s real-address dial so tests
-// don't need a live cogito.
+// don't need a live cogito. bearerToken is empty by default (existing tests'
+// fake server doesn't check auth); use newTestClientWithToken for the
+// auth-header test below.
 func newTestClient(t *testing.T, dialer func(context.Context, string) (net.Conn, error)) *Client {
+	t.Helper()
+	return newTestClientWithToken(t, dialer, "")
+}
+
+func newTestClientWithToken(t *testing.T, dialer func(context.Context, string) (net.Conn, error), bearerToken string) *Client {
 	t.Helper()
 	conn, err := grpc.NewClient("passthrough:///bufnet",
 		grpc.WithContextDialer(dialer),
@@ -68,7 +82,7 @@ func newTestClient(t *testing.T, dialer func(context.Context, string) (net.Conn,
 	)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = conn.Close() })
-	return &Client{conn: conn, cogito: cogitopb.NewCogitoServiceClient(conn)}
+	return &Client{conn: conn, cogito: cogitopb.NewCogitoServiceClient(conn), bearerToken: bearerToken}
 }
 
 func TestSplitContent_MapsResponseIncludingNestedSubSections(t *testing.T) {
@@ -143,6 +157,16 @@ func TestSplitContent_CogitoError_Propagates(t *testing.T) {
 
 	_, _, err := c.SplitContent(context.Background(), "text", "")
 	require.Error(t, err)
+}
+
+func TestSplitContent_AttachesBearerTokenAsAuthMetadata(t *testing.T) {
+	svc := &fakeCogitoService{response: &cogitopb.SplitContentResponse{}}
+	dialer := startFakeCogito(t, svc)
+	c := newTestClientWithToken(t, dialer, "shared-secret")
+
+	_, _, err := c.SplitContent(context.Background(), "text", "")
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer shared-secret", svc.lastAuthMD)
 }
 
 func TestDecomposeQuestion_SubQuestionsMode_ReturnsSubQuestionsOnly(t *testing.T) {

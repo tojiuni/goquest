@@ -181,7 +181,7 @@ func main() {
 	// reachable, rather than failing goquest-service startup.
 	var cogitoClient handler.CogitoSplitter
 	if cfg.CogitoGRPCAddr != "" {
-		cc, err := cogitoclient.New(cfg.CogitoGRPCAddr)
+		cc, err := cogitoclient.New(cfg.CogitoGRPCAddr, cfg.CogitoBearerToken)
 		if err != nil {
 			log.Printf("warn: cogitoclient.New: %v (subtasks/from-text, subtasks/from-chat will be unavailable)", err)
 		} else {
