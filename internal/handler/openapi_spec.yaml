@@ -49,6 +49,18 @@ components:
         priority: { type: string }
         domain: { type: string }
         project_id: { type: string, format: uuid }
+    Comment:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        ticket_id: { type: string, format: uuid }
+        author_id: { type: string }
+        author_kind: { type: string, enum: [staff, agent, customer, system] }
+        body: { type: string }
+        is_internal: { type: boolean }
+        is_draft: { type: boolean }
+        gardener_score: { type: number, nullable: true }
+        created_at: { type: string, format: date-time }
 security:
   - ApiKeyAuth: []
 paths:
@@ -332,3 +344,25 @@ paths:
         '200': { description: ok }
         '400': { description: unknown target project or cross-workspace move }
         '409': { description: title_name already exists in the target project }
+  /tickets/{id}/comments:
+    get:
+      summary: List comments on a ticket
+      description: >
+        Returns all comments on the ticket, oldest first. Internal-only
+        comments are included only when the caller can see internal comments
+        (staff API keys); customer-scoped callers only ever see
+        is_internal=false comments.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  comments:
+                    type: array
+                    items: { $ref: '#/components/schemas/Comment' }
+        '400': { description: invalid ticket id }

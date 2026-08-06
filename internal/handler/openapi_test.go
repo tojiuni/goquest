@@ -30,6 +30,9 @@ func TestOpenAPI_JSONServes(t *testing.T) {
 	if !ok || paths["/tickets/by-name/{title_name}"] == nil {
 		t.Fatalf("spec missing the by-name path; paths=%v", doc["paths"])
 	}
+	if paths["/tickets/{id}/comments"] == nil {
+		t.Fatalf("spec missing the comments path; paths=%v", doc["paths"])
+	}
 }
 
 func TestOpenAPI_YAMLServes(t *testing.T) {
