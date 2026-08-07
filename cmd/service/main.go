@@ -410,8 +410,8 @@ func main() {
 
 				// ── Ticket relations (goq-ticket-relations) ───────
 				r.Get("/relations", ticketH.ListRelations)
-				r.Post("/relations", ticketH.AddRelation)
-				r.Delete("/relations/{relation_id}", ticketH.RemoveRelation)
+				r.With(requireTicketManage).Post("/relations", ticketH.AddRelation)
+				r.With(requireTicketManage).Delete("/relations/{relation_id}", ticketH.RemoveRelation)
 
 				// brain-backed ticket reference docs (goq-refdoc-goquest-brain-client)
 				r.Get("/docs", refDocsH.TicketDocs)

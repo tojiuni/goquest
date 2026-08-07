@@ -141,6 +141,9 @@ func (m *mockStore) RemoveRelation(_ context.Context, _ uuid.UUID) error { retur
 func (m *mockStore) ListRelationsForTicket(_ context.Context, _ uuid.UUID) ([]ticket.TicketRelation, error) {
 	return nil, nil
 }
+func (m *mockStore) ListRelationsWithSummaryForTicket(_ context.Context, _ uuid.UUID) ([]ticket.RelationWithSummary, error) {
+	return nil, nil
+}
 func (m *mockStore) ListAllRelations(_ context.Context, _, _ int) ([]ticket.TicketRelation, int, error) {
 	return nil, 0, nil
 }

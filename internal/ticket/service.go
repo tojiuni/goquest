@@ -797,6 +797,13 @@ func (s *Service) ListRelations(ctx context.Context, ticketID uuid.UUID) ([]Tick
 	return s.store.ListRelationsForTicket(ctx, ticketID)
 }
 
+// ListRelationsWithSummary is like ListRelations but each row also carries a
+// summary (title_name/title/status/visibility) of whichever ticket is NOT
+// ticketID, for the GET .../relations handler's response + visibility filter.
+func (s *Service) ListRelationsWithSummary(ctx context.Context, ticketID uuid.UUID) ([]RelationWithSummary, error) {
+	return s.store.ListRelationsWithSummaryForTicket(ctx, ticketID)
+}
+
 // ListAllRelations is the brain-importer bulk pull path (paginated).
 func (s *Service) ListAllRelations(ctx context.Context, limit, offset int) ([]TicketRelation, int, error) {
 	return s.store.ListAllRelations(ctx, limit, offset)

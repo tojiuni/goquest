@@ -1184,6 +1184,37 @@ func (s *pgStore) ListRelationsForTicket(ctx context.Context, ticketID uuid.UUID
 	return out, rows.Err()
 }
 
+func (s *pgStore) ListRelationsWithSummaryForTicket(ctx context.Context, ticketID uuid.UUID) ([]RelationWithSummary, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT r.id, r.from_ticket_id, r.to_ticket_id, r.relation_type, r.created_at, r.created_by,
+		       CASE WHEN r.from_ticket_id = $1 THEN r.to_ticket_id ELSE r.from_ticket_id END AS other_id,
+		       t.title_name, t.title, t.status, t.visibility
+		  FROM ticket_relations r
+		  JOIN tickets t ON t.id = (CASE WHEN r.from_ticket_id = $1 THEN r.to_ticket_id ELSE r.from_ticket_id END)
+		 WHERE r.from_ticket_id = $1 OR r.to_ticket_id = $1
+		 ORDER BY r.created_at ASC`, ticketID)
+	if err != nil {
+		return nil, fmt.Errorf("list relations with summary: %w", err)
+	}
+	defer rows.Close()
+	var out []RelationWithSummary
+	for rows.Next() {
+		var rs RelationWithSummary
+		var titleName *string
+		if err := rows.Scan(
+			&rs.ID, &rs.FromTicketID, &rs.ToTicketID, &rs.RelationType, &rs.CreatedAt, &rs.CreatedBy,
+			&rs.OtherTicketID, &titleName, &rs.OtherTicketTitle, &rs.OtherTicketStatus, &rs.OtherTicketVisibility,
+		); err != nil {
+			return nil, fmt.Errorf("scan relation with summary: %w", err)
+		}
+		if titleName != nil {
+			rs.OtherTicketTitleName = *titleName
+		}
+		out = append(out, rs)
+	}
+	return out, rows.Err()
+}
+
 func (s *pgStore) ListAllRelations(ctx context.Context, limit, offset int) ([]TicketRelation, int, error) {
 	var total int
 	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM ticket_relations`).Scan(&total); err != nil {

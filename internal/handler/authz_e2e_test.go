@@ -318,6 +318,34 @@ func (s *memStore) ListRelationsForTicket(_ context.Context, ticketID uuid.UUID)
 	return out, nil
 }
 
+func (s *memStore) ListRelationsWithSummaryForTicket(_ context.Context, ticketID uuid.UUID) ([]ticket.RelationWithSummary, error) {
+	var out []ticket.RelationWithSummary
+	for _, r := range s.relations {
+		var otherID uuid.UUID
+		switch ticketID {
+		case r.FromTicketID:
+			otherID = r.ToTicketID
+		case r.ToTicketID:
+			otherID = r.FromTicketID
+		default:
+			continue
+		}
+		other, ok := s.byID[otherID]
+		if !ok {
+			continue
+		}
+		out = append(out, ticket.RelationWithSummary{
+			TicketRelation:        r,
+			OtherTicketID:         other.ID,
+			OtherTicketTitleName:  other.TitleName,
+			OtherTicketTitle:      other.Title,
+			OtherTicketStatus:     string(other.Status),
+			OtherTicketVisibility: string(other.Visibility),
+		})
+	}
+	return out, nil
+}
+
 func (s *memStore) ListAllRelations(_ context.Context, limit, offset int) ([]ticket.TicketRelation, int, error) {
 	var all []ticket.TicketRelation
 	for _, r := range s.relations {

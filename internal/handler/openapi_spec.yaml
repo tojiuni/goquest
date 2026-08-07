@@ -61,6 +61,39 @@ components:
         is_draft: { type: boolean }
         gardener_score: { type: number, nullable: true }
         created_at: { type: string, format: date-time }
+    TicketRelation:
+      type: object
+      description: A typed directed edge between two tickets (row shape returned by POST/DELETE).
+      properties:
+        id: { type: string, format: uuid }
+        from_ticket_id: { type: string, format: uuid }
+        to_ticket_id: { type: string, format: uuid }
+        relation_type: { type: string, enum: [blocks, depends_on, duplicates] }
+        created_at: { type: string, format: date-time }
+        created_by: { type: string }
+    TicketRelationView:
+      type: object
+      description: >
+        The GET .../relations row shape: direction/label are computed
+        server-side relative to the queried ticket, and the other-side
+        ticket's summary is inlined so clients don't need a second
+        round-trip per row. Rows whose other-side ticket the caller cannot
+        view are omitted entirely (not returned as an error).
+      properties:
+        id: { type: string, format: uuid }
+        relation_type: { type: string, enum: [blocks, depends_on, duplicates] }
+        direction: { type: string, enum: [outgoing, incoming] }
+        label:
+          type: string
+          description: >
+            Human-readable label relative to the queried ticket, e.g.
+            outgoing blocks="Blocks"/incoming blocks="Blocked by".
+        other_ticket_id: { type: string, format: uuid }
+        other_ticket_title_name: { type: string }
+        other_ticket_title: { type: string }
+        other_ticket_status: { type: string }
+        created_at: { type: string, format: date-time }
+        created_by: { type: string }
 security:
   - ApiKeyAuth: []
 paths:
@@ -366,3 +399,102 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/Comment' }
         '400': { description: invalid ticket id }
+  /tickets/{id}/relations:
+    get:
+      summary: List a ticket's relations (both directions), with other-side ticket summaries
+      description: >
+        Returns every relation where {id} is either side, each carrying a
+        server-computed direction ("outgoing"/"incoming") and label plus a
+        summary of the other-side ticket. Rows whose other-side ticket the
+        caller cannot view are silently omitted (a visibility filter, not a
+        403) so the response never confirms a relation exists to a
+        restricted ticket the caller can't see.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  relations:
+                    type: array
+                    items: { $ref: '#/components/schemas/TicketRelationView' }
+        '404': { description: ticket not found or not viewable }
+    post:
+      summary: Add a typed relation from {id} to another ticket (requires manage on {id})
+      description: >
+        Idempotent: replaying an existing (from, to, relation_type) returns
+        200 with the existing row and created=false. The target
+        (to_ticket_id) must exist AND be viewable by the caller — "doesn't
+        exist" and "exists but not viewable" both return 404, to avoid
+        creating an existence oracle for restricted tickets.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [relation_type, to_ticket_id]
+              properties:
+                relation_type: { type: string, enum: [blocks, depends_on, duplicates] }
+                to_ticket_id: { type: string, format: uuid }
+      responses:
+        '200':
+          description: created or idempotently replayed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  relation: { $ref: '#/components/schemas/TicketRelation' }
+                  created: { type: boolean }
+        '400': { description: invalid relation_type, self-reference, or invalid body }
+        '403': { description: caller lacks manage permission on id }
+        '404': { description: to_ticket_id not found or not viewable by the caller }
+  /tickets/{id}/relations/{relation_id}:
+    delete:
+      summary: Remove a relation (requires manage on {id})
+      description: >
+        relation_id must belong to {id} (either side) — deleting a relation
+        id that exists but is on an unrelated ticket pair returns 404, the
+        same as a relation id that doesn't exist at all, so the caller can't
+        distinguish the two cases.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: relation_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: removed (idempotent for relations that belong to this ticket) }
+        '400': { description: invalid relation_id }
+        '403': { description: caller lacks manage permission on id }
+        '404': { description: relation_id not found or not associated with id }
+  /ticket-relations:
+    get:
+      summary: Bulk, paginated dump of all relations (service-to-service only)
+      description: >
+        Unfiltered by per-ticket SpiceDB visibility — intended for the brain
+        importer's batch pull, same trust boundary as other service-to-
+        service bulk reads. Requires X-API-Key authentication; JWT/session
+        callers get 403.
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 100, maximum: 1000 }, description: capped at 1000 }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  relations:
+                    type: array
+                    items: { $ref: '#/components/schemas/TicketRelation' }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+        '403': { description: caller did not authenticate via X-API-Key }

@@ -51,5 +51,11 @@ type Store interface {
 	AddRelation(ctx context.Context, fromID, toID uuid.UUID, relationType, createdBy string) (TicketRelation, bool, error)
 	RemoveRelation(ctx context.Context, relationID uuid.UUID) error
 	ListRelationsForTicket(ctx context.Context, ticketID uuid.UUID) ([]TicketRelation, error)
+	// ListRelationsWithSummaryForTicket is like ListRelationsForTicket but joins
+	// in a summary (title_name/title/status/visibility) of whichever ticket is
+	// NOT ticketID, so GET .../relations can render without a second
+	// round-trip per row. The handler uses OtherTicketVisibility to filter out
+	// relations the caller can't view the other side of.
+	ListRelationsWithSummaryForTicket(ctx context.Context, ticketID uuid.UUID) ([]RelationWithSummary, error)
 	ListAllRelations(ctx context.Context, limit, offset int) ([]TicketRelation, int, error)
 }

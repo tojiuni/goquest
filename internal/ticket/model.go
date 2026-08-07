@@ -417,3 +417,15 @@ var (
 )
 
 var ValidRelationTypes = map[string]bool{"blocks": true, "depends_on": true, "duplicates": true}
+
+// RelationWithSummary is one relation plus a summary of whichever ticket is
+// NOT the queried ticket ("the other side"), for GET .../relations responses
+// that need to render without a second round-trip per row.
+type RelationWithSummary struct {
+	TicketRelation
+	OtherTicketID         uuid.UUID `json:"other_ticket_id"`
+	OtherTicketTitleName  string    `json:"other_ticket_title_name,omitempty"`
+	OtherTicketTitle      string    `json:"other_ticket_title"`
+	OtherTicketStatus     string    `json:"other_ticket_status"`
+	OtherTicketVisibility string    `json:"-"` // internal use only for the handler's visibility filter; never serialized
+}
