@@ -408,6 +408,11 @@ func main() {
 				r.Delete("/refs/{l1_id}", ticketH.RemoveRef)
 				r.Patch("/refs/reorder", ticketH.ReorderRefs)
 
+				// ── Ticket relations (goq-ticket-relations) ───────
+				r.Get("/relations", ticketH.ListRelations)
+				r.Post("/relations", ticketH.AddRelation)
+				r.Delete("/relations/{relation_id}", ticketH.RemoveRelation)
+
 				// brain-backed ticket reference docs (goq-refdoc-goquest-brain-client)
 				r.Get("/docs", refDocsH.TicketDocs)
 
@@ -423,6 +428,9 @@ func main() {
 			// Top-level (no /tickets/{id}/) and gated only by auth — the handler applies
 			// the per-user SpiceDB visibility filter internally.
 			r.Get("/refs", ticketH.ReverseLookupRefs)
+
+			// Bulk relation dump for the brain importer.
+			r.Get("/ticket-relations", ticketH.ListAllRelations)
 
 			// ── XP Levels ─────────────────────────────────────────
 			r.Get("/xp/levels", xpH.ListLevels)

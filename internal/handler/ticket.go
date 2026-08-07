@@ -961,6 +961,120 @@ func (h *TicketHandler) RemoveRef(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ListRelations handles GET /api/v1/tickets/{id}/relations. Returns every
+// relation where this ticket is either side, unfiltered by direction — the
+// client derives direction from from_ticket_id/to_ticket_id vs the path id.
+func (h *TicketHandler) ListRelations(w http.ResponseWriter, r *http.Request) {
+	tk := auth.TicketFrom(r)
+	if tk == nil {
+		writeError(w, http.StatusInternalServerError, "ticket context missing (RequireTicketView not applied)")
+		return
+	}
+	rels, err := h.svc.ListRelations(r.Context(), tk.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list relations: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"relations": rels})
+}
+
+// AddRelation handles POST /api/v1/tickets/{id}/relations.
+// Body: {"relation_type": "blocks", "to_ticket_id": "<uuid>"}.
+// Idempotent: replaying an existing (from, to, type) returns 200 with the
+// existing row, not an error.
+func (h *TicketHandler) AddRelation(w http.ResponseWriter, r *http.Request) {
+	tk := auth.TicketFrom(r)
+	if tk == nil {
+		writeError(w, http.StatusInternalServerError, "ticket context missing (RequireTicketView not applied)")
+		return
+	}
+	var body struct {
+		RelationType string `json:"relation_type"`
+		ToTicketID   string `json:"to_ticket_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	toID, err := uuid.Parse(body.ToTicketID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid to_ticket_id")
+		return
+	}
+	actor := auth.RequesterID(r)
+	rel, created, err := h.svc.AddRelation(r.Context(), tk.ID, toID, body.RelationType, actor)
+	if err != nil {
+		switch {
+		case errors.Is(err, ticket.ErrRelationTypeInvalid):
+			writeError(w, http.StatusBadRequest, "relation_type must be blocks, depends_on, or duplicates")
+		case errors.Is(err, ticket.ErrRelationSelfReference):
+			writeError(w, http.StatusBadRequest, "from_ticket_id and to_ticket_id must differ")
+		case errors.Is(err, ticket.ErrNotFound):
+			writeError(w, http.StatusNotFound, "to_ticket_id not found")
+		default:
+			writeError(w, http.StatusInternalServerError, "add relation: "+err.Error())
+		}
+		return
+	}
+	if created && h.audit != nil {
+		h.audit.Record(r.Context(), actor, "relation.add", "ticket", tk.ID.String(), map[string]any{
+			"to_ticket_id":  toID.String(),
+			"relation_type": body.RelationType,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"relation": rel, "created": created})
+}
+
+// RemoveRelation handles DELETE /api/v1/tickets/{id}/relations/{relation_id}.
+// Idempotent: removing an already-absent id is also 204.
+func (h *TicketHandler) RemoveRelation(w http.ResponseWriter, r *http.Request) {
+	tk := auth.TicketFrom(r)
+	if tk == nil {
+		writeError(w, http.StatusInternalServerError, "ticket context missing (RequireTicketView not applied)")
+		return
+	}
+	relID, err := uuid.Parse(chi.URLParam(r, "relation_id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid relation_id")
+		return
+	}
+	if err := h.svc.RemoveRelation(r.Context(), relID); err != nil {
+		writeError(w, http.StatusInternalServerError, "remove relation: "+err.Error())
+		return
+	}
+	if h.audit != nil {
+		h.audit.Record(r.Context(), auth.RequesterID(r), "relation.remove", "ticket", tk.ID.String(), map[string]any{
+			"relation_id": relID.String(),
+		})
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListAllRelations handles GET /api/v1/ticket-relations?limit=&offset=.
+// Bulk, unfiltered dump for the brain importer's batch pull — no per-ticket
+// SpiceDB visibility filtering (same trust boundary as other service-to-
+// service bulk reads using the API key).
+func (h *TicketHandler) ListAllRelations(w http.ResponseWriter, r *http.Request) {
+	limit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			limit = n
+		}
+	}
+	offset := 0
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			offset = n
+		}
+	}
+	rels, total, err := h.svc.ListAllRelations(r.Context(), limit, offset)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list all relations: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"relations": rels, "total": total, "limit": limit, "offset": offset})
+}
+
 // ReorderRefs handles PATCH /api/v1/tickets/{id}/refs/reorder.
 // Body: {"ordered_l1_ids": [...]}. Returns the new ordered slice on success.
 func (h *TicketHandler) ReorderRefs(w http.ResponseWriter, r *http.Request) {

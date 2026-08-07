@@ -40,15 +40,17 @@ import (
 // ── in-memory store (faithful to the production List visibility predicate) ──────
 
 type memStore struct {
-	byID  map[uuid.UUID]*ticket.Ticket
-	order []uuid.UUID // deterministic List order
-	refs  map[uuid.UUID][]ticket.TicketRef
+	byID      map[uuid.UUID]*ticket.Ticket
+	order     []uuid.UUID // deterministic List order
+	refs      map[uuid.UUID][]ticket.TicketRef
+	relations map[uuid.UUID]ticket.TicketRelation // keyed by relation id
 }
 
 func newMemStore(tickets ...*ticket.Ticket) *memStore {
 	s := &memStore{
-		byID: map[uuid.UUID]*ticket.Ticket{},
-		refs: map[uuid.UUID][]ticket.TicketRef{},
+		byID:      map[uuid.UUID]*ticket.Ticket{},
+		refs:      map[uuid.UUID][]ticket.TicketRef{},
+		relations: map[uuid.UUID]ticket.TicketRelation{},
 	}
 	for _, t := range tickets {
 		s.byID[t.ID] = t
@@ -277,15 +279,59 @@ func (s *memStore) ListRefIDsForTickets(_ context.Context, ticketIDs []uuid.UUID
 	return out, nil
 }
 
-func (s *memStore) AddRelation(_ context.Context, _, _ uuid.UUID, _, _ string) (ticket.TicketRelation, bool, error) {
-	return ticket.TicketRelation{}, false, nil
+func (s *memStore) AddRelation(_ context.Context, fromID, toID uuid.UUID, relationType, createdBy string) (ticket.TicketRelation, bool, error) {
+	if fromID == toID {
+		return ticket.TicketRelation{}, false, ticket.ErrRelationSelfReference
+	}
+	if _, ok := s.byID[toID]; !ok {
+		return ticket.TicketRelation{}, false, ticket.ErrNotFound
+	}
+	for _, r := range s.relations {
+		if r.FromTicketID == fromID && r.ToTicketID == toID && r.RelationType == relationType {
+			return r, false, nil
+		}
+	}
+	r := ticket.TicketRelation{
+		ID:           uuid.New(),
+		FromTicketID: fromID,
+		ToTicketID:   toID,
+		RelationType: relationType,
+		CreatedAt:    time.Now().UTC(),
+		CreatedBy:    createdBy,
+	}
+	s.relations[r.ID] = r
+	return r, true, nil
 }
-func (s *memStore) RemoveRelation(_ context.Context, _ uuid.UUID) error { return nil }
-func (s *memStore) ListRelationsForTicket(_ context.Context, _ uuid.UUID) ([]ticket.TicketRelation, error) {
-	return nil, nil
+
+func (s *memStore) RemoveRelation(_ context.Context, relationID uuid.UUID) error {
+	delete(s.relations, relationID)
+	return nil
 }
-func (s *memStore) ListAllRelations(_ context.Context, _, _ int) ([]ticket.TicketRelation, int, error) {
-	return nil, 0, nil
+
+func (s *memStore) ListRelationsForTicket(_ context.Context, ticketID uuid.UUID) ([]ticket.TicketRelation, error) {
+	var out []ticket.TicketRelation
+	for _, r := range s.relations {
+		if r.FromTicketID == ticketID || r.ToTicketID == ticketID {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+func (s *memStore) ListAllRelations(_ context.Context, limit, offset int) ([]ticket.TicketRelation, int, error) {
+	var all []ticket.TicketRelation
+	for _, r := range s.relations {
+		all = append(all, r)
+	}
+	total := len(all)
+	if offset >= total {
+		return nil, total, nil
+	}
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return all[offset:end], total, nil
 }
 
 // ── stub checker simulating SpiceDB enforce ─────────────────────────────────────
@@ -373,6 +419,9 @@ func e2eRouterWithAudit(store ticket.Store, checker spicedb.PermissionChecker, a
 		r.Post("/refs", h.AddRefs)
 		r.Patch("/refs/reorder", h.ReorderRefs)
 		r.Delete("/refs/{l1_id}", h.RemoveRef)
+		r.Get("/relations", h.ListRelations)
+		r.Post("/relations", h.AddRelation)
+		r.Delete("/relations/{relation_id}", h.RemoveRelation)
 	})
 	return r
 }
