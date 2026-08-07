@@ -1116,34 +1116,43 @@ func (s *pgStore) AddRelation(ctx context.Context, fromID, toID uuid.UUID, relat
 	if fromID == toID {
 		return TicketRelation{}, false, ErrRelationSelfReference
 	}
-	var existing TicketRelation
+
+	// Atomic insert-or-nothing: avoids the TOCTOU race of a separate
+	// check-then-insert, where two concurrent callers for the same
+	// (from, to, type) could both pass a SELECT-for-existing check and then
+	// have the second INSERT fail on the unique constraint instead of
+	// returning the row the first caller created.
+	var r TicketRelation
 	err := s.db.QueryRow(ctx, `
+		INSERT INTO ticket_relations (from_ticket_id, to_ticket_id, relation_type, created_by)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (from_ticket_id, to_ticket_id, relation_type) DO NOTHING
+		RETURNING id, from_ticket_id, to_ticket_id, relation_type, created_at, created_by`,
+		fromID, toID, relationType, createdBy,
+	).Scan(&r.ID, &r.FromTicketID, &r.ToTicketID, &r.RelationType, &r.CreatedAt, &r.CreatedBy)
+	if err == nil {
+		return r, true, nil
+	}
+	if isForeignKeyViolation(err) {
+		return TicketRelation{}, false, ErrNotFound
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return TicketRelation{}, false, fmt.Errorf("insert relation: %w", err)
+	}
+
+	// ON CONFLICT DO NOTHING fired (zero rows returned): the row already
+	// existed. Fetch and return it as a replay, not an error.
+	var existing TicketRelation
+	err = s.db.QueryRow(ctx, `
 		SELECT id, from_ticket_id, to_ticket_id, relation_type, created_at, created_by
 		  FROM ticket_relations
 		 WHERE from_ticket_id=$1 AND to_ticket_id=$2 AND relation_type=$3`,
 		fromID, toID, relationType,
 	).Scan(&existing.ID, &existing.FromTicketID, &existing.ToTicketID, &existing.RelationType, &existing.CreatedAt, &existing.CreatedBy)
-	if err == nil {
-		return existing, false, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return TicketRelation{}, false, fmt.Errorf("check existing relation: %w", err)
-	}
-
-	var r TicketRelation
-	err = s.db.QueryRow(ctx, `
-		INSERT INTO ticket_relations (from_ticket_id, to_ticket_id, relation_type, created_by)
-		VALUES ($1, $2, $3, $4)
-		RETURNING id, from_ticket_id, to_ticket_id, relation_type, created_at, created_by`,
-		fromID, toID, relationType, createdBy,
-	).Scan(&r.ID, &r.FromTicketID, &r.ToTicketID, &r.RelationType, &r.CreatedAt, &r.CreatedBy)
 	if err != nil {
-		if isForeignKeyViolation(err) {
-			return TicketRelation{}, false, ErrNotFound
-		}
-		return TicketRelation{}, false, fmt.Errorf("insert relation: %w", err)
+		return TicketRelation{}, false, fmt.Errorf("fetch existing relation after conflict: %w", err)
 	}
-	return r, true, nil
+	return existing, false, nil
 }
 
 func (s *pgStore) RemoveRelation(ctx context.Context, relationID uuid.UUID) error {
