@@ -768,3 +768,36 @@ func (s *Service) ListTicketsByRef(ctx context.Context, gopediaL1ID string, visi
 	}
 	return out, nil
 }
+
+// --- Relations ---
+
+// AddRelation validates relation_type and self-reference before delegating
+// to the store. Idempotent: replaying the same (from, to, type) returns the
+// existing row with created=false rather than erroring.
+func (s *Service) AddRelation(ctx context.Context, fromTicketID, toTicketID uuid.UUID, relationType, createdBy string) (TicketRelation, bool, error) {
+	if !ValidRelationTypes[relationType] {
+		return TicketRelation{}, false, ErrRelationTypeInvalid
+	}
+	if fromTicketID == toTicketID {
+		return TicketRelation{}, false, ErrRelationSelfReference
+	}
+	return s.store.AddRelation(ctx, fromTicketID, toTicketID, relationType, createdBy)
+}
+
+// RemoveRelation is idempotent at the store layer — removing an
+// already-absent relation id is a no-op.
+func (s *Service) RemoveRelation(ctx context.Context, relationID uuid.UUID) error {
+	return s.store.RemoveRelation(ctx, relationID)
+}
+
+// ListRelations returns every relation where ticketID is either side
+// (from or to), unfiltered by direction — callers derive direction/label
+// from FromTicketID/ToTicketID vs ticketID themselves.
+func (s *Service) ListRelations(ctx context.Context, ticketID uuid.UUID) ([]TicketRelation, error) {
+	return s.store.ListRelationsForTicket(ctx, ticketID)
+}
+
+// ListAllRelations is the brain-importer bulk pull path (paginated).
+func (s *Service) ListAllRelations(ctx context.Context, limit, offset int) ([]TicketRelation, int, error) {
+	return s.store.ListAllRelations(ctx, limit, offset)
+}
