@@ -318,3 +318,55 @@ func TestCreateAndUpdate_StartAt(t *testing.T) {
 	require.NotNil(t, updated2.StartAt)
 	assert.True(t, updated2.StartAt.Equal(start))
 }
+
+// TestList_FilterByScheduled exercises the `scheduled=true` list filter
+// against the real store: it must include tickets with either start_at or
+// due_at (or both) set, and exclude tickets with neither set. Asserts
+// membership by ID rather than exact result-set size, since the shared test
+// DB may contain other rows from other tests.
+func TestList_FilterByScheduled(t *testing.T) {
+	ctx, store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	due := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
+
+	withStartOnly := &ticket.Ticket{
+		ID:           uuid.New(),
+		Title:        "scheduled: start_at only",
+		Type:         ticket.TypeTask,
+		Status:       ticket.StatusPending,
+		Priority:     ticket.PriorityNormal,
+		AssigneeType: ticket.AssigneeHuman,
+		RequesterID:  "test@example.com",
+		Visibility:   ticket.VisibilityProject,
+		StartAt:      &start,
+	}
+	require.NoError(t, store.Create(ctx, withStartOnly))
+
+	withDueOnly := &ticket.Ticket{
+		ID:           uuid.New(),
+		Title:        "scheduled: due_at only",
+		Type:         ticket.TypeTask,
+		Status:       ticket.StatusPending,
+		Priority:     ticket.PriorityNormal,
+		AssigneeType: ticket.AssigneeHuman,
+		RequesterID:  "test@example.com",
+		Visibility:   ticket.VisibilityProject,
+		DueAt:        &due,
+	}
+	require.NoError(t, store.Create(ctx, withDueOnly))
+
+	withNeither := createTicket(t, ctx, store, "not scheduled")
+
+	got, _, err := store.List(ctx, ticket.ListTicketsFilter{Scheduled: true})
+	require.NoError(t, err)
+
+	ids := map[uuid.UUID]bool{}
+	for _, tk := range got {
+		ids[tk.ID] = true
+	}
+	assert.True(t, ids[withStartOnly.ID], "ticket with only start_at set must be included")
+	assert.True(t, ids[withDueOnly.ID], "ticket with only due_at set must be included")
+	assert.False(t, ids[withNeither.ID], "ticket with neither start_at nor due_at set must be excluded")
+}
