@@ -309,8 +309,13 @@ type ListTicketsFilter struct {
 	WorkspaceID  *uuid.UUID
 	ParentID     *uuid.UUID
 	TopLevelOnly bool
-	TagIDs       []uuid.UUID
-	TitleName    *string
+	// Scheduled, when true, restricts results to tickets with due_at and/or
+	// start_at set — used by the roadmap viewer to separate grid-placed
+	// tickets from the unscheduled panel server-side instead of paginating
+	// the whole workspace client-side (goq-roadmap-backend-support).
+	Scheduled     bool
+	TagIDs        []uuid.UUID
+	TitleName     *string
 	// Query is a free-text search term matched (case-insensitive substring)
 	// against title, title_name, and description. Empty/nil → no text filter.
 	Query         *string

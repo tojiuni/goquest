@@ -263,6 +263,9 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 	if q.Get("top_level_only") == "true" {
 		f.TopLevelOnly = true
 	}
+	if q.Get("scheduled") == "true" {
+		f.Scheduled = true
+	}
 	if tn := q.Get("title_name"); tn != "" {
 		f.TitleName = &tn
 	}

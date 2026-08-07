@@ -483,6 +483,9 @@ func ticketWhere(f ListTicketsFilter) (string, []any, int) {
 	if f.TopLevelOnly {
 		where += " AND t.parent_id IS NULL"
 	}
+	if f.Scheduled {
+		where += " AND (t.due_at IS NOT NULL OR t.start_at IS NOT NULL)"
+	}
 	if f.TitleName != nil {
 		where += fmt.Sprintf(" AND t.title_name=$%d", i)
 		args = append(args, *f.TitleName)
