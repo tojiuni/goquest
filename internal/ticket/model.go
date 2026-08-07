@@ -134,6 +134,7 @@ type Ticket struct {
 	CompletionSpec CompletionSpec `json:"completion_spec,omitempty"`
 	RewardXP       int            `json:"reward_xp"`
 	DueAt          *time.Time     `json:"due_at,omitempty"`
+	StartAt        *time.Time     `json:"start_at,omitempty"`
 	CallbackURL    string         `json:"callback_url,omitempty"`
 	Tags           []Tag          `json:"tags,omitempty"`
 	Refs           []string       `json:"ref_ids,omitempty"`
@@ -189,6 +190,7 @@ type CreateTicketReq struct {
 	CompletionSpec CompletionSpec `json:"completion_spec,omitempty"`
 	RewardXP       int            `json:"reward_xp,omitempty"`
 	DueAt          *time.Time     `json:"due_at,omitempty"`
+	StartAt        *time.Time     `json:"start_at,omitempty"`
 	CallbackURL    string         `json:"callback_url,omitempty"`
 	TagIDs         []uuid.UUID    `json:"tag_ids,omitempty"`
 	TagNames       []string       `json:"tag_names,omitempty"`
@@ -265,6 +267,7 @@ type UpdateTicketReq struct {
 	CompletionSpec CompletionSpec  `json:"completion_spec,omitempty"`
 	RewardXP       *int            `json:"reward_xp,omitempty"`
 	DueAt          *time.Time      `json:"due_at,omitempty"`
+	StartAt        *time.Time      `json:"start_at,omitempty"`
 	CallbackURL    *string         `json:"callback_url,omitempty"`
 	TagIDs         []uuid.UUID     `json:"tag_ids,omitempty"`
 	// RefIDs replaces the ticket's full ref-doc set on Update.

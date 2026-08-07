@@ -263,3 +263,35 @@ func TestAllSubtasksTerminal_OnHoldChildBlocksParent(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, terminal, "an on_hold child must keep the parent from being considered all-terminal")
 }
+
+// TestCreateAndUpdate_StartAt exercises start_at end-to-end: nil on create by
+// default, settable on create, and independently updatable via PATCH without
+// disturbing due_at (goq-roadmap-backend-support, GQT-SPC-2026080703 §1).
+func TestCreateAndUpdate_StartAt(t *testing.T) {
+	ctx, store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	tk := createTicket(t, ctx, store, "start_at default nil")
+	if tk.StartAt != nil {
+		t.Fatalf("want nil StartAt by default, got %v", tk.StartAt)
+	}
+
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	due := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
+	updated, err := store.Update(ctx, tk.ID, ticket.UpdateTicketReq{
+		StartAt: &start,
+		DueAt:   &due,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, updated.StartAt)
+	assert.True(t, updated.StartAt.Equal(start))
+	require.NotNil(t, updated.DueAt)
+	assert.True(t, updated.DueAt.Equal(due))
+
+	// Updating only due_at must not clobber the previously set start_at.
+	due2 := due.Add(24 * time.Hour)
+	updated2, err := store.Update(ctx, tk.ID, ticket.UpdateTicketReq{DueAt: &due2})
+	require.NoError(t, err)
+	require.NotNil(t, updated2.StartAt)
+	assert.True(t, updated2.StartAt.Equal(start))
+}

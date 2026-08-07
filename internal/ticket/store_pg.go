@@ -78,17 +78,17 @@ func (s *pgStore) Create(ctx context.Context, t *Ticket) error {
 			assignee_type, assignee_id, requester_id, source_bot,
 			domain, agent_context, metadata,
 			project_id, parent_id, visibility, completion_mode,
-			completion_spec, reward_xp, due_at, callback_url,
+			completion_spec, reward_xp, due_at, start_at, callback_url,
 			created_at, updated_at, requester_org_id, assignee_org_id
 		) VALUES (
 			$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
-			$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27
+			$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28
 		)`,
 		t.ID, titleName, t.Title, t.Description, string(t.Type), string(t.Status), string(t.Priority), string(riskTier),
 		string(t.AssigneeType), t.AssigneeID, t.RequesterID, sourceBot,
 		domain, agentCtxJSON, metaJSON,
 		t.ProjectID, t.ParentID, string(visibility), string(mode),
-		specJSON, t.RewardXP, t.DueAt, callbackURL,
+		specJSON, t.RewardXP, t.DueAt, t.StartAt, callbackURL,
 		t.CreatedAt, t.UpdatedAt, t.RequesterOrgID, t.AssigneeOrgID,
 	)
 	if err != nil {
@@ -154,7 +154,7 @@ const ticketSelectSQL = `
 	       t.assignee_type, t.assignee_id, t.requester_id, t.source_bot,
 	       t.domain, t.agent_context, t.metadata,
 	       t.project_id, t.parent_id, t.visibility, t.completion_mode,
-	       t.completion_spec, t.reward_xp, t.due_at, t.callback_url,
+	       t.completion_spec, t.reward_xp, t.due_at, t.start_at, t.callback_url,
 	       t.created_at, t.updated_at, t.completed_at, t.cancellation_note,
 	       t.requester_org_id, t.assignee_org_id,
 	       COALESCE(
@@ -274,6 +274,10 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	if req.DueAt != nil {
 		newDueAt = req.DueAt
 	}
+	newStartAt := current.StartAt
+	if req.StartAt != nil {
+		newStartAt = req.StartAt
+	}
 	newCallbackURL := current.CallbackURL
 	if req.CallbackURL != nil {
 		newCallbackURL = *req.CallbackURL
@@ -364,17 +368,17 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 			status=$5, assignee_id=$6, assignee_type=$7, domain=$8,
 			agent_context=$9, metadata=$10,
 			visibility=$11, completion_mode=$12, completion_spec=$13,
-			reward_xp=$14, due_at=$15, callback_url=$16,
-			updated_at=$17, completed_at=$18,
-			cancellation_note=$19, risk_tier=$20,
-			project_id=$21, assignee_org_id=$22
+			reward_xp=$14, due_at=$15, start_at=$16, callback_url=$17,
+			updated_at=$18, completed_at=$19,
+			cancellation_note=$20, risk_tier=$21,
+			project_id=$22, assignee_org_id=$23
 		WHERE id=$1`,
 		id,
 		titleNamePtr, newTitle, newDescription,
 		string(newStatus), newAssigneeID, string(newAssigneeType), newDomain,
 		agentCtxJSON, metaJSON,
 		string(newVisibility), string(newMode), specJSON,
-		newRewardXP, newDueAt, callbackURL,
+		newRewardXP, newDueAt, newStartAt, callbackURL,
 		now, completedAt,
 		cancellationNote, string(newRiskTier),
 		newProjectID, newAssigneeOrgID,
@@ -673,7 +677,7 @@ func scanTicket(s scanner) (*Ticket, error) {
 		&t.AssigneeType, &t.AssigneeID, &t.RequesterID, &sourceBot,
 		&domain, &agentCtxBytes, &metaBytes,
 		&t.ProjectID, &t.ParentID, &t.Visibility, &t.CompletionMode,
-		&specBytes, &t.RewardXP, &t.DueAt, &callbackURL,
+		&specBytes, &t.RewardXP, &t.DueAt, &t.StartAt, &callbackURL,
 		&t.CreatedAt, &t.UpdatedAt, &t.CompletedAt, &cancellationNote,
 		&t.RequesterOrgID, &t.AssigneeOrgID,
 		&tagsBytes,
