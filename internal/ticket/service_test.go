@@ -137,7 +137,7 @@ func (m *mockStore) ListRefIDsForTickets(_ context.Context, _ []uuid.UUID) (map[
 func (m *mockStore) AddRelation(_ context.Context, _, _ uuid.UUID, _, _ string) (ticket.TicketRelation, bool, error) {
 	return ticket.TicketRelation{}, false, nil
 }
-func (m *mockStore) RemoveRelation(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockStore) RemoveRelation(_ context.Context, _, _ uuid.UUID) (bool, error) { return true, nil }
 func (m *mockStore) ListRelationsForTicket(_ context.Context, _ uuid.UUID) ([]ticket.TicketRelation, error) {
 	return nil, nil
 }

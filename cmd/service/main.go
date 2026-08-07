@@ -430,7 +430,7 @@ func main() {
 			r.Get("/refs", ticketH.ReverseLookupRefs)
 
 			// Bulk relation dump for the brain importer.
-			r.With(handler.RequireAPIKeyAuth).Get("/ticket-relations", ticketH.ListAllRelations)
+			r.With(auth.RequireAPIKeyCapability(apikey.CapabilityTicketRelations)).Get("/ticket-relations", ticketH.ListAllRelations)
 
 			// ── XP Levels ─────────────────────────────────────────
 			r.Get("/xp/levels", xpH.ListLevels)

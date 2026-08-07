@@ -784,10 +784,22 @@ func (s *Service) AddRelation(ctx context.Context, fromTicketID, toTicketID uuid
 	return s.store.AddRelation(ctx, fromTicketID, toTicketID, relationType, createdBy)
 }
 
-// RemoveRelation is idempotent at the store layer — removing an
-// already-absent relation id is a no-op.
-func (s *Service) RemoveRelation(ctx context.Context, relationID uuid.UUID) error {
-	return s.store.RemoveRelation(ctx, relationID)
+// RemoveRelation deletes relationID, scoped to ticketID (either side) at the
+// store layer — the ownership invariant lives here, not just in the handler,
+// so any future caller (a script, a bulk job, a different handler) can't
+// delete an arbitrary relation by id without going through this check.
+// Returns ErrNotFound if the id doesn't exist, was already removed, or
+// belongs to a different ticket pair — the three cases are indistinguishable
+// on purpose (avoids leaking which one it was).
+func (s *Service) RemoveRelation(ctx context.Context, ticketID, relationID uuid.UUID) error {
+	found, err := s.store.RemoveRelation(ctx, ticketID, relationID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // ListRelations returns every relation where ticketID is either side

@@ -303,9 +303,13 @@ func (s *memStore) AddRelation(_ context.Context, fromID, toID uuid.UUID, relati
 	return r, true, nil
 }
 
-func (s *memStore) RemoveRelation(_ context.Context, relationID uuid.UUID) error {
+func (s *memStore) RemoveRelation(_ context.Context, ticketID, relationID uuid.UUID) (bool, error) {
+	r, ok := s.relations[relationID]
+	if !ok || (r.FromTicketID != ticketID && r.ToTicketID != ticketID) {
+		return false, nil
+	}
 	delete(s.relations, relationID)
-	return nil
+	return true, nil
 }
 
 func (s *memStore) ListRelationsForTicket(_ context.Context, ticketID uuid.UUID) ([]ticket.TicketRelation, error) {

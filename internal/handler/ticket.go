@@ -1007,16 +1007,28 @@ func (h *TicketHandler) ListRelations(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "list relations: "+err.Error())
 		return
 	}
+	// Visibility: batch two LookupResources calls (project + restricted) up
+	// front, same pattern as ListSubtasks, instead of one SpiceDB round-trip
+	// per relation row — a ticket with many relations would otherwise issue
+	// that many sequential RPCs.
 	uid := auth.RequesterID(r)
+	projIDs, unrP, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_project", uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+		return
+	}
+	restrIDs, unrR, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_restricted", uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+		return
+	}
+	unrestricted := unrP && unrR
+	projSet := uuidSet(parseTicketUUIDs(projIDs))
+	restrSet := uuidSet(parseTicketUUIDs(restrIDs))
 	// Always emit a non-nil slice so the JSON literal is `[]` not `null`.
 	out := make([]relationView, 0, len(rels))
 	for _, rel := range rels {
-		ok, cErr := h.checker.CanViewTicket(r.Context(), rel.OtherTicketID, uid, spicedb.VisibilityMode(rel.OtherTicketVisibility))
-		if cErr != nil {
-			writeError(w, http.StatusInternalServerError, "visibility check: "+cErr.Error())
-			return
-		}
-		if !ok {
+		if !unrestricted && !visibleSubtask(rel.OtherTicketID, ticket.Visibility(rel.OtherTicketVisibility), projSet, restrSet) {
 			continue
 		}
 		direction := "incoming"
@@ -1131,25 +1143,15 @@ func (h *TicketHandler) RemoveRelation(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid relation_id")
 		return
 	}
-	rels, err := h.svc.ListRelations(r.Context(), tk.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "list relations: "+err.Error())
-		return
-	}
-	found := false
-	for _, rel := range rels {
-		if rel.ID == relID {
-			found = true
-			break
+	// Ownership scoping (relID must belong to tk.ID) is enforced by the
+	// service/store, not here — see Service.RemoveRelation's doc comment.
+	if err := h.svc.RemoveRelation(r.Context(), tk.ID, relID); err != nil {
+		if errors.Is(err, ticket.ErrNotFound) {
+			// Uniform 404 whether the relation doesn't exist at all or exists but
+			// belongs to a different ticket pair — don't leak which case it is.
+			writeError(w, http.StatusNotFound, "relation not found for this ticket")
+			return
 		}
-	}
-	if !found {
-		// Uniform 404 whether the relation doesn't exist at all or exists but
-		// belongs to a different ticket pair — don't leak which case it is.
-		writeError(w, http.StatusNotFound, "relation not found for this ticket")
-		return
-	}
-	if err := h.svc.RemoveRelation(r.Context(), relID); err != nil {
 		writeError(w, http.StatusInternalServerError, "remove relation: "+err.Error())
 		return
 	}
@@ -1334,19 +1336,6 @@ func dedupeTagIDs(ids []uuid.UUID) []uuid.UUID {
 		out = append(out, id)
 	}
 	return out
-}
-
-// RequireAPIKeyAuth rejects requests that were not authenticated via
-// X-API-Key (auth.KeyMeta is nil for JWT/session requests). Used for
-// service-to-service-only endpoints like the bulk relation dump.
-func RequireAPIKeyAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if auth.KeyMeta(r) == nil {
-			writeError(w, http.StatusForbidden, "this endpoint requires API-key authentication")
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

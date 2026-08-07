@@ -1155,12 +1155,14 @@ func (s *pgStore) AddRelation(ctx context.Context, fromID, toID uuid.UUID, relat
 	return existing, false, nil
 }
 
-func (s *pgStore) RemoveRelation(ctx context.Context, relationID uuid.UUID) error {
-	_, err := s.db.Exec(ctx, `DELETE FROM ticket_relations WHERE id=$1`, relationID)
+func (s *pgStore) RemoveRelation(ctx context.Context, ticketID, relationID uuid.UUID) (bool, error) {
+	tag, err := s.db.Exec(ctx,
+		`DELETE FROM ticket_relations WHERE id=$1 AND (from_ticket_id=$2 OR to_ticket_id=$2)`,
+		relationID, ticketID)
 	if err != nil {
-		return fmt.Errorf("delete relation: %w", err)
+		return false, fmt.Errorf("delete relation: %w", err)
 	}
-	return nil
+	return tag.RowsAffected() > 0, nil
 }
 
 func (s *pgStore) ListRelationsForTicket(ctx context.Context, ticketID uuid.UUID) ([]TicketRelation, error) {

@@ -90,6 +90,31 @@ func RequireKeyCapability(cap string) func(http.Handler) http.Handler {
 	}
 }
 
+// RequireAPIKeyCapability rejects any request not authenticated via
+// X-API-Key (auth.KeyMeta is nil for JWT/session requests) AND requires the
+// key to hold the given capability. Unlike RequireKeyCapability, which
+// deliberately passes JWT/session requests through unmodified (meta == nil
+// short-circuits to allow), this is for service-to-service-only endpoints —
+// e.g. the bulk ticket-relations dump the brain importer consumes — where
+// no JWT/session caller should ever be allowed through, and the capability
+// check lets a specific key be scoped down without granting it to every key.
+func RequireAPIKeyCapability(cap string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			meta := KeyMeta(r)
+			if meta == nil {
+				http.Error(w, "this endpoint requires API-key authentication", http.StatusForbidden)
+				return
+			}
+			if !hasCapability(meta, cap) {
+				http.Error(w, "api key lacks capability: "+cap, http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // EnforceKeyOrigin checks the Origin header against allowed_origins for public-scope
 // keys. Private keys / JWT requests are not gated.
 func EnforceKeyOrigin() func(http.Handler) http.Handler {

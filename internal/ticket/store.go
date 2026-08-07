@@ -49,7 +49,11 @@ type Store interface {
 
 	// Relations (typed directed edges between tickets: blocks/depends_on/duplicates)
 	AddRelation(ctx context.Context, fromID, toID uuid.UUID, relationType, createdBy string) (TicketRelation, bool, error)
-	RemoveRelation(ctx context.Context, relationID uuid.UUID) error
+	// RemoveRelation deletes relationID only if it belongs to ticketID (either
+	// side). found=false means the id doesn't exist at all OR belongs to a
+	// different ticket pair — the store doesn't distinguish the two cases so
+	// the ownership invariant can't be bypassed by any future caller.
+	RemoveRelation(ctx context.Context, ticketID, relationID uuid.UUID) (found bool, err error)
 	ListRelationsForTicket(ctx context.Context, ticketID uuid.UUID) ([]TicketRelation, error)
 	// ListRelationsWithSummaryForTicket is like ListRelationsForTicket but joins
 	// in a summary (title_name/title/status/visibility) of whichever ticket is
