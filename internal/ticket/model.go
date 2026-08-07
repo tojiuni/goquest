@@ -401,3 +401,19 @@ var (
 // can map them to 400 with errors.Is, instead of falling through to their
 // catch-all 500 (goq-ticket-update-validation-500).
 var ErrValidation = errors.New("validation failed")
+
+type TicketRelation struct {
+	ID           uuid.UUID `json:"id"`
+	FromTicketID uuid.UUID `json:"from_ticket_id"`
+	ToTicketID   uuid.UUID `json:"to_ticket_id"`
+	RelationType string    `json:"relation_type"`
+	CreatedAt    time.Time `json:"created_at"`
+	CreatedBy    string    `json:"created_by"`
+}
+
+var (
+	ErrRelationSelfReference = errors.New("from_ticket_id and to_ticket_id must differ")
+	ErrRelationTypeInvalid   = errors.New("relation_type must be blocks, depends_on, or duplicates")
+)
+
+var ValidRelationTypes = map[string]bool{"blocks": true, "depends_on": true, "duplicates": true}

@@ -771,6 +771,14 @@ func isUniqueViolationAny(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+// isForeignKeyViolation returns true when err is any PostgreSQL
+// foreign_key_violation (23503). Used by relations methods to detect an
+// insert referencing a nonexistent ticket.
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+}
+
 var (
 	ErrNotFound           = errors.New("ticket not found")
 	ErrInvalidTransition  = errors.New("invalid status transition")
@@ -1100,4 +1108,94 @@ func (s *pgStore) ListRefIDsForTickets(ctx context.Context, ticketIDs []uuid.UUI
 		out[tid] = append(out[tid], rid)
 	}
 	return out, rows.Err()
+}
+
+// --- Relations ---
+
+func (s *pgStore) AddRelation(ctx context.Context, fromID, toID uuid.UUID, relationType, createdBy string) (TicketRelation, bool, error) {
+	if fromID == toID {
+		return TicketRelation{}, false, ErrRelationSelfReference
+	}
+	var existing TicketRelation
+	err := s.db.QueryRow(ctx, `
+		SELECT id, from_ticket_id, to_ticket_id, relation_type, created_at, created_by
+		  FROM ticket_relations
+		 WHERE from_ticket_id=$1 AND to_ticket_id=$2 AND relation_type=$3`,
+		fromID, toID, relationType,
+	).Scan(&existing.ID, &existing.FromTicketID, &existing.ToTicketID, &existing.RelationType, &existing.CreatedAt, &existing.CreatedBy)
+	if err == nil {
+		return existing, false, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return TicketRelation{}, false, fmt.Errorf("check existing relation: %w", err)
+	}
+
+	var r TicketRelation
+	err = s.db.QueryRow(ctx, `
+		INSERT INTO ticket_relations (from_ticket_id, to_ticket_id, relation_type, created_by)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, from_ticket_id, to_ticket_id, relation_type, created_at, created_by`,
+		fromID, toID, relationType, createdBy,
+	).Scan(&r.ID, &r.FromTicketID, &r.ToTicketID, &r.RelationType, &r.CreatedAt, &r.CreatedBy)
+	if err != nil {
+		if isForeignKeyViolation(err) {
+			return TicketRelation{}, false, ErrNotFound
+		}
+		return TicketRelation{}, false, fmt.Errorf("insert relation: %w", err)
+	}
+	return r, true, nil
+}
+
+func (s *pgStore) RemoveRelation(ctx context.Context, relationID uuid.UUID) error {
+	_, err := s.db.Exec(ctx, `DELETE FROM ticket_relations WHERE id=$1`, relationID)
+	if err != nil {
+		return fmt.Errorf("delete relation: %w", err)
+	}
+	return nil
+}
+
+func (s *pgStore) ListRelationsForTicket(ctx context.Context, ticketID uuid.UUID) ([]TicketRelation, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT id, from_ticket_id, to_ticket_id, relation_type, created_at, created_by
+		  FROM ticket_relations
+		 WHERE from_ticket_id=$1 OR to_ticket_id=$1
+		 ORDER BY created_at ASC`, ticketID)
+	if err != nil {
+		return nil, fmt.Errorf("list relations: %w", err)
+	}
+	defer rows.Close()
+	var out []TicketRelation
+	for rows.Next() {
+		var r TicketRelation
+		if err := rows.Scan(&r.ID, &r.FromTicketID, &r.ToTicketID, &r.RelationType, &r.CreatedAt, &r.CreatedBy); err != nil {
+			return nil, fmt.Errorf("scan relation: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *pgStore) ListAllRelations(ctx context.Context, limit, offset int) ([]TicketRelation, int, error) {
+	var total int
+	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM ticket_relations`).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count relations: %w", err)
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT id, from_ticket_id, to_ticket_id, relation_type, created_at, created_by
+		  FROM ticket_relations
+		 ORDER BY created_at ASC
+		 LIMIT $1 OFFSET $2`, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list all relations: %w", err)
+	}
+	defer rows.Close()
+	var out []TicketRelation
+	for rows.Next() {
+		var r TicketRelation
+		if err := rows.Scan(&r.ID, &r.FromTicketID, &r.ToTicketID, &r.RelationType, &r.CreatedAt, &r.CreatedBy); err != nil {
+			return nil, 0, fmt.Errorf("scan relation: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, total, rows.Err()
 }

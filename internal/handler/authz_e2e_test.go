@@ -277,6 +277,17 @@ func (s *memStore) ListRefIDsForTickets(_ context.Context, ticketIDs []uuid.UUID
 	return out, nil
 }
 
+func (s *memStore) AddRelation(_ context.Context, _, _ uuid.UUID, _, _ string) (ticket.TicketRelation, bool, error) {
+	return ticket.TicketRelation{}, false, nil
+}
+func (s *memStore) RemoveRelation(_ context.Context, _ uuid.UUID) error { return nil }
+func (s *memStore) ListRelationsForTicket(_ context.Context, _ uuid.UUID) ([]ticket.TicketRelation, error) {
+	return nil, nil
+}
+func (s *memStore) ListAllRelations(_ context.Context, _, _ int) ([]ticket.TicketRelation, int, error) {
+	return nil, 0, nil
+}
+
 // ── stub checker simulating SpiceDB enforce ─────────────────────────────────────
 
 // worldChecker models, per user, which ticket ids are viewable under each permission.

@@ -46,4 +46,10 @@ type Store interface {
 	CountRefs(ctx context.Context, ticketID uuid.UUID) (int, error)
 	ListTicketIDsByRef(ctx context.Context, gopediaL1ID string) ([]uuid.UUID, error)
 	ListRefIDsForTickets(ctx context.Context, ticketIDs []uuid.UUID) (map[uuid.UUID][]string, error)
+
+	// Relations (typed directed edges between tickets: blocks/depends_on/duplicates)
+	AddRelation(ctx context.Context, fromID, toID uuid.UUID, relationType, createdBy string) (TicketRelation, bool, error)
+	RemoveRelation(ctx context.Context, relationID uuid.UUID) error
+	ListRelationsForTicket(ctx context.Context, ticketID uuid.UUID) ([]TicketRelation, error)
+	ListAllRelations(ctx context.Context, limit, offset int) ([]TicketRelation, int, error)
 }
