@@ -85,6 +85,49 @@ func TestRelations_AddTargetNotFound404(t *testing.T) {
 	}
 }
 
+func TestRelations_RemoveNotOwnedByTicket404(t *testing.T) {
+	proj := pid()
+	a := tProject(proj)
+	b := tProject(proj)
+	c := tProject(proj)
+	store := newMemStore(a, b, c)
+	checker := &worldChecker{
+		proj: map[string]map[uuid.UUID]bool{
+			"alice": {a.ID: true, b.ID: true, c.ID: true},
+		},
+	}
+	router := e2eRouter(store, checker)
+
+	// Create a relation between b and c (unrelated to a).
+	body := map[string]string{"relation_type": "blocks", "to_ticket_id": c.ID.String()}
+	addRec := do(router, asUser(postJSON("/tickets/"+b.ID.String()+"/relations", body), "alice"))
+	if addRec.Code != http.StatusOK {
+		t.Fatalf("setup add: want 200, got %d (%s)", addRec.Code, addRec.Body.String())
+	}
+	var added relationResp
+	if err := json.Unmarshal(addRec.Body.Bytes(), &added); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	// Attempt to delete it via ticket a's path — a is not part of this relation.
+	delRec := do(router, asUser(delReq("/tickets/"+a.ID.String()+"/relations/"+added.Relation.ID.String()), "alice"))
+	if delRec.Code != http.StatusNotFound {
+		t.Fatalf("want 404 for cross-ticket delete, got %d (%s)", delRec.Code, delRec.Body.String())
+	}
+
+	// Confirm the relation still exists (wasn't actually deleted).
+	listRec := do(router, asUser(get("/tickets/"+b.ID.String()+"/relations"), "alice"))
+	var list struct {
+		Relations []ticket.TicketRelation `json:"relations"`
+	}
+	if err := json.Unmarshal(listRec.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	if len(list.Relations) != 1 {
+		t.Fatalf("want relation to survive the rejected cross-ticket delete, got %d relations", len(list.Relations))
+	}
+}
+
 func TestRelations_ListBothDirections(t *testing.T) {
 	router, a, b := relationsTestSetup()
 	body := map[string]string{"relation_type": "blocks", "to_ticket_id": b.String()}

@@ -1026,7 +1026,12 @@ func (h *TicketHandler) AddRelation(w http.ResponseWriter, r *http.Request) {
 }
 
 // RemoveRelation handles DELETE /api/v1/tickets/{id}/relations/{relation_id}.
-// Idempotent: removing an already-absent id is also 204.
+// Idempotent for relations that belong to this ticket; returns 404 if the
+// relation id doesn't exist or isn't associated with this ticket. This
+// ownership check is required: RequireTicketView only proves the caller can
+// view *some* ticket (the one in the path), not that relation_id belongs to
+// it — without the check, a caller could delete an arbitrary relation on an
+// unrelated ticket pair by guessing/knowing its id.
 func (h *TicketHandler) RemoveRelation(w http.ResponseWriter, r *http.Request) {
 	tk := auth.TicketFrom(r)
 	if tk == nil {
@@ -1036,6 +1041,24 @@ func (h *TicketHandler) RemoveRelation(w http.ResponseWriter, r *http.Request) {
 	relID, err := uuid.Parse(chi.URLParam(r, "relation_id"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid relation_id")
+		return
+	}
+	rels, err := h.svc.ListRelations(r.Context(), tk.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list relations: "+err.Error())
+		return
+	}
+	found := false
+	for _, rel := range rels {
+		if rel.ID == relID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		// Uniform 404 whether the relation doesn't exist at all or exists but
+		// belongs to a different ticket pair — don't leak which case it is.
+		writeError(w, http.StatusNotFound, "relation not found for this ticket")
 		return
 	}
 	if err := h.svc.RemoveRelation(r.Context(), relID); err != nil {
@@ -1217,6 +1240,19 @@ func dedupeTagIDs(ids []uuid.UUID) []uuid.UUID {
 		out = append(out, id)
 	}
 	return out
+}
+
+// RequireAPIKeyAuth rejects requests that were not authenticated via
+// X-API-Key (auth.KeyMeta is nil for JWT/session requests). Used for
+// service-to-service-only endpoints like the bulk relation dump.
+func RequireAPIKeyAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if auth.KeyMeta(r) == nil {
+			writeError(w, http.StatusForbidden, "this endpoint requires API-key authentication")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
