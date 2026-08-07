@@ -271,12 +271,35 @@ func TestCreateAndUpdate_StartAt(t *testing.T) {
 	ctx, store, cleanup := newTestStore(t)
 	defer cleanup()
 
+	// Test: StartAt is nil by default when not set on create.
 	tk := createTicket(t, ctx, store, "start_at default nil")
 	if tk.StartAt != nil {
 		t.Fatalf("want nil StartAt by default, got %v", tk.StartAt)
 	}
 
+	// Test: StartAt is settable on create via store.Create (INSERT path).
 	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	tkWithStart := &ticket.Ticket{
+		ID:           uuid.New(),
+		Title:        "ticket with start_at on create",
+		Description:  "",
+		Type:         ticket.TypeTask,
+		Status:       ticket.StatusPending,
+		Priority:     ticket.PriorityNormal,
+		AssigneeType: ticket.AssigneeHuman,
+		RequesterID:  "test@example.com",
+		Visibility:   ticket.VisibilityProject,
+		StartAt:      &start,
+	}
+	require.NoError(t, store.Create(ctx, tkWithStart))
+
+	// Verify round-trip: Get the ticket and assert StartAt matches.
+	retrieved, err := store.Get(ctx, tkWithStart.ID)
+	require.NoError(t, err)
+	require.NotNil(t, retrieved.StartAt)
+	assert.True(t, retrieved.StartAt.Equal(start), "StartAt must round-trip via CREATE+GET")
+
+	// Test: Update both StartAt and DueAt together.
 	due := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
 	updated, err := store.Update(ctx, tk.ID, ticket.UpdateTicketReq{
 		StartAt: &start,
@@ -288,7 +311,7 @@ func TestCreateAndUpdate_StartAt(t *testing.T) {
 	require.NotNil(t, updated.DueAt)
 	assert.True(t, updated.DueAt.Equal(due))
 
-	// Updating only due_at must not clobber the previously set start_at.
+	// Test: Updating only DueAt must not clobber the previously set StartAt.
 	due2 := due.Add(24 * time.Hour)
 	updated2, err := store.Update(ctx, tk.ID, ticket.UpdateTicketReq{DueAt: &due2})
 	require.NoError(t, err)
