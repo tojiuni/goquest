@@ -263,3 +263,140 @@ func TestAllSubtasksTerminal_OnHoldChildBlocksParent(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, terminal, "an on_hold child must keep the parent from being considered all-terminal")
 }
+
+// TestCreateAndUpdate_StartAt exercises start_at end-to-end: nil on create by
+// default, settable on create, and independently updatable via PATCH without
+// disturbing due_at (goq-roadmap-backend-support, GQT-SPC-2026080703 §1).
+func TestCreateAndUpdate_StartAt(t *testing.T) {
+	ctx, store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	// Test: StartAt is nil by default when not set on create.
+	tk := createTicket(t, ctx, store, "start_at default nil")
+	if tk.StartAt != nil {
+		t.Fatalf("want nil StartAt by default, got %v", tk.StartAt)
+	}
+
+	// Test: StartAt is settable on create via store.Create (INSERT path).
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	tkWithStart := &ticket.Ticket{
+		ID:           uuid.New(),
+		Title:        "ticket with start_at on create",
+		Description:  "",
+		Type:         ticket.TypeTask,
+		Status:       ticket.StatusPending,
+		Priority:     ticket.PriorityNormal,
+		AssigneeType: ticket.AssigneeHuman,
+		RequesterID:  "test@example.com",
+		Visibility:   ticket.VisibilityProject,
+		StartAt:      &start,
+	}
+	require.NoError(t, store.Create(ctx, tkWithStart))
+
+	// Verify round-trip: Get the ticket and assert StartAt matches.
+	retrieved, err := store.Get(ctx, tkWithStart.ID)
+	require.NoError(t, err)
+	require.NotNil(t, retrieved.StartAt)
+	assert.True(t, retrieved.StartAt.Equal(start), "StartAt must round-trip via CREATE+GET")
+
+	// Test: Update both StartAt and DueAt together.
+	due := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
+	updated, err := store.Update(ctx, tk.ID, ticket.UpdateTicketReq{
+		StartAt: &start,
+		DueAt:   &due,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, updated.StartAt)
+	assert.True(t, updated.StartAt.Equal(start))
+	require.NotNil(t, updated.DueAt)
+	assert.True(t, updated.DueAt.Equal(due))
+
+	// Test: Updating only DueAt must not clobber the previously set StartAt.
+	due2 := due.Add(24 * time.Hour)
+	updated2, err := store.Update(ctx, tk.ID, ticket.UpdateTicketReq{DueAt: &due2})
+	require.NoError(t, err)
+	require.NotNil(t, updated2.StartAt)
+	assert.True(t, updated2.StartAt.Equal(start))
+}
+
+// TestList_FilterByScheduled exercises the `scheduled=true` list filter
+// against the real store: it must include tickets with either start_at or
+// due_at (or both) set, and exclude tickets with neither set. Asserts
+// membership by ID rather than exact result-set size, since the shared test
+// DB may contain other rows from other tests.
+func TestList_FilterByScheduled(t *testing.T) {
+	ctx, store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	due := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
+
+	withStartOnly := &ticket.Ticket{
+		ID:           uuid.New(),
+		Title:        "scheduled: start_at only",
+		Type:         ticket.TypeTask,
+		Status:       ticket.StatusPending,
+		Priority:     ticket.PriorityNormal,
+		AssigneeType: ticket.AssigneeHuman,
+		RequesterID:  "test@example.com",
+		Visibility:   ticket.VisibilityProject,
+		StartAt:      &start,
+	}
+	require.NoError(t, store.Create(ctx, withStartOnly))
+
+	withDueOnly := &ticket.Ticket{
+		ID:           uuid.New(),
+		Title:        "scheduled: due_at only",
+		Type:         ticket.TypeTask,
+		Status:       ticket.StatusPending,
+		Priority:     ticket.PriorityNormal,
+		AssigneeType: ticket.AssigneeHuman,
+		RequesterID:  "test@example.com",
+		Visibility:   ticket.VisibilityProject,
+		DueAt:        &due,
+	}
+	require.NoError(t, store.Create(ctx, withDueOnly))
+
+	withNeither := createTicket(t, ctx, store, "not scheduled")
+
+	got, _, err := store.List(ctx, ticket.ListTicketsFilter{Scheduled: true})
+	require.NoError(t, err)
+
+	ids := map[uuid.UUID]bool{}
+	for _, tk := range got {
+		ids[tk.ID] = true
+	}
+	assert.True(t, ids[withStartOnly.ID], "ticket with only start_at set must be included")
+	assert.True(t, ids[withDueOnly.ID], "ticket with only due_at set must be included")
+	assert.False(t, ids[withNeither.ID], "ticket with neither start_at nor due_at set must be excluded")
+}
+
+// TestUpdate_RejectsInvertedStartDueRange covers goq-roadmap-backend-support
+// (PR review follow-up): store.Update must reject a PATCH that would leave
+// start_at after due_at, whether both fields arrive in the same request or
+// one is merged against an already-stored value for the other.
+func TestUpdate_RejectsInvertedStartDueRange(t *testing.T) {
+	ctx, store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	due := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	after := due.Add(24 * time.Hour)
+
+	t.Run("both fields in the same PATCH", func(t *testing.T) {
+		tk := createTicket(t, ctx, store, "inverted range in one patch")
+		_, err := store.Update(ctx, tk.ID, ticket.UpdateTicketReq{
+			StartAt: &after,
+			DueAt:   &due,
+		})
+		require.ErrorIs(t, err, ticket.ErrValidation)
+	})
+
+	t.Run("new start_at after an already-stored due_at", func(t *testing.T) {
+		tk := createTicket(t, ctx, store, "inverted range against stored due_at")
+		_, err := store.Update(ctx, tk.ID, ticket.UpdateTicketReq{DueAt: &due})
+		require.NoError(t, err)
+
+		_, err = store.Update(ctx, tk.ID, ticket.UpdateTicketReq{StartAt: &after})
+		require.ErrorIs(t, err, ticket.ErrValidation)
+	})
+}

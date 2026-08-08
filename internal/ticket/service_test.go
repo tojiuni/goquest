@@ -1077,3 +1077,25 @@ func TestCreate_EmitsNuclexCreated(t *testing.T) {
 		t.Errorf("EmitCreated called with ticket ID %s, want %s", nux.createdCalls[0].ID, created.ID)
 	}
 }
+
+// TestCreate_RejectsInvertedStartDueRange covers goq-roadmap-backend-support
+// (PR review follow-up): the roadmap viewer's [start_at, due_at] bar
+// semantics require start_at <= due_at. Create must reject the inverted
+// case before ever reaching the store, so a mockStore (no DB) suffices.
+func TestCreate_RejectsInvertedStartDueRange(t *testing.T) {
+	store := &mockStore{}
+	svc := ticket.NewService(store, &mockPublisher{}, nil, nil, nil, nil)
+
+	due := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	start := due.Add(24 * time.Hour) // start after due — invalid
+
+	_, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title:   "inverted range",
+		Type:    ticket.TypeTask,
+		StartAt: &start,
+		DueAt:   &due,
+	}, "user1")
+	if !errors.Is(err, ticket.ErrValidation) {
+		t.Fatalf("want ErrValidation, got %v", err)
+	}
+}
