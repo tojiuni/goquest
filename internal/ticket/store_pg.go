@@ -278,6 +278,9 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	if req.StartAt != nil {
 		newStartAt = req.StartAt
 	}
+	if newStartAt != nil && newDueAt != nil && newStartAt.After(*newDueAt) {
+		return nil, fmt.Errorf("%w: start_at must not be after due_at", ErrValidation)
+	}
 	newCallbackURL := current.CallbackURL
 	if req.CallbackURL != nil {
 		newCallbackURL = *req.CallbackURL

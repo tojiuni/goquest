@@ -370,3 +370,33 @@ func TestList_FilterByScheduled(t *testing.T) {
 	assert.True(t, ids[withDueOnly.ID], "ticket with only due_at set must be included")
 	assert.False(t, ids[withNeither.ID], "ticket with neither start_at nor due_at set must be excluded")
 }
+
+// TestUpdate_RejectsInvertedStartDueRange covers goq-roadmap-backend-support
+// (PR review follow-up): store.Update must reject a PATCH that would leave
+// start_at after due_at, whether both fields arrive in the same request or
+// one is merged against an already-stored value for the other.
+func TestUpdate_RejectsInvertedStartDueRange(t *testing.T) {
+	ctx, store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	due := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	after := due.Add(24 * time.Hour)
+
+	t.Run("both fields in the same PATCH", func(t *testing.T) {
+		tk := createTicket(t, ctx, store, "inverted range in one patch")
+		_, err := store.Update(ctx, tk.ID, ticket.UpdateTicketReq{
+			StartAt: &after,
+			DueAt:   &due,
+		})
+		require.ErrorIs(t, err, ticket.ErrValidation)
+	})
+
+	t.Run("new start_at after an already-stored due_at", func(t *testing.T) {
+		tk := createTicket(t, ctx, store, "inverted range against stored due_at")
+		_, err := store.Update(ctx, tk.ID, ticket.UpdateTicketReq{DueAt: &due})
+		require.NoError(t, err)
+
+		_, err = store.Update(ctx, tk.ID, ticket.UpdateTicketReq{StartAt: &after})
+		require.ErrorIs(t, err, ticket.ErrValidation)
+	})
+}

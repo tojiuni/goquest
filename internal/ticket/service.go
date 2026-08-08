@@ -89,6 +89,9 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 	if err := validateRiskTier(req.RiskTier); err != nil {
 		return nil, err
 	}
+	if req.StartAt != nil && req.DueAt != nil && req.StartAt.After(*req.DueAt) {
+		return nil, fmt.Errorf("%w: start_at must not be after due_at", ErrValidation)
+	}
 	// Pre-validate refs before creating the ticket so a bad request doesn't
 	// leave a half-built ticket behind.
 	if len(req.RefIDs) > 0 {
