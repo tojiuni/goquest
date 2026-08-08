@@ -771,6 +771,14 @@ func isUniqueViolationAny(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+// isForeignKeyViolation returns true when err is any PostgreSQL
+// foreign_key_violation (23503). Used by relations methods to detect an
+// insert referencing a nonexistent ticket.
+func isForeignKeyViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23503"
+}
+
 var (
 	ErrNotFound           = errors.New("ticket not found")
 	ErrInvalidTransition  = errors.New("invalid status transition")
@@ -1100,4 +1108,136 @@ func (s *pgStore) ListRefIDsForTickets(ctx context.Context, ticketIDs []uuid.UUI
 		out[tid] = append(out[tid], rid)
 	}
 	return out, rows.Err()
+}
+
+// --- Relations ---
+
+func (s *pgStore) AddRelation(ctx context.Context, fromID, toID uuid.UUID, relationType, createdBy string) (TicketRelation, bool, error) {
+	if fromID == toID {
+		return TicketRelation{}, false, ErrRelationSelfReference
+	}
+
+	// Atomic insert-or-nothing: avoids the TOCTOU race of a separate
+	// check-then-insert, where two concurrent callers for the same
+	// (from, to, type) could both pass a SELECT-for-existing check and then
+	// have the second INSERT fail on the unique constraint instead of
+	// returning the row the first caller created.
+	var r TicketRelation
+	err := s.db.QueryRow(ctx, `
+		INSERT INTO ticket_relations (from_ticket_id, to_ticket_id, relation_type, created_by)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (from_ticket_id, to_ticket_id, relation_type) DO NOTHING
+		RETURNING id, from_ticket_id, to_ticket_id, relation_type, created_at, created_by`,
+		fromID, toID, relationType, createdBy,
+	).Scan(&r.ID, &r.FromTicketID, &r.ToTicketID, &r.RelationType, &r.CreatedAt, &r.CreatedBy)
+	if err == nil {
+		return r, true, nil
+	}
+	if isForeignKeyViolation(err) {
+		return TicketRelation{}, false, ErrNotFound
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return TicketRelation{}, false, fmt.Errorf("insert relation: %w", err)
+	}
+
+	// ON CONFLICT DO NOTHING fired (zero rows returned): the row already
+	// existed. Fetch and return it as a replay, not an error.
+	var existing TicketRelation
+	err = s.db.QueryRow(ctx, `
+		SELECT id, from_ticket_id, to_ticket_id, relation_type, created_at, created_by
+		  FROM ticket_relations
+		 WHERE from_ticket_id=$1 AND to_ticket_id=$2 AND relation_type=$3`,
+		fromID, toID, relationType,
+	).Scan(&existing.ID, &existing.FromTicketID, &existing.ToTicketID, &existing.RelationType, &existing.CreatedAt, &existing.CreatedBy)
+	if err != nil {
+		return TicketRelation{}, false, fmt.Errorf("fetch existing relation after conflict: %w", err)
+	}
+	return existing, false, nil
+}
+
+func (s *pgStore) RemoveRelation(ctx context.Context, ticketID, relationID uuid.UUID) (bool, error) {
+	tag, err := s.db.Exec(ctx,
+		`DELETE FROM ticket_relations WHERE id=$1 AND (from_ticket_id=$2 OR to_ticket_id=$2)`,
+		relationID, ticketID)
+	if err != nil {
+		return false, fmt.Errorf("delete relation: %w", err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+func (s *pgStore) ListRelationsForTicket(ctx context.Context, ticketID uuid.UUID) ([]TicketRelation, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT id, from_ticket_id, to_ticket_id, relation_type, created_at, created_by
+		  FROM ticket_relations
+		 WHERE from_ticket_id=$1 OR to_ticket_id=$1
+		 ORDER BY created_at ASC`, ticketID)
+	if err != nil {
+		return nil, fmt.Errorf("list relations: %w", err)
+	}
+	defer rows.Close()
+	var out []TicketRelation
+	for rows.Next() {
+		var r TicketRelation
+		if err := rows.Scan(&r.ID, &r.FromTicketID, &r.ToTicketID, &r.RelationType, &r.CreatedAt, &r.CreatedBy); err != nil {
+			return nil, fmt.Errorf("scan relation: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *pgStore) ListRelationsWithSummaryForTicket(ctx context.Context, ticketID uuid.UUID) ([]RelationWithSummary, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT r.id, r.from_ticket_id, r.to_ticket_id, r.relation_type, r.created_at, r.created_by,
+		       CASE WHEN r.from_ticket_id = $1 THEN r.to_ticket_id ELSE r.from_ticket_id END AS other_id,
+		       t.title_name, t.title, t.status, t.visibility
+		  FROM ticket_relations r
+		  JOIN tickets t ON t.id = (CASE WHEN r.from_ticket_id = $1 THEN r.to_ticket_id ELSE r.from_ticket_id END)
+		 WHERE r.from_ticket_id = $1 OR r.to_ticket_id = $1
+		 ORDER BY r.created_at ASC`, ticketID)
+	if err != nil {
+		return nil, fmt.Errorf("list relations with summary: %w", err)
+	}
+	defer rows.Close()
+	var out []RelationWithSummary
+	for rows.Next() {
+		var rs RelationWithSummary
+		var titleName *string
+		if err := rows.Scan(
+			&rs.ID, &rs.FromTicketID, &rs.ToTicketID, &rs.RelationType, &rs.CreatedAt, &rs.CreatedBy,
+			&rs.OtherTicketID, &titleName, &rs.OtherTicketTitle, &rs.OtherTicketStatus, &rs.OtherTicketVisibility,
+		); err != nil {
+			return nil, fmt.Errorf("scan relation with summary: %w", err)
+		}
+		if titleName != nil {
+			rs.OtherTicketTitleName = *titleName
+		}
+		out = append(out, rs)
+	}
+	return out, rows.Err()
+}
+
+func (s *pgStore) ListAllRelations(ctx context.Context, limit, offset int) ([]TicketRelation, int, error) {
+	var total int
+	if err := s.db.QueryRow(ctx, `SELECT COUNT(*) FROM ticket_relations`).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count relations: %w", err)
+	}
+	rows, err := s.db.Query(ctx, `
+		SELECT id, from_ticket_id, to_ticket_id, relation_type, created_at, created_by
+		  FROM ticket_relations
+		 ORDER BY created_at ASC
+		 LIMIT $1 OFFSET $2`, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("list all relations: %w", err)
+	}
+	defer rows.Close()
+	var out []TicketRelation
+	for rows.Next() {
+		var r TicketRelation
+		if err := rows.Scan(&r.ID, &r.FromTicketID, &r.ToTicketID, &r.RelationType, &r.CreatedAt, &r.CreatedBy); err != nil {
+			return nil, 0, fmt.Errorf("scan relation: %w", err)
+		}
+		out = append(out, r)
+	}
+	return out, total, rows.Err()
 }

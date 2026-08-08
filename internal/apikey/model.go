@@ -15,12 +15,13 @@ const (
 
 // Well-known capability strings (free-form; service layer enforces what's allowed).
 const (
-	CapabilityTicketCreate  = "ticket.create"
-	CapabilityTicketRead    = "ticket.read"
-	CapabilityTicketUpdate  = "ticket.update"
-	CapabilityCommentList   = "comment.list"
-	CapabilityCommentCreate = "comment.create"
-	CapabilityAll           = "*" // private keys default to wildcard
+	CapabilityTicketCreate    = "ticket.create"
+	CapabilityTicketRead      = "ticket.read"
+	CapabilityTicketUpdate    = "ticket.update"
+	CapabilityCommentList     = "comment.list"
+	CapabilityCommentCreate   = "comment.create"
+	CapabilityTicketRelations = "ticket.relations.bulk_read" // GET /api/v1/ticket-relations (service-to-service bulk dump, e.g. brain's importer)
+	CapabilityAll             = "*"                          // private keys default to wildcard
 )
 
 // APIKey is the persisted record (key_hash is never returned via API).

@@ -46,4 +46,20 @@ type Store interface {
 	CountRefs(ctx context.Context, ticketID uuid.UUID) (int, error)
 	ListTicketIDsByRef(ctx context.Context, gopediaL1ID string) ([]uuid.UUID, error)
 	ListRefIDsForTickets(ctx context.Context, ticketIDs []uuid.UUID) (map[uuid.UUID][]string, error)
+
+	// Relations (typed directed edges between tickets: blocks/depends_on/duplicates)
+	AddRelation(ctx context.Context, fromID, toID uuid.UUID, relationType, createdBy string) (TicketRelation, bool, error)
+	// RemoveRelation deletes relationID only if it belongs to ticketID (either
+	// side). found=false means the id doesn't exist at all OR belongs to a
+	// different ticket pair — the store doesn't distinguish the two cases so
+	// the ownership invariant can't be bypassed by any future caller.
+	RemoveRelation(ctx context.Context, ticketID, relationID uuid.UUID) (found bool, err error)
+	ListRelationsForTicket(ctx context.Context, ticketID uuid.UUID) ([]TicketRelation, error)
+	// ListRelationsWithSummaryForTicket is like ListRelationsForTicket but joins
+	// in a summary (title_name/title/status/visibility) of whichever ticket is
+	// NOT ticketID, so GET .../relations can render without a second
+	// round-trip per row. The handler uses OtherTicketVisibility to filter out
+	// relations the caller can't view the other side of.
+	ListRelationsWithSummaryForTicket(ctx context.Context, ticketID uuid.UUID) ([]RelationWithSummary, error)
+	ListAllRelations(ctx context.Context, limit, offset int) ([]TicketRelation, int, error)
 }

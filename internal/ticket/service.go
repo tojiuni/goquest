@@ -768,3 +768,55 @@ func (s *Service) ListTicketsByRef(ctx context.Context, gopediaL1ID string, visi
 	}
 	return out, nil
 }
+
+// --- Relations ---
+
+// AddRelation validates relation_type and self-reference before delegating
+// to the store. Idempotent: replaying the same (from, to, type) returns the
+// existing row with created=false rather than erroring.
+func (s *Service) AddRelation(ctx context.Context, fromTicketID, toTicketID uuid.UUID, relationType, createdBy string) (TicketRelation, bool, error) {
+	if !ValidRelationTypes[relationType] {
+		return TicketRelation{}, false, ErrRelationTypeInvalid
+	}
+	if fromTicketID == toTicketID {
+		return TicketRelation{}, false, ErrRelationSelfReference
+	}
+	return s.store.AddRelation(ctx, fromTicketID, toTicketID, relationType, createdBy)
+}
+
+// RemoveRelation deletes relationID, scoped to ticketID (either side) at the
+// store layer — the ownership invariant lives here, not just in the handler,
+// so any future caller (a script, a bulk job, a different handler) can't
+// delete an arbitrary relation by id without going through this check.
+// Returns ErrNotFound if the id doesn't exist, was already removed, or
+// belongs to a different ticket pair — the three cases are indistinguishable
+// on purpose (avoids leaking which one it was).
+func (s *Service) RemoveRelation(ctx context.Context, ticketID, relationID uuid.UUID) error {
+	found, err := s.store.RemoveRelation(ctx, ticketID, relationID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListRelations returns every relation where ticketID is either side
+// (from or to), unfiltered by direction — callers derive direction/label
+// from FromTicketID/ToTicketID vs ticketID themselves.
+func (s *Service) ListRelations(ctx context.Context, ticketID uuid.UUID) ([]TicketRelation, error) {
+	return s.store.ListRelationsForTicket(ctx, ticketID)
+}
+
+// ListRelationsWithSummary is like ListRelations but each row also carries a
+// summary (title_name/title/status/visibility) of whichever ticket is NOT
+// ticketID, for the GET .../relations handler's response + visibility filter.
+func (s *Service) ListRelationsWithSummary(ctx context.Context, ticketID uuid.UUID) ([]RelationWithSummary, error) {
+	return s.store.ListRelationsWithSummaryForTicket(ctx, ticketID)
+}
+
+// ListAllRelations is the brain-importer bulk pull path (paginated).
+func (s *Service) ListAllRelations(ctx context.Context, limit, offset int) ([]TicketRelation, int, error) {
+	return s.store.ListAllRelations(ctx, limit, offset)
+}

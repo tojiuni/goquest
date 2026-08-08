@@ -961,6 +961,239 @@ func (h *TicketHandler) RemoveRef(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// relationLabels maps relation_type to the human-readable label shown to the
+// caller, separately for the outgoing (this ticket is from_ticket_id) and
+// incoming/reverse (this ticket is to_ticket_id) direction. See design §2's
+// forward/reverse label table.
+var relationLabels = map[string]struct{ outgoing, incoming string }{
+	"blocks":     {outgoing: "Blocks", incoming: "Blocked by"},
+	"depends_on": {outgoing: "Depends on", incoming: "Affects"},
+	"duplicates": {outgoing: "Duplicates", incoming: "Duplicated by"},
+}
+
+// relationView is the flattened per-relation response shape for
+// GET .../relations: direction/label are computed server-side (relative to
+// the queried ticket) instead of forcing the client to derive them from
+// from_ticket_id/to_ticket_id, and from_ticket_id/to_ticket_id/visibility are
+// omitted since direction+label already encode the useful part of that.
+type relationView struct {
+	ID                   uuid.UUID `json:"id"`
+	RelationType         string    `json:"relation_type"`
+	Direction            string    `json:"direction"`
+	Label                string    `json:"label"`
+	OtherTicketID        uuid.UUID `json:"other_ticket_id"`
+	OtherTicketTitleName string    `json:"other_ticket_title_name,omitempty"`
+	OtherTicketTitle     string    `json:"other_ticket_title"`
+	OtherTicketStatus    string    `json:"other_ticket_status"`
+	CreatedAt            time.Time `json:"created_at"`
+	CreatedBy            string    `json:"created_by"`
+}
+
+// ListRelations handles GET /api/v1/tickets/{id}/relations. Returns every
+// relation where this ticket is either side, each carrying a summary of the
+// other-side ticket plus a server-computed direction/label. Relations whose
+// other-side ticket the caller cannot view are silently dropped (a filter,
+// not a rejection) — returning 403/404 for those rows, or leaking their
+// title/status, would confirm to an unauthorized caller that a relation to a
+// restricted ticket exists.
+func (h *TicketHandler) ListRelations(w http.ResponseWriter, r *http.Request) {
+	tk := auth.TicketFrom(r)
+	if tk == nil {
+		writeError(w, http.StatusInternalServerError, "ticket context missing (RequireTicketView not applied)")
+		return
+	}
+	rels, err := h.svc.ListRelationsWithSummary(r.Context(), tk.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list relations: "+err.Error())
+		return
+	}
+	// Visibility: batch two LookupResources calls (project + restricted) up
+	// front, same pattern as ListSubtasks, instead of one SpiceDB round-trip
+	// per relation row — a ticket with many relations would otherwise issue
+	// that many sequential RPCs.
+	uid := auth.RequesterID(r)
+	projIDs, unrP, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_project", uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+		return
+	}
+	restrIDs, unrR, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_restricted", uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+		return
+	}
+	unrestricted := unrP && unrR
+	projSet := uuidSet(parseTicketUUIDs(projIDs))
+	restrSet := uuidSet(parseTicketUUIDs(restrIDs))
+	// Always emit a non-nil slice so the JSON literal is `[]` not `null`.
+	out := make([]relationView, 0, len(rels))
+	for _, rel := range rels {
+		if !unrestricted && !visibleSubtask(rel.OtherTicketID, ticket.Visibility(rel.OtherTicketVisibility), projSet, restrSet) {
+			continue
+		}
+		direction := "incoming"
+		labels := relationLabels[rel.RelationType]
+		label := labels.incoming
+		if rel.FromTicketID == tk.ID {
+			direction = "outgoing"
+			label = labels.outgoing
+		}
+		out = append(out, relationView{
+			ID:                   rel.ID,
+			RelationType:         rel.RelationType,
+			Direction:            direction,
+			Label:                label,
+			OtherTicketID:        rel.OtherTicketID,
+			OtherTicketTitleName: rel.OtherTicketTitleName,
+			OtherTicketTitle:     rel.OtherTicketTitle,
+			OtherTicketStatus:    rel.OtherTicketStatus,
+			CreatedAt:            rel.CreatedAt,
+			CreatedBy:            rel.CreatedBy,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"relations": out})
+}
+
+// AddRelation handles POST /api/v1/tickets/{id}/relations.
+// Body: {"relation_type": "blocks", "to_ticket_id": "<uuid>"}.
+// Idempotent: replaying an existing (from, to, type) returns 200 with the
+// existing row, not an error.
+func (h *TicketHandler) AddRelation(w http.ResponseWriter, r *http.Request) {
+	tk := auth.TicketFrom(r)
+	if tk == nil {
+		writeError(w, http.StatusInternalServerError, "ticket context missing (RequireTicketView not applied)")
+		return
+	}
+	var body struct {
+		RelationType string `json:"relation_type"`
+		ToTicketID   string `json:"to_ticket_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	toID, err := uuid.Parse(body.ToTicketID)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid to_ticket_id")
+		return
+	}
+	actor := auth.RequesterID(r)
+	// RequireTicketView only gates the path ticket (tk); it says nothing about
+	// whether the caller can see to_ticket_id. Without this check, a caller
+	// could write a visible edge onto a ticket they can't otherwise view (and
+	// later read its title/status back via the relation summary). Treat
+	// "doesn't exist" and "exists but not viewable" identically (404) so this
+	// isn't usable as an existence oracle.
+	target, err := h.svc.Get(r.Context(), toID)
+	if err != nil {
+		if errors.Is(err, ticket.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "to_ticket_id not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "lookup to_ticket_id: "+err.Error())
+		return
+	}
+	canView, err := h.checker.CanViewTicket(r.Context(), toID, actor, spicedb.VisibilityMode(target.Visibility))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility check: "+err.Error())
+		return
+	}
+	if !canView {
+		writeError(w, http.StatusNotFound, "to_ticket_id not found")
+		return
+	}
+	rel, created, err := h.svc.AddRelation(r.Context(), tk.ID, toID, body.RelationType, actor)
+	if err != nil {
+		switch {
+		case errors.Is(err, ticket.ErrRelationTypeInvalid):
+			writeError(w, http.StatusBadRequest, "relation_type must be blocks, depends_on, or duplicates")
+		case errors.Is(err, ticket.ErrRelationSelfReference):
+			writeError(w, http.StatusBadRequest, "from_ticket_id and to_ticket_id must differ")
+		case errors.Is(err, ticket.ErrNotFound):
+			writeError(w, http.StatusNotFound, "to_ticket_id not found")
+		default:
+			writeError(w, http.StatusInternalServerError, "add relation: "+err.Error())
+		}
+		return
+	}
+	if created && h.audit != nil {
+		h.audit.Record(r.Context(), actor, "relation.add", "ticket", tk.ID.String(), map[string]any{
+			"to_ticket_id":  toID.String(),
+			"relation_type": body.RelationType,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"relation": rel, "created": created})
+}
+
+// RemoveRelation handles DELETE /api/v1/tickets/{id}/relations/{relation_id}.
+// Idempotent for relations that belong to this ticket; returns 404 if the
+// relation id doesn't exist or isn't associated with this ticket. This
+// ownership check is required: RequireTicketView only proves the caller can
+// view *some* ticket (the one in the path), not that relation_id belongs to
+// it — without the check, a caller could delete an arbitrary relation on an
+// unrelated ticket pair by guessing/knowing its id.
+func (h *TicketHandler) RemoveRelation(w http.ResponseWriter, r *http.Request) {
+	tk := auth.TicketFrom(r)
+	if tk == nil {
+		writeError(w, http.StatusInternalServerError, "ticket context missing (RequireTicketView not applied)")
+		return
+	}
+	relID, err := uuid.Parse(chi.URLParam(r, "relation_id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid relation_id")
+		return
+	}
+	// Ownership scoping (relID must belong to tk.ID) is enforced by the
+	// service/store, not here — see Service.RemoveRelation's doc comment.
+	if err := h.svc.RemoveRelation(r.Context(), tk.ID, relID); err != nil {
+		if errors.Is(err, ticket.ErrNotFound) {
+			// Uniform 404 whether the relation doesn't exist at all or exists but
+			// belongs to a different ticket pair — don't leak which case it is.
+			writeError(w, http.StatusNotFound, "relation not found for this ticket")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "remove relation: "+err.Error())
+		return
+	}
+	if h.audit != nil {
+		h.audit.Record(r.Context(), auth.RequesterID(r), "relation.remove", "ticket", tk.ID.String(), map[string]any{
+			"relation_id": relID.String(),
+		})
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ListAllRelations handles GET /api/v1/ticket-relations?limit=&offset=.
+// Bulk, unfiltered dump for the brain importer's batch pull — no per-ticket
+// SpiceDB visibility filtering (same trust boundary as other service-to-
+// service bulk reads using the API key).
+// maxTicketRelationsLimit caps the bulk relation dump's page size so a
+// caller (even an authenticated service) can't force an unbounded query
+// (e.g. ?limit=999999999) against the store in one request.
+const maxTicketRelationsLimit = 1000
+
+func (h *TicketHandler) ListAllRelations(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit := parseIntQuery(q.Get("limit"), 100)
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > maxTicketRelationsLimit {
+		limit = maxTicketRelationsLimit
+	}
+	offset := parseIntQuery(q.Get("offset"), 0)
+	rels, total, err := h.svc.ListAllRelations(r.Context(), limit, offset)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "list all relations: "+err.Error())
+		return
+	}
+	// Always emit a non-nil slice so the JSON literal is `[]` not `null`.
+	if rels == nil {
+		rels = []ticket.TicketRelation{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"relations": rels, "total": total, "limit": limit, "offset": offset})
+}
+
 // ReorderRefs handles PATCH /api/v1/tickets/{id}/refs/reorder.
 // Body: {"ordered_l1_ids": [...]}. Returns the new ordered slice on success.
 func (h *TicketHandler) ReorderRefs(w http.ResponseWriter, r *http.Request) {
