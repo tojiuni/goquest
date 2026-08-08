@@ -269,6 +269,18 @@ func (h *TicketHandler) List(w http.ResponseWriter, r *http.Request) {
 	if tn := q.Get("title_name"); tn != "" {
 		f.TitleName = &tn
 	}
+	if v := parseTimeQuery(q.Get("created_from")); v != nil {
+		f.CreatedFrom = v
+	}
+	if v := parseTimeQuery(q.Get("created_to")); v != nil {
+		f.CreatedTo = v
+	}
+	if v := parseTimeQuery(q.Get("completed_from")); v != nil {
+		f.CompletedFrom = v
+	}
+	if v := parseTimeQuery(q.Get("completed_to")); v != nil {
+		f.CompletedTo = v
+	}
 	if sq := q.Get("q"); sq != "" {
 		f.Query = &sq
 	}
@@ -1326,6 +1338,21 @@ func parseIntQuery(s string, def int) int {
 		return def
 	}
 	return v
+}
+
+// parseTimeQuery parses an RFC3339/ISO8601 UTC timestamp query param.
+// Empty or unparseable input returns nil, matching this file's convention
+// for other optional filter params (e.g. project_id) — a malformed value is
+// silently ignored (treated as "no filter") rather than a 400.
+func parseTimeQuery(s string) *time.Time {
+	if s == "" {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return nil
+	}
+	return &t
 }
 
 func dedupeTagIDs(ids []uuid.UUID) []uuid.UUID {

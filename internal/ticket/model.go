@@ -313,7 +313,17 @@ type ListTicketsFilter struct {
 	// start_at set — used by the roadmap viewer to separate grid-placed
 	// tickets from the unscheduled panel server-side instead of paginating
 	// the whole workspace client-side (goq-roadmap-backend-support).
-	Scheduled     bool
+	Scheduled bool
+	// CreatedFrom/CreatedTo and CompletedFrom/CompletedTo filter by a
+	// half-open date range: From is inclusive (>=), To is exclusive (<).
+	// The exclusive upper bound lets a "single day" filter map naturally to
+	// [date 00:00, date+1 00:00) — used by goquest-ui's contribution-graph
+	// ("잔디") view when a caller clicks a day cell. Each pair is independent;
+	// either bound may be nil to leave that side unbounded.
+	CreatedFrom   *time.Time
+	CreatedTo     *time.Time
+	CompletedFrom *time.Time
+	CompletedTo   *time.Time
 	TagIDs        []uuid.UUID
 	TitleName     *string
 	// Query is a free-text search term matched (case-insensitive substring)

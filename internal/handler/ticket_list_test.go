@@ -2,10 +2,40 @@ package handler
 
 import (
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/tojiuni/goquest/internal/auth"
 )
+
+// TestParseTimeQuery covers goq-ticket-list-date-range-filter's created_from/
+// created_to/completed_from/completed_to query params: valid RFC3339 parses,
+// empty/malformed input is silently ignored (nil) rather than erroring,
+// matching this file's convention for other optional filter params.
+func TestParseTimeQuery(t *testing.T) {
+	t.Run("empty string returns nil", func(t *testing.T) {
+		if got := parseTimeQuery(""); got != nil {
+			t.Fatalf("want nil, got %v", got)
+		}
+	})
+
+	t.Run("malformed value returns nil", func(t *testing.T) {
+		if got := parseTimeQuery("2026-08-08"); got != nil {
+			t.Fatalf("want nil for a bare date (not RFC3339), got %v", got)
+		}
+		if got := parseTimeQuery("not-a-timestamp"); got != nil {
+			t.Fatalf("want nil, got %v", got)
+		}
+	})
+
+	t.Run("valid RFC3339 UTC timestamp parses", func(t *testing.T) {
+		got := parseTimeQuery("2026-08-08T00:00:00Z")
+		want := time.Date(2026, 8, 8, 0, 0, 0, 0, time.UTC)
+		if got == nil || !got.Equal(want) {
+			t.Fatalf("want %v, got %v", want, got)
+		}
+	})
+}
 
 func TestParseTicketUUIDs_SkipsInvalid(t *testing.T) {
 	good := uuid.New()
