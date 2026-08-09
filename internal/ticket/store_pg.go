@@ -534,23 +534,33 @@ func ticketWhere(f ListTicketsFilter) (string, []any, int) {
 	if f.Scheduled {
 		where += " AND (t.due_at IS NOT NULL OR t.start_at IS NOT NULL)"
 	}
+	// CreatedFrom/CreatedTo and CompletedFrom/CompletedTo filter by
+	// COALESCE(start_at, created_at)/COALESCE(start_at, completed_at), not
+	// the bare column — these two filters exist for exactly one caller,
+	// goquest-ui's contribution-graph ("잔디") day-cell click-through, and
+	// that graph buckets a ticket by its real-world activity date: start_at
+	// when set (e.g. an auto-created workout ticket's actual workout time,
+	// which can be long after created_at/completed_at if backfilled by a
+	// retry), falling back to created_at/completed_at otherwise. The filter
+	// has to match that same fallback or a backfilled ticket's day-cell
+	// click would return zero rows for it.
 	if f.CreatedFrom != nil {
-		where += fmt.Sprintf(" AND t.created_at>=$%d", i)
+		where += fmt.Sprintf(" AND COALESCE(t.start_at, t.created_at)>=$%d", i)
 		args = append(args, *f.CreatedFrom)
 		i++
 	}
 	if f.CreatedTo != nil {
-		where += fmt.Sprintf(" AND t.created_at<$%d", i)
+		where += fmt.Sprintf(" AND COALESCE(t.start_at, t.created_at)<$%d", i)
 		args = append(args, *f.CreatedTo)
 		i++
 	}
 	if f.CompletedFrom != nil {
-		where += fmt.Sprintf(" AND t.completed_at>=$%d", i)
+		where += fmt.Sprintf(" AND COALESCE(t.start_at, t.completed_at)>=$%d", i)
 		args = append(args, *f.CompletedFrom)
 		i++
 	}
 	if f.CompletedTo != nil {
-		where += fmt.Sprintf(" AND t.completed_at<$%d", i)
+		where += fmt.Sprintf(" AND COALESCE(t.start_at, t.completed_at)<$%d", i)
 		args = append(args, *f.CompletedTo)
 		i++
 	}
