@@ -116,7 +116,11 @@ func main() {
 	// tojihub calendar sync (infra-tojihub-goquest-integration) — optional,
 	// same non-fatal-on-missing-config pattern as the cogito client below.
 	if cfg.TojihubConnectURL != "" {
+		if cfg.TojihubServiceToken == "" {
+			log.Printf("warn: TOJIHUB_CONNECT_URL set but TOJIHUB_SERVICE_TOKEN empty — calendar sync will fail auth")
+		}
 		svc.SetCalendarClient(tojihub.New(cfg.TojihubConnectURL, cfg.TojihubServiceToken))
+		log.Printf("tojihub calendar sync enabled: %s", cfg.TojihubConnectURL)
 	}
 
 	wsStore := workspace.NewPGStore(pool)

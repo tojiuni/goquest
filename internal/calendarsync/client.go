@@ -1,7 +1,8 @@
-// Package calendarsync defines a backend-agnostic interface for syncing
-// goquest tickets to an external calendar. It has no knowledge of any
-// specific backend (tojihub, or anything else) — see the tojihub
-// subpackage for the concrete implementation used today.
+// Package calendarsync defines the backend-agnostic Event data type used
+// to sync a goquest ticket to an external calendar. It has no knowledge of
+// any specific backend (tojihub, or anything else) — see the tojihub
+// subpackage for the concrete implementation used today. The
+// CalendarClient interface that consumes Event lives in package ticket.
 package calendarsync
 
 import "time"

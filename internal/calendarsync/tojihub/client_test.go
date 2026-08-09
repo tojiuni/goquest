@@ -96,9 +96,11 @@ func TestClient_DeleteEvent_SendsExpectedRequest(t *testing.T) {
 }
 
 // Compile-time assertion that *Client implements calendarsync.CalendarClient's
-// shape (the interface itself lives in package ticket to avoid an import
-// cycle — calendarsync cannot import ticket — so this checks the two
-// methods' signatures directly rather than referencing ticket.CalendarClient).
+// shape (the interface itself lives in package ticket, following the usual
+// Go idiom of consumer-defined interfaces — the interface lives next to the
+// code that uses it, not the code that implements it — so this checks the
+// two methods' signatures directly rather than referencing
+// ticket.CalendarClient).
 var _ interface {
 	UpsertEvent(ctx context.Context, ev calendarsync.Event) error
 	DeleteEvent(ctx context.Context, principal, objectID string) error
