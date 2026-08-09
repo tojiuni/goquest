@@ -10,6 +10,11 @@ type Store interface {
 	Create(ctx context.Context, t *Ticket) error
 	Get(ctx context.Context, id uuid.UUID) (*Ticket, error)
 	GetByProjectAndTitleName(ctx context.Context, projectID uuid.UUID, titleName string) (*Ticket, error)
+	// GetByTitleNameAnyProject is GetByProjectAndTitleName without a project
+	// filter — see the pgStore implementation's doc comment for why this
+	// exists (VCS auto-link's cross-project fallback) and its
+	// ErrAmbiguousTitleName contract.
+	GetByTitleNameAnyProject(ctx context.Context, titleName string) (*Ticket, error)
 	Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq) (*Ticket, error)
 	// ReopenTerminal moves a completed/cancelled ticket back to in_progress,
 	// intentionally bypassing the validateTransition state machine (terminals

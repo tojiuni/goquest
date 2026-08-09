@@ -49,12 +49,23 @@ func (f *fakeStore) GetBranchLink(_ context.Context, p, r, b string) (*VcsLink, 
 }
 func (f *fakeStore) LinksForTicket(context.Context, uuid.UUID) ([]VcsLink, error) { return nil, nil }
 
+// fakeTickets ignores the projectID argument entirely — it is blind to
+// per-project scoping and cannot exercise goq-vcs-link-cross-project-titlename
+// or its ambiguity path. Use projectScopedFakeTickets (below) for anything
+// project-scoping-sensitive; keep this one for tests that only care about
+// whether a title_name resolves at all.
 type fakeTickets struct {
 	byName map[string]*ticket.Ticket // title_name -> ticket
 	trans  []ticket.Status           // record of applied statuses
 }
 
 func (f *fakeTickets) GetByProjectAndTitleName(_ context.Context, _ uuid.UUID, tn string) (*ticket.Ticket, error) {
+	if t, ok := f.byName[tn]; ok {
+		return t, nil
+	}
+	return nil, ticket.ErrNotFound
+}
+func (f *fakeTickets) GetByTitleNameAnyProject(_ context.Context, tn string) (*ticket.Ticket, error) {
 	if t, ok := f.byName[tn]; ok {
 		return t, nil
 	}
@@ -275,5 +286,161 @@ func TestProcessAutoTransitionOff(t *testing.T) {
 	}
 	if len(tickets.trans) != 0 {
 		t.Fatalf("auto_transition=false must not transition")
+	}
+}
+
+// projectScopedFakeTickets models real per-project title_name scoping —
+// unlike fakeTickets above (which ignores the projectID argument
+// entirely and so cannot reproduce goq-vcs-link-cross-project-titlename),
+// this fake only returns a ticket from GetByProjectAndTitleName when it
+// actually lives in the requested project, matching the real store's
+// tickets_project_title_name_key semantics.
+type projectScopedFakeTickets struct {
+	byProject map[uuid.UUID]map[string]*ticket.Ticket // projectID -> title_name -> ticket
+	trans     []ticket.Status
+}
+
+func (f *projectScopedFakeTickets) GetByProjectAndTitleName(_ context.Context, projectID uuid.UUID, tn string) (*ticket.Ticket, error) {
+	if m, ok := f.byProject[projectID]; ok {
+		if t, ok := m[tn]; ok {
+			return t, nil
+		}
+	}
+	return nil, ticket.ErrNotFound
+}
+
+func (f *projectScopedFakeTickets) GetByTitleNameAnyProject(_ context.Context, tn string) (*ticket.Ticket, error) {
+	var found *ticket.Ticket
+	count := 0
+	for _, m := range f.byProject {
+		if t, ok := m[tn]; ok {
+			found = t
+			count++
+		}
+	}
+	switch count {
+	case 0:
+		return nil, ticket.ErrNotFound
+	case 1:
+		return found, nil
+	default:
+		return nil, ticket.ErrAmbiguousTitleName
+	}
+}
+
+func (f *projectScopedFakeTickets) Update(_ context.Context, id uuid.UUID, req ticket.UpdateTicketReq, _ string) (*ticket.Ticket, error) {
+	for _, m := range f.byProject {
+		for _, t := range m {
+			if t.ID == id && req.Status != nil {
+				t.Status = *req.Status
+				f.trans = append(f.trans, *req.Status)
+				return t, nil
+			}
+		}
+	}
+	return nil, ticket.ErrNotFound
+}
+
+// TestProcessBranchCreated_TicketInDifferentProject_LinksViaFallback
+// reproduces goq-vcs-link-cross-project-titlename: the repo is registered
+// under one project, but the ticket the branch implements is filed under a
+// different project (a normal case in this workspace — a repo's own
+// project and the project a given ticket lives in are not always the
+// same). Before the fix, GetByProjectAndTitleName's project-scoped miss
+// silently dropped the ticket and nothing linked or transitioned; the
+// resolveTicketByTitleName fallback must find it via
+// GetByTitleNameAnyProject.
+func TestProcessBranchCreated_TicketInDifferentProject_LinksViaFallback(t *testing.T) {
+	st := newFakeStore()
+	repo := repoFixture(true)
+	_ = st.CreateRepo(context.Background(), repo)
+
+	ticketProject := uuid.New() // deliberately NOT repo.ProjectID
+	tk := &ticket.Ticket{ID: uuid.New(), TitleName: "goq-foo", Status: ticket.StatusPending}
+	tickets := &projectScopedFakeTickets{byProject: map[uuid.UUID]map[string]*ticket.Ticket{
+		ticketProject: {"goq-foo": tk},
+	}}
+	svc := NewService(st, tickets, &fakeComments{})
+
+	err := svc.Process(context.Background(), "github", VcsEvent{
+		Kind: BranchCreated, Repo: "tojiuni/goquest", Branch: "feature/goq-foo", Actor: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.links) != 1 || st.links[0].Kind != KindBranch {
+		t.Fatalf("expected the ticket to link via cross-project fallback, got %+v", st.links)
+	}
+	// pending -> assigned -> in_progress, same as TestProcessBranchCreatedLinksAndStartsWork
+	if len(tickets.trans) != 2 || tickets.trans[0] != ticket.StatusAssigned || tickets.trans[1] != ticket.StatusInProgress {
+		t.Fatalf("expected assigned then in_progress via fallback, got %v", tickets.trans)
+	}
+}
+
+// TestProcessBranchCreated_ProjectScopedLookupWinsOverFallback pins
+// resolveTicketByTitleName's precedence: the repo's own project-scoped
+// match must win even when the SAME title_name also exists in a different
+// project. If the fallback were tried first (or the two were merged into
+// one query), this would either hit ErrAmbiguousTitleName and link
+// nothing, or link the wrong project's ticket — either way, the wrong
+// project's ticket (repoTk, never the otherTk) must be the one that ends
+// up linked and transitioned.
+func TestProcessBranchCreated_ProjectScopedLookupWinsOverFallback(t *testing.T) {
+	st := newFakeStore()
+	repo := repoFixture(true)
+	_ = st.CreateRepo(context.Background(), repo)
+
+	repoTk := &ticket.Ticket{ID: uuid.New(), TitleName: "goq-foo", Status: ticket.StatusPending}
+	otherTk := &ticket.Ticket{ID: uuid.New(), TitleName: "goq-foo", Status: ticket.StatusPending}
+	otherProject := uuid.New()
+	tickets := &projectScopedFakeTickets{byProject: map[uuid.UUID]map[string]*ticket.Ticket{
+		repo.ProjectID: {"goq-foo": repoTk},
+		otherProject:   {"goq-foo": otherTk},
+	}}
+	svc := NewService(st, tickets, &fakeComments{})
+
+	err := svc.Process(context.Background(), "github", VcsEvent{
+		Kind: BranchCreated, Repo: "tojiuni/goquest", Branch: "feature/goq-foo", Actor: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.links) != 1 || st.links[0].TicketID != repoTk.ID {
+		t.Fatalf("expected the repo's own ticket %s to link, got %+v", repoTk.ID, st.links)
+	}
+	if len(tickets.trans) != 2 || tickets.trans[0] != ticket.StatusAssigned || tickets.trans[1] != ticket.StatusInProgress {
+		t.Fatalf("expected assigned then in_progress on the repo's own ticket, got %v", tickets.trans)
+	}
+	if otherTk.Status != ticket.StatusPending {
+		t.Fatalf("the other project's ticket must be untouched, got status %v", otherTk.Status)
+	}
+}
+
+// TestProcessBranchCreated_AmbiguousAcrossProjects_SkipsLink verifies the
+// fallback refuses to guess when the title_name exists in more than one
+// project (neither of them the repo's own) — title_name is only unique
+// within a project, so this is a real, expected collision case, not a bug
+// in the fake. Silently linking the wrong ticket would be worse than not
+// linking at all (see goq-vcs-mention-vs-impl for the precedent).
+func TestProcessBranchCreated_AmbiguousAcrossProjects_SkipsLink(t *testing.T) {
+	st := newFakeStore()
+	repo := repoFixture(true)
+	_ = st.CreateRepo(context.Background(), repo)
+
+	otherProjectA, otherProjectB := uuid.New(), uuid.New()
+	tickets := &projectScopedFakeTickets{byProject: map[uuid.UUID]map[string]*ticket.Ticket{
+		otherProjectA: {"goq-foo": {ID: uuid.New(), TitleName: "goq-foo", Status: ticket.StatusPending}},
+		otherProjectB: {"goq-foo": {ID: uuid.New(), TitleName: "goq-foo", Status: ticket.StatusPending}},
+	}}
+	svc := NewService(st, tickets, &fakeComments{})
+
+	err := svc.Process(context.Background(), "github", VcsEvent{
+		Kind: BranchCreated, Repo: "tojiuni/goquest", Branch: "feature/goq-foo", Actor: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.links) != 0 {
+		t.Fatalf("ambiguous cross-project match must not link anything, got %+v", st.links)
+	}
+	if len(tickets.trans) != 0 {
+		t.Fatalf("ambiguous cross-project match must not transition anything, got %v", tickets.trans)
 	}
 }

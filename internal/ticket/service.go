@@ -293,6 +293,13 @@ func (s *Service) GetByProjectAndTitleName(ctx context.Context, projectID uuid.U
 	return s.store.GetByProjectAndTitleName(ctx, projectID, titleName)
 }
 
+// GetByTitleNameAnyProject resolves a ticket by title_name without a project
+// filter. Used by VCS auto-link's cross-project fallback (goq-vcs-link-cross-project-titlename) —
+// see the store implementation for the ErrAmbiguousTitleName contract.
+func (s *Service) GetByTitleNameAnyProject(ctx context.Context, titleName string) (*Ticket, error) {
+	return s.store.GetByTitleNameAnyProject(ctx, titleName)
+}
+
 func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq, actor string) (*Ticket, error) {
 	if req.AssigneeType != nil && *req.AssigneeType == AssigneeOrg && req.AssigneeOrgID == nil {
 		return nil, fmt.Errorf("%w: assignee_org_id required when assignee_type is org", ErrValidation)
