@@ -44,10 +44,3 @@ func ticketCalendarEvent(t *Ticket) calendarsync.Event {
 		DTStart:   *t.DueAt,
 	}
 }
-
-// ExportedTicketCalendarEvent is a test-only shim exposing
-// ticketCalendarEvent to the external ticket_test package, matching how
-// this package is tested everywhere else in the codebase.
-func ExportedTicketCalendarEvent(t *Ticket) calendarsync.Event {
-	return ticketCalendarEvent(t)
-}
