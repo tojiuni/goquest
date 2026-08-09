@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -112,6 +113,22 @@ func main() {
 	nuclexEmitter := integration.NewNuclexEmitter(rdb, cfg.NuclexEventsStream)
 	webhookDeliverer := webhook.New()
 	svc := ticket.NewService(store, pub, nuclexEmitter, xpSvc, webhookDeliverer, magicSvc)
+
+	if cfg.NuclexExcludeProjectIDs != "" {
+		var excludeIDs []uuid.UUID
+		for _, raw := range strings.Split(cfg.NuclexExcludeProjectIDs, ",") {
+			raw = strings.TrimSpace(raw)
+			if raw == "" {
+				continue
+			}
+			id, err := uuid.Parse(raw)
+			if err != nil {
+				log.Fatalf("invalid NUCLEX_EXCLUDE_PROJECT_IDS entry %q: %v", raw, err)
+			}
+			excludeIDs = append(excludeIDs, id)
+		}
+		svc.SetNuclexExcludeProjectIDs(excludeIDs)
+	}
 
 	wsStore := workspace.NewPGStore(pool)
 

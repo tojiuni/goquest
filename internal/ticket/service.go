@@ -76,10 +76,46 @@ type Service struct {
 	magic    MagicTokener
 	cal      CalendarClient
 	projects ProjectNameResolver
+
+	// nuclexExcludeProjectIDs are projects whose tickets never emit nuclex
+	// events (see SetNuclexExcludeProjectIDs) — nil/empty means no exclusion.
+	nuclexExcludeProjectIDs map[uuid.UUID]bool
 }
 
 func NewService(store Store, pub Publisher, nuclex NuclexEmitter, xp XPAwarder, wh WebhookSender, magic MagicTokener) *Service {
 	return &Service{store: store, pub: pub, nuclex: nuclex, xp: xp, webhook: wh, magic: magic}
+}
+
+// SetNuclexExcludeProjectIDs wires an optional per-project nuclex opt-out,
+// same adoption pattern as SetCalendarClient. Every ticket.created/
+// ticket.completed/ticket.failed nuclex event goquest emits today is
+// unconditional and system-wide (no per-tag or per-domain filter) — nuclex
+// in turn sends every ticket.completed straight to the "toji" Telegram
+// group. That's fine at human-driven ticket volume, but a project whose
+// tickets are created programmatically in bulk (e.g. health-webhook's
+// auto-created-and-completed workout tickets, see
+// health-webhook-workout-ingest) floods that group with one message per
+// ticket. This is a blunt, temporary per-project mute — TODO(nuclex
+// per-tag filtering): a tag-based filter (e.g. skip a "workout" tag) would
+// let health project tickets that aren't bulk-automated still notify;
+// tracked separately since it needs the emitted event to carry tags, which
+// it doesn't today (see internal/integration/nuclex.go's emitWith).
+func (s *Service) SetNuclexExcludeProjectIDs(ids []uuid.UUID) {
+	if len(ids) == 0 {
+		s.nuclexExcludeProjectIDs = nil
+		return
+	}
+	m := make(map[uuid.UUID]bool, len(ids))
+	for _, id := range ids {
+		m[id] = true
+	}
+	s.nuclexExcludeProjectIDs = m
+}
+
+// nuclexExempt reports whether t's project is muted via
+// SetNuclexExcludeProjectIDs.
+func (s *Service) nuclexExempt(t *Ticket) bool {
+	return len(s.nuclexExcludeProjectIDs) > 0 && t.ProjectID != nil && s.nuclexExcludeProjectIDs[*t.ProjectID]
 }
 
 // SetCalendarClient wires an optional CalendarClient into the service. Not
@@ -223,7 +259,7 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 		s.syncCalendarEvent(t)
 	}
 
-	if s.nuclex != nil {
+	if s.nuclex != nil && !s.nuclexExempt(t) {
 		if err := s.nuclex.EmitCreated(ctx, t); err != nil {
 			log.Printf("warn: nuclex emit created: %v", err)
 		}
@@ -386,7 +422,7 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq,
 		if err := s.pub.PublishCompleted(ctx, t); err != nil {
 			log.Printf("warn: publish completed: %v", err)
 		}
-		if s.nuclex != nil {
+		if s.nuclex != nil && !s.nuclexExempt(t) {
 			var emitErr error
 			if t.Status == StatusCompleted {
 				emitErr = s.nuclex.EmitCompleted(ctx, t)
