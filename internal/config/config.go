@@ -36,6 +36,10 @@ type Config struct {
 	GoquestAPIKey      string
 	DefaultProjectID   string
 	NuclexEventsStream string
+	// NuclexExcludeProjectIDs is a comma-separated list of project UUIDs
+	// whose tickets never emit nuclex events (see
+	// Service.SetNuclexExcludeProjectIDs) — empty means no exclusion.
+	NuclexExcludeProjectIDs string
 
 	// SpiceDB
 	SpiceDBEndpoint string
@@ -135,7 +139,8 @@ func Load() *Config {
 		GoquestServiceURL:  os.Getenv("GOQUEST_SERVICE_URL"),
 		GoquestAPIKey:      os.Getenv("GOQUEST_API_KEY"),
 		DefaultProjectID:   os.Getenv("GOQUEST_DEFAULT_PROJECT_ID"),
-		NuclexEventsStream: envOrDefault("NUCLEX_EVENTS_STREAM", "nuclex.events"),
+		NuclexEventsStream:      envOrDefault("NUCLEX_EVENTS_STREAM", "nuclex.events"),
+		NuclexExcludeProjectIDs: os.Getenv("NUCLEX_EXCLUDE_PROJECT_IDS"),
 
 		SpiceDBEndpoint: envOrDefault("SPICEDB_ENDPOINT", "localhost:50051"),
 		SpiceDBToken:    os.Getenv("SPICEDB_TOKEN"),

@@ -423,6 +423,26 @@ func TestService_Update_CompletedEmitsNuclex(t *testing.T) {
 	}
 }
 
+func TestService_Update_CompletedSkipsNuclexForExcludedProject(t *testing.T) {
+	excluded := uuid.New()
+	base := newTestTicket(ticket.StatusInProgress)
+	base.ProjectID = &excluded
+	store := &mockStore{getTicket: base}
+	pub := &mockPublisher{}
+	nuclex := &mockNuclex{}
+	svc := ticket.NewService(store, pub, nuclex, nil, nil, nil)
+	svc.SetNuclexExcludeProjectIDs([]uuid.UUID{excluded})
+
+	completed := ticket.StatusCompleted
+	_, err := svc.Update(context.Background(), base.ID, ticket.UpdateTicketReq{Status: &completed}, "test-actor")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if nuclex.completedCalls != 0 {
+		t.Errorf("expected 0 nuclex EmitCompleted calls for an excluded project, got %d", nuclex.completedCalls)
+	}
+}
+
 func TestService_Update_FailedEmitsNuclexFailed(t *testing.T) {
 	base := newTestTicket(ticket.StatusInProgress)
 	store := &mockStore{getTicket: base}
@@ -1079,6 +1099,49 @@ func TestCreate_EmitsNuclexCreated(t *testing.T) {
 	}
 	if nux.createdCalls[0].ID != created.ID {
 		t.Errorf("EmitCreated called with ticket ID %s, want %s", nux.createdCalls[0].ID, created.ID)
+	}
+}
+
+func TestCreate_SkipsNuclexEmitForExcludedProject(t *testing.T) {
+	store := &mockStore{}
+	pub := &mockPublisher{}
+	nux := &mockNuclex{}
+	svc := ticket.NewService(store, pub, nux, nil, nil, nil)
+	excluded := uuid.New()
+	svc.SetNuclexExcludeProjectIDs([]uuid.UUID{excluded})
+
+	_, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title:     "bulk-automated ticket",
+		Type:      ticket.TypeTask,
+		ProjectID: &excluded,
+	}, "user1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(nux.createdCalls) != 0 {
+		t.Errorf("EmitCreated called %d times, want 0 for an excluded project", len(nux.createdCalls))
+	}
+}
+
+func TestCreate_StillEmitsNuclexForNonExcludedProject(t *testing.T) {
+	store := &mockStore{}
+	pub := &mockPublisher{}
+	nux := &mockNuclex{}
+	svc := ticket.NewService(store, pub, nux, nil, nil, nil)
+	excluded := uuid.New()
+	other := uuid.New()
+	svc.SetNuclexExcludeProjectIDs([]uuid.UUID{excluded})
+
+	_, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title:     "ordinary ticket",
+		Type:      ticket.TypeTask,
+		ProjectID: &other,
+	}, "user1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(nux.createdCalls) != 1 {
+		t.Errorf("EmitCreated called %d times, want 1 for a non-excluded project", len(nux.createdCalls))
 	}
 }
 
