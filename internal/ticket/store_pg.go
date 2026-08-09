@@ -862,13 +862,14 @@ var (
 	ErrProjectNotFound    = errors.New("target project not found")
 	ErrCrossWorkspaceMove = errors.New("target project is in a different workspace")
 	// ErrAmbiguousTitleName is returned by GetByTitleNameAnyProject when more
-	// than one project has a ticket with the given title_name — title_name is
-	// only guaranteed unique within a project (tickets_project_title_name_key
-	// is a per-project partial unique index), so a cross-project lookup can
-	// genuinely collide. Callers must treat this as "don't guess", not as
-	// not-found — see internal/vcs's resolveTickets, which relies on this to
-	// avoid silently linking the wrong ticket.
-	ErrAmbiguousTitleName = errors.New("title_name matches tickets in more than one project")
+	// than one ticket has the given title_name — title_name is only
+	// guaranteed unique within a project (tickets_project_title_name_key is a
+	// per-project partial unique index, which also doesn't cover tickets with
+	// no project at all), so a project-unscoped lookup can genuinely collide.
+	// Callers must treat this as "don't guess", not as not-found — see
+	// internal/vcs's resolveTickets, which relies on this to avoid silently
+	// linking the wrong ticket.
+	ErrAmbiguousTitleName = errors.New("title_name matches more than one ticket")
 )
 
 func (s *pgStore) ListSubtasks(ctx context.Context, parentID uuid.UUID) ([]*Ticket, error) {

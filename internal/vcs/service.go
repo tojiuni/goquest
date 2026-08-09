@@ -139,27 +139,50 @@ func (s *Service) resolveTickets(ctx context.Context, provider string, repo *Vcs
 }
 
 // resolveTicketByTitleName looks up tn in repo's own registered project
-// first (the common, fast, unambiguous case), then falls back to a
-// cross-project lookup — a repo's registered project and the project a
-// given ticket is filed in are not always the same (e.g. a ticket filed
-// under a parent epic in another project; see
+// first (the common, fast, unambiguous case — always tried first and wins
+// on any match, so a title_name colliding across projects still resolves
+// to the repo's own ticket rather than tripping the ambiguity fallback
+// below), then falls back to a cross-project lookup — a repo's registered
+// project and the project a given ticket is filed in are not always the
+// same (e.g. a ticket filed under a parent epic in another project, in
+// this workspace often a different workspace entirely; see
 // goq-vcs-link-cross-project-titlename, where this fallback was added
 // after a real branch/PR/merge sequence silently failed to link at every
-// step). Returns nil (skip, don't link) if neither resolves, or if the
-// fallback is ambiguous — an ambiguous cross-project match must not guess.
+// step). The fallback intentionally has no workspace/project restriction
+// of its own — restricting it would have missed the exact bug it exists to
+// fix — so it does widen this file's existing false-positive-link surface
+// (see goq-vcs-mention-vs-impl) across every project in the instance, not
+// just the repo's own; accepted for now since transitions still require a
+// head-ref match (see headRef in resolveTickets), only linking/commenting
+// gets wider.
+//
+// Returns nil (skip, don't link) if neither resolves, or if the fallback
+// is ambiguous — an ambiguous cross-project match must not guess. Every
+// non-nil-error outcome is logged: an unexpected DB error on either lookup
+// is exactly the kind of failure this function must not repeat the
+// original bug's silence on.
 func (s *Service) resolveTicketByTitleName(ctx context.Context, repo *VcsRepo, tn string) *ticket.Ticket {
-	if t, err := s.tickets.GetByProjectAndTitleName(ctx, repo.ProjectID, tn); err == nil {
+	t, err := s.tickets.GetByProjectAndTitleName(ctx, repo.ProjectID, tn)
+	if err == nil {
 		return t
 	}
-	t, err := s.tickets.GetByTitleNameAnyProject(ctx, tn)
+	if !errors.Is(err, ticket.ErrNotFound) {
+		log.Printf("warn: vcs: project-scoped lookup of title_name %q in repo %s failed: %v", tn, repo.RepoFullName, err)
+		return nil
+	}
+
+	t, err = s.tickets.GetByTitleNameAnyProject(ctx, tn)
 	switch {
 	case err == nil:
-		log.Printf("vcs: title_name %q resolved outside repo %s's registered project (found in a different project) — linking via cross-project fallback", tn, repo.RepoFullName)
+		log.Printf("vcs: title_name %q resolved outside repo %s's registered project — linking ticket %s (project %s) via cross-project fallback", tn, repo.RepoFullName, t.ID, projectIDString(t))
 		return t
 	case errors.Is(err, ticket.ErrAmbiguousTitleName):
 		log.Printf("warn: vcs: title_name %q matches tickets in more than one project — skipping link (ambiguous)", tn)
 		return nil
+	case errors.Is(err, ticket.ErrNotFound):
+		return nil
 	default:
+		log.Printf("warn: vcs: cross-project lookup of title_name %q failed: %v", tn, err)
 		return nil
 	}
 }
@@ -267,4 +290,13 @@ func (s *Service) transitionAndNote(ctx context.Context, t *ticket.Ticket, to ti
 
 func isTerminal(st ticket.Status) bool {
 	return st == ticket.StatusCompleted || st == ticket.StatusFailed || st == ticket.StatusCancelled
+}
+
+// projectIDString renders t.ProjectID for a log line ("none" if unset) —
+// legacy tickets can have a nil ProjectID.
+func projectIDString(t *ticket.Ticket) string {
+	if t.ProjectID == nil {
+		return "none"
+	}
+	return t.ProjectID.String()
 }

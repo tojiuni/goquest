@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tojiuni/goquest/internal/ticket"
@@ -82,26 +83,87 @@ func TestGetByTitleNameAnyProject_NotFound(t *testing.T) {
 }
 
 // TestGetByTitleNameAnyProject_Finds exercises the found path against the
-// real store — a single ticket with this title_name, no project set. Proves
-// the query (no project filter, unlike GetByProjectAndTitleName) is
-// syntactically and semantically correct against the real schema, not just
-// the fake used by internal/vcs's tests.
+// real store — a single ticket with this title_name, with a real project set
+// (the actual bug scenario: a ticket filed under some project, looked up
+// without knowing which). Proves the query (no project filter, unlike
+// GetByProjectAndTitleName) is syntactically and semantically correct
+// against the real schema, not just the fake used by internal/vcs's tests.
 func TestGetByTitleNameAnyProject_Finds(t *testing.T) {
-	ctx, store, cleanup := newTestStore(t)
-	defer cleanup()
+	ctx, pool, store := newTestStoreWithPool(t)
 
+	projectID := createTestProject(t, ctx, pool, "any-project-lookup-finds")
 	tn := "goq-any-project-lookup-" + uuid.NewString()[:8]
 	tk := &ticket.Ticket{
 		ID: uuid.New(), Title: "any-project lookup test", TitleName: tn,
 		Type: ticket.TypeTask, Status: ticket.StatusPending, Priority: ticket.PriorityNormal,
 		AssigneeType: ticket.AssigneeHuman, RequesterID: "test@example.com",
-		Visibility: ticket.VisibilityProject,
+		Visibility: ticket.VisibilityProject, ProjectID: &projectID,
 	}
 	require.NoError(t, store.Create(ctx, tk))
 
 	found, err := store.GetByTitleNameAnyProject(ctx, tn)
 	require.NoError(t, err)
 	assert.Equal(t, tk.ID, found.ID)
+}
+
+// TestGetByTitleNameAnyProject_AmbiguousAcrossRealProjects is the store-level
+// counterpart to internal/vcs's fake-driven ambiguity tests — it proves the
+// >1-row branch in the real pgStore implementation, against real project FK
+// rows, not just projectScopedFakeTickets' own hand-written counting
+// (goq-vcs-link-cross-project-titlename).
+func TestGetByTitleNameAnyProject_AmbiguousAcrossRealProjects(t *testing.T) {
+	ctx, pool, store := newTestStoreWithPool(t)
+
+	projectA := createTestProject(t, ctx, pool, "ambiguous-title-a")
+	projectB := createTestProject(t, ctx, pool, "ambiguous-title-b")
+	tn := "goq-ambiguous-title-" + uuid.NewString()[:8]
+
+	require.NoError(t, store.Create(ctx, &ticket.Ticket{
+		ID: uuid.New(), Title: "ambiguous A", TitleName: tn,
+		Type: ticket.TypeTask, Status: ticket.StatusPending, Priority: ticket.PriorityNormal,
+		AssigneeType: ticket.AssigneeHuman, RequesterID: "test@example.com",
+		Visibility: ticket.VisibilityProject, ProjectID: &projectA,
+	}))
+	require.NoError(t, store.Create(ctx, &ticket.Ticket{
+		ID: uuid.New(), Title: "ambiguous B", TitleName: tn,
+		Type: ticket.TypeTask, Status: ticket.StatusPending, Priority: ticket.PriorityNormal,
+		AssigneeType: ticket.AssigneeHuman, RequesterID: "test@example.com",
+		Visibility: ticket.VisibilityProject, ProjectID: &projectB,
+	}))
+
+	_, err := store.GetByTitleNameAnyProject(ctx, tn)
+	require.ErrorIs(t, err, ticket.ErrAmbiguousTitleName)
+}
+
+// newTestStoreWithPool is newTestStore but also returns the pool, for tests
+// that need raw SQL access (e.g. inserting workspace/project fixture rows
+// that ticket.Store has no create method for).
+func newTestStoreWithPool(t *testing.T) (context.Context, *pgxpool.Pool, ticket.Store) {
+	t.Helper()
+	pool, store := setupTestDB(t)
+	return context.Background(), pool, store
+}
+
+// createTestProject inserts a minimal workspace + project row via raw SQL
+// (ticket.Store has no create method for either — they belong to
+// internal/workspace/internal/project, out of this package's test scope)
+// and returns the project's id, satisfying tickets.project_id's FK.
+func createTestProject(t *testing.T, ctx context.Context, pool *pgxpool.Pool, name string) uuid.UUID {
+	t.Helper()
+	wsID := uuid.New()
+	slug := "ws-" + name + "-" + wsID.String()[:8]
+	_, err := pool.Exec(ctx,
+		`INSERT INTO workspaces (id, name, slug, owner_id) VALUES ($1, $2, $3, 'test@example.com')`,
+		wsID, slug, slug)
+	require.NoError(t, err)
+
+	pjID := uuid.New()
+	_, err = pool.Exec(ctx,
+		`INSERT INTO projects (id, workspace_id, name, created_by) VALUES ($1, $2, $3, 'test@example.com')`,
+		pjID, wsID, name+"-"+pjID.String()[:8])
+	require.NoError(t, err)
+
+	return pjID
 }
 
 // TestList_FilterByTitleName exercises the new title_name list filter against

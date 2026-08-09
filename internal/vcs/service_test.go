@@ -49,6 +49,11 @@ func (f *fakeStore) GetBranchLink(_ context.Context, p, r, b string) (*VcsLink, 
 }
 func (f *fakeStore) LinksForTicket(context.Context, uuid.UUID) ([]VcsLink, error) { return nil, nil }
 
+// fakeTickets ignores the projectID argument entirely — it is blind to
+// per-project scoping and cannot exercise goq-vcs-link-cross-project-titlename
+// or its ambiguity path. Use projectScopedFakeTickets (below) for anything
+// project-scoping-sensitive; keep this one for tests that only care about
+// whether a title_name resolves at all.
 type fakeTickets struct {
 	byName map[string]*ticket.Ticket // title_name -> ticket
 	trans  []ticket.Status           // record of applied statuses
@@ -368,6 +373,44 @@ func TestProcessBranchCreated_TicketInDifferentProject_LinksViaFallback(t *testi
 	// pending -> assigned -> in_progress, same as TestProcessBranchCreatedLinksAndStartsWork
 	if len(tickets.trans) != 2 || tickets.trans[0] != ticket.StatusAssigned || tickets.trans[1] != ticket.StatusInProgress {
 		t.Fatalf("expected assigned then in_progress via fallback, got %v", tickets.trans)
+	}
+}
+
+// TestProcessBranchCreated_ProjectScopedLookupWinsOverFallback pins
+// resolveTicketByTitleName's precedence: the repo's own project-scoped
+// match must win even when the SAME title_name also exists in a different
+// project. If the fallback were tried first (or the two were merged into
+// one query), this would either hit ErrAmbiguousTitleName and link
+// nothing, or link the wrong project's ticket — either way, the wrong
+// project's ticket (repoTk, never the otherTk) must be the one that ends
+// up linked and transitioned.
+func TestProcessBranchCreated_ProjectScopedLookupWinsOverFallback(t *testing.T) {
+	st := newFakeStore()
+	repo := repoFixture(true)
+	_ = st.CreateRepo(context.Background(), repo)
+
+	repoTk := &ticket.Ticket{ID: uuid.New(), TitleName: "goq-foo", Status: ticket.StatusPending}
+	otherTk := &ticket.Ticket{ID: uuid.New(), TitleName: "goq-foo", Status: ticket.StatusPending}
+	otherProject := uuid.New()
+	tickets := &projectScopedFakeTickets{byProject: map[uuid.UUID]map[string]*ticket.Ticket{
+		repo.ProjectID: {"goq-foo": repoTk},
+		otherProject:   {"goq-foo": otherTk},
+	}}
+	svc := NewService(st, tickets, &fakeComments{})
+
+	err := svc.Process(context.Background(), "github", VcsEvent{
+		Kind: BranchCreated, Repo: "tojiuni/goquest", Branch: "feature/goq-foo", Actor: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.links) != 1 || st.links[0].TicketID != repoTk.ID {
+		t.Fatalf("expected the repo's own ticket %s to link, got %+v", repoTk.ID, st.links)
+	}
+	if len(tickets.trans) != 2 || tickets.trans[0] != ticket.StatusAssigned || tickets.trans[1] != ticket.StatusInProgress {
+		t.Fatalf("expected assigned then in_progress on the repo's own ticket, got %v", tickets.trans)
+	}
+	if otherTk.Status != ticket.StatusPending {
+		t.Fatalf("the other project's ticket must be untouched, got status %v", otherTk.Status)
 	}
 }
 
