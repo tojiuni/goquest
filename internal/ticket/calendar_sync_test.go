@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/tojiuni/goquest/internal/calendarsync"
 	"github.com/tojiuni/goquest/internal/ticket"
 )
@@ -28,7 +29,7 @@ func (f *syncFakeCalendarClient) UpsertEvent(_ context.Context, ev calendarsync.
 	return nil
 }
 
-func (f *syncFakeCalendarClient) DeleteEvent(_ context.Context, _, objectID string) error {
+func (f *syncFakeCalendarClient) DeleteEvent(_ context.Context, _, _, objectID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deleted = append(f.deleted, objectID)
@@ -204,7 +205,7 @@ func (failingCalendarClient) UpsertEvent(_ context.Context, _ calendarsync.Event
 	return errors.New("boom")
 }
 
-func (failingCalendarClient) DeleteEvent(_ context.Context, _, _ string) error {
+func (failingCalendarClient) DeleteEvent(_ context.Context, _, _, _ string) error {
 	return errors.New("boom")
 }
 
@@ -251,4 +252,99 @@ func TestService_Reopen_WithDueAt_UpsertsCalendarEvent(t *testing.T) {
 	}
 
 	waitFor(t, func() bool { return cal.upsertCount() == 1 })
+}
+
+// fakeProjectNameResolver is a simple in-memory ProjectNameResolver fake —
+// no concurrency concerns beyond syncFakeCalendarClient's (reads happen from
+// the same background goroutine that eventually calls UpsertEvent, never
+// concurrently with the map being built in the test itself).
+type fakeProjectNameResolver map[uuid.UUID]string
+
+func (f fakeProjectNameResolver) ProjectName(_ context.Context, id uuid.UUID) (string, error) {
+	name, ok := f[id]
+	if !ok {
+		return "", errors.New("project not found")
+	}
+	return name, nil
+}
+
+func TestService_Create_WithProject_UsesProjectCalendarIDAndColor(t *testing.T) {
+	due := time.Now().Add(24 * time.Hour).UTC()
+	projectID := uuid.New()
+	store := &mockStore{}
+	cal := &syncFakeCalendarClient{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+	svc.SetProjectNameResolver(fakeProjectNameResolver{projectID: "Project Foo"})
+
+	_, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title:     "project-scoped ticket",
+		DueAt:     &due,
+		ProjectID: &projectID,
+	}, "user1@example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	waitFor(t, func() bool { return cal.upsertCount() == 1 })
+	ev := cal.upserted[0]
+	if ev.CalendarID != projectID.String() {
+		t.Errorf("expected calendar_id %q, got %q", projectID.String(), ev.CalendarID)
+	}
+	if ev.CalendarDisplayName != "Project Foo" {
+		t.Errorf("expected calendar display name %q, got %q", "Project Foo", ev.CalendarDisplayName)
+	}
+	if ev.CalendarColor == "" {
+		t.Error("expected a non-empty deterministic calendar color for a project ticket")
+	}
+}
+
+func TestService_Create_WithoutProject_UsesDefaultCalendar(t *testing.T) {
+	due := time.Now().Add(24 * time.Hour).UTC()
+	store := &mockStore{}
+	cal := &syncFakeCalendarClient{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+
+	_, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title: "no project",
+		DueAt: &due,
+	}, "user1@example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	waitFor(t, func() bool { return cal.upsertCount() == 1 })
+	ev := cal.upserted[0]
+	if ev.CalendarID != "default" {
+		t.Errorf("expected calendar_id %q, got %q", "default", ev.CalendarID)
+	}
+	if ev.CalendarColor != "" {
+		t.Errorf("expected no color for the shared default calendar, got %q", ev.CalendarColor)
+	}
+}
+
+func TestService_Create_ProjectNameResolverNil_StillUpsertsWithEmptyDisplayName(t *testing.T) {
+	// SetProjectNameResolver is never called here — must not panic or block,
+	// same nil-checked-dependency contract as SetCalendarClient.
+	due := time.Now().Add(24 * time.Hour).UTC()
+	projectID := uuid.New()
+	store := &mockStore{}
+	cal := &syncFakeCalendarClient{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+
+	_, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title:     "project ticket, no resolver wired",
+		DueAt:     &due,
+		ProjectID: &projectID,
+	}, "user1@example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	waitFor(t, func() bool { return cal.upsertCount() == 1 })
+	if cal.upserted[0].CalendarDisplayName != "" {
+		t.Errorf("expected empty display name with no resolver wired, got %q", cal.upserted[0].CalendarDisplayName)
+	}
 }

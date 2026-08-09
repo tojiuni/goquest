@@ -8,5 +8,5 @@ import "github.com/tojiuni/goquest/internal/calendarsync"
 // only includes it when building tests — it never ships in the real
 // binary.
 func ExportedTicketCalendarEvent(t *Ticket) calendarsync.Event {
-	return ticketCalendarEvent(t)
+	return ticketCalendarEvent(t, ticketCalendarID(t), "", ticketCalendarColor(t))
 }

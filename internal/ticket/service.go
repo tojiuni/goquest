@@ -31,7 +31,17 @@ type Publisher interface {
 // entirely, same as nuclex/xp/webhook/magic when left unset.
 type CalendarClient interface {
 	UpsertEvent(ctx context.Context, ev calendarsync.Event) error
-	DeleteEvent(ctx context.Context, principal, objectID string) error
+	DeleteEvent(ctx context.Context, principal, calendarID, objectID string) error
+}
+
+// ProjectNameResolver resolves a project ID to its display name, used to
+// label the project-specific calendar tojihub creates for it (see
+// ticketCalendarID in calendar_event.go — each project gets its own
+// calendar). Optional and nil-checked exactly like CalendarClient; a nil
+// resolver (or a ticket with no project) means the calendar sync omits a
+// display name and tojihub falls back to its own default.
+type ProjectNameResolver interface {
+	ProjectName(ctx context.Context, id uuid.UUID) (string, error)
 }
 
 type NuclexEmitter interface {
@@ -58,13 +68,14 @@ type MagicTokener interface {
 }
 
 type Service struct {
-	store   Store
-	pub     Publisher
-	nuclex  NuclexEmitter
-	xp      XPAwarder
-	webhook WebhookSender
-	magic   MagicTokener
-	cal     CalendarClient
+	store    Store
+	pub      Publisher
+	nuclex   NuclexEmitter
+	xp       XPAwarder
+	webhook  WebhookSender
+	magic    MagicTokener
+	cal      CalendarClient
+	projects ProjectNameResolver
 }
 
 func NewService(store Store, pub Publisher, nuclex NuclexEmitter, xp XPAwarder, wh WebhookSender, magic MagicTokener) *Service {
@@ -78,6 +89,12 @@ func NewService(store Store, pub Publisher, nuclex NuclexEmitter, xp XPAwarder, 
 // sync, matching the nuclex/xp/webhook/magic nil-checked pattern.
 func (s *Service) SetCalendarClient(c CalendarClient) {
 	s.cal = c
+}
+
+// SetProjectNameResolver wires an optional ProjectNameResolver into the
+// service, same adoption pattern as SetCalendarClient.
+func (s *Service) SetProjectNameResolver(r ProjectNameResolver) {
+	s.projects = r
 }
 
 // Create creates a new ticket. requesterID is pre-extracted from the JWT by the HTTP handler.
@@ -897,15 +914,34 @@ const calendarSyncTimeout = 15 * time.Second
 // resolved principal is empty — ticketCalendarPrincipal returns "" when
 // neither AssigneeID nor RequesterID is email-shaped, and the calendar
 // backend has no use for an empty/non-email principal.
+//
+// The project's display name is resolved inside the goroutine (it needs the
+// same context/timeout as the calendar call itself) via s.projects — a nil
+// resolver or a ticket with no project just means an empty display name,
+// never a failed sync; the calendar backend defaults it on its own. `ev` is
+// built synchronously (t is only ever dereferenced on this call path, never
+// inside the background goroutine — matching every other call here) and the
+// goroutine only fills in ev.CalendarDisplayName on its own private copy
+// before sending it.
 func (s *Service) syncCalendarEvent(t *Ticket) {
-	ev := ticketCalendarEvent(t)
-	if ev.Principal == "" {
+	principal := ticketCalendarPrincipal(t)
+	if principal == "" {
 		return
 	}
+	ev := ticketCalendarEvent(t, ticketCalendarID(t), "", ticketCalendarColor(t))
 	id := t.ID
+	projectID := t.ProjectID
+	resolver := s.projects
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), calendarSyncTimeout)
 		defer cancel()
+		if projectID != nil && resolver != nil {
+			if name, err := resolver.ProjectName(ctx, *projectID); err != nil {
+				log.Printf("warn: calendar project name lookup for ticket %s: %v", id, err)
+			} else {
+				ev.CalendarDisplayName = name
+			}
+		}
 		if err := s.cal.UpsertEvent(ctx, ev); err != nil {
 			log.Printf("warn: calendar upsert for ticket %s: %v", id, err)
 		}
@@ -914,10 +950,7 @@ func (s *Service) syncCalendarEvent(t *Ticket) {
 
 // deleteCalendarEvent removes t's calendar event in the background. See
 // syncCalendarEvent for the goroutine/timeout/error-handling/empty-principal
-// rationale — identical here. The calendar backend does not implement a
-// delete endpoint yet (infra-tojihub-goquest-delete-event) — until it does,
-// every call here errors and gets logged, same as any other
-// unreachable-backend failure.
+// rationale — identical here.
 func (s *Service) deleteCalendarEvent(t *Ticket) {
 	principal := ticketCalendarPrincipal(t)
 	if principal == "" {
@@ -925,10 +958,11 @@ func (s *Service) deleteCalendarEvent(t *Ticket) {
 	}
 	id := t.ID
 	objectID := calendarObjectID(t)
+	calendarID := ticketCalendarID(t)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), calendarSyncTimeout)
 		defer cancel()
-		if err := s.cal.DeleteEvent(ctx, principal, objectID); err != nil {
+		if err := s.cal.DeleteEvent(ctx, principal, calendarID, objectID); err != nil {
 			log.Printf("warn: calendar delete for ticket %s: %v", id, err)
 		}
 	}()

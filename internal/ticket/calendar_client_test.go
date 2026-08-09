@@ -16,7 +16,7 @@ import (
 type noopCalendarClient struct{}
 
 func (noopCalendarClient) UpsertEvent(_ context.Context, _ calendarsync.Event) error { return nil }
-func (noopCalendarClient) DeleteEvent(_ context.Context, _, _ string) error          { return nil }
+func (noopCalendarClient) DeleteEvent(_ context.Context, _, _, _ string) error       { return nil }
 
 func TestService_SetCalendarClient_DefaultsToNil(t *testing.T) {
 	// NewService's existing 6-arg call sites must keep compiling and

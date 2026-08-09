@@ -113,19 +113,24 @@ func main() {
 	webhookDeliverer := webhook.New()
 	svc := ticket.NewService(store, pub, nuclexEmitter, xpSvc, webhookDeliverer, magicSvc)
 
+	wsStore := workspace.NewPGStore(pool)
+
+	pjStore := project.NewPGStore(pool)
+
 	// tojihub calendar sync (infra-tojihub-goquest-integration) — optional,
 	// same non-fatal-on-missing-config pattern as the cogito client below.
+	// ProjectNameResolver is wired unconditionally (cheap, nil-safe on the
+	// ticket.Service side) so a project's real name reaches tojihub as its
+	// per-project calendar's display name — pjStore already exists for the
+	// project HTTP handlers below, reused here rather than a second store.
 	if cfg.TojihubConnectURL != "" {
 		if cfg.TojihubServiceToken == "" {
 			log.Printf("warn: TOJIHUB_CONNECT_URL set but TOJIHUB_SERVICE_TOKEN empty — calendar sync will fail auth")
 		}
 		svc.SetCalendarClient(tojihub.New(cfg.TojihubConnectURL, cfg.TojihubServiceToken))
+		svc.SetProjectNameResolver(projectNameResolver{store: pjStore})
 		log.Printf("tojihub calendar sync enabled: %s", cfg.TojihubConnectURL)
 	}
-
-	wsStore := workspace.NewPGStore(pool)
-
-	pjStore := project.NewPGStore(pool)
 
 	tagStore := tag.NewPGStore(pool)
 	tagSvc := tag.NewService(tagStore)
@@ -638,6 +643,21 @@ func (noopLookuper) Lookup(_ context.Context, _ []string) ([]directory.Actor, er
 // mention deliberately doesn't import project (its dependency is just
 // {UserID string}), so this small shape conversion lives at the wiring
 // layer instead.
+// projectNameResolver adapts project.Store to ticket.ProjectNameResolver —
+// the ticket package can't import project directly (it would be a cycle:
+// project's HTTP handlers already sit above ticket), so this small shape
+// conversion lives at the wiring layer, same pattern as projectMemberLister
+// just below.
+type projectNameResolver struct{ store project.Store }
+
+func (r projectNameResolver) ProjectName(ctx context.Context, id uuid.UUID) (string, error) {
+	p, err := r.store.Get(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	return p.Name, nil
+}
+
 type projectMemberLister struct{ svc *project.Service }
 
 func (a projectMemberLister) ListMembers(ctx context.Context, projectID uuid.UUID) ([]*mention.ProjectMember, error) {

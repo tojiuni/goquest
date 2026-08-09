@@ -20,4 +20,16 @@ type Event struct {
 	Summary string
 	// DTStart is the event's start time.
 	DTStart time.Time
+	// CalendarID identifies which of the principal's calendars this event
+	// belongs to — distinct per project so each project's events land in
+	// their own calendar rather than one shared "default" one. "default" for
+	// tickets with no project.
+	CalendarID string
+	// CalendarDisplayName and CalendarColor are the owning calendar's own
+	// metadata (project name / a color derived from the project), applied
+	// idempotently by the backend on every event sync — not just when the
+	// calendar is first created — so a project rename/recolor propagates on
+	// the next ticket sync with no separate call needed.
+	CalendarDisplayName string
+	CalendarColor       string
 }

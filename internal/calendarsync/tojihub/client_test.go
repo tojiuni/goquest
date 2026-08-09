@@ -29,10 +29,13 @@ func TestClient_UpsertEvent_SendsExpectedRequest(t *testing.T) {
 
 	c := tojihub.New(srv.URL, "test-token")
 	err := c.UpsertEvent(context.Background(), calendarsync.Event{
-		Principal: "user@example.com",
-		ObjectID:  "goquest-t1.ics",
-		Summary:   "do the thing",
-		DTStart:   time.Now().UTC(),
+		Principal:           "user@example.com",
+		ObjectID:            "goquest-t1.ics",
+		Summary:             "do the thing",
+		DTStart:             time.Now().UTC(),
+		CalendarID:          "project-abc",
+		CalendarDisplayName: "Project Foo",
+		CalendarColor:       "#4A90D9FF",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -47,11 +50,17 @@ func TestClient_UpsertEvent_SendsExpectedRequest(t *testing.T) {
 	if gotBody["principal"] != "user@example.com" {
 		t.Errorf("unexpected principal: %v", gotBody["principal"])
 	}
-	if gotBody["calendar_id"] != "default" {
+	if gotBody["calendar_id"] != "project-abc" {
 		t.Errorf("unexpected calendar_id: %v", gotBody["calendar_id"])
 	}
 	if gotBody["object_id"] != "goquest-t1.ics" {
 		t.Errorf("unexpected object_id: %v", gotBody["object_id"])
+	}
+	if gotBody["calendar_display_name"] != "Project Foo" {
+		t.Errorf("unexpected calendar_display_name: %v", gotBody["calendar_display_name"])
+	}
+	if gotBody["calendar_color"] != "#4A90D9FF" {
+		t.Errorf("unexpected calendar_color: %v", gotBody["calendar_color"])
 	}
 	icalData, _ := gotBody["ical_data"].(string)
 	if icalData == "" {
@@ -83,12 +92,15 @@ func TestClient_DeleteEvent_SendsExpectedRequest(t *testing.T) {
 	defer srv.Close()
 
 	c := tojihub.New(srv.URL, "test-token")
-	err := c.DeleteEvent(context.Background(), "user@example.com", "goquest-t1.ics")
+	err := c.DeleteEvent(context.Background(), "user@example.com", "project-abc", "goquest-t1.ics")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if gotPath != "/connect/v1/DeleteEvent" {
 		t.Errorf("unexpected path: %q", gotPath)
+	}
+	if gotBody["calendar_id"] != "project-abc" {
+		t.Errorf("unexpected calendar_id: %v", gotBody["calendar_id"])
 	}
 	if gotBody["object_id"] != "goquest-t1.ics" {
 		t.Errorf("unexpected object_id: %v", gotBody["object_id"])
@@ -103,5 +115,5 @@ func TestClient_DeleteEvent_SendsExpectedRequest(t *testing.T) {
 // ticket.CalendarClient).
 var _ interface {
 	UpsertEvent(ctx context.Context, ev calendarsync.Event) error
-	DeleteEvent(ctx context.Context, principal, objectID string) error
+	DeleteEvent(ctx context.Context, principal, calendarID, objectID string) error
 } = (*tojihub.Client)(nil)

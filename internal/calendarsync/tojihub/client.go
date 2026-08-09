@@ -38,21 +38,26 @@ func New(baseURL, serviceToken string) *Client {
 }
 
 type upsertEventRequest struct {
-	Principal  string `json:"principal"`
-	CalendarID string `json:"calendar_id"`
-	ObjectID   string `json:"object_id"`
-	ICalData   string `json:"ical_data"`
+	Principal           string `json:"principal"`
+	CalendarID          string `json:"calendar_id"`
+	ObjectID            string `json:"object_id"`
+	ICalData            string `json:"ical_data"`
+	CalendarDisplayName string `json:"calendar_display_name,omitempty"`
+	CalendarColor       string `json:"calendar_color,omitempty"`
 }
 
-// UpsertEvent creates or updates ev's calendar event on tojihub.
-// CalendarID is always "default" — tojihub's v1 doesn't support
-// per-user multiple calendars yet.
+// UpsertEvent creates or updates ev's calendar event on tojihub, in
+// ev.CalendarID's calendar (creating/relabeling/recoloring that calendar
+// first via tojihub's idempotent ensure_calendar, if CalendarDisplayName or
+// CalendarColor is set).
 func (c *Client) UpsertEvent(ctx context.Context, ev calendarsync.Event) error {
 	body, err := json.Marshal(upsertEventRequest{
-		Principal:  ev.Principal,
-		CalendarID: "default",
-		ObjectID:   ev.ObjectID,
-		ICalData:   toICal(ev),
+		Principal:           ev.Principal,
+		CalendarID:          ev.CalendarID,
+		ObjectID:            ev.ObjectID,
+		ICalData:            toICal(ev),
+		CalendarDisplayName: ev.CalendarDisplayName,
+		CalendarColor:       ev.CalendarColor,
 	})
 	if err != nil {
 		return fmt.Errorf("tojihub: marshal UpsertEvent request: %w", err)
@@ -66,14 +71,11 @@ type deleteEventRequest struct {
 	ObjectID   string `json:"object_id"`
 }
 
-// DeleteEvent removes a calendar event on tojihub. tojihub does not
-// implement this endpoint yet (infra-tojihub-goquest-delete-event) — until
-// it does, this returns a non-2xx error for every call, which callers
-// (ticket.Service) already log-and-continue on.
-func (c *Client) DeleteEvent(ctx context.Context, principal, objectID string) error {
+// DeleteEvent removes a calendar event on tojihub's calendarID calendar.
+func (c *Client) DeleteEvent(ctx context.Context, principal, calendarID, objectID string) error {
 	body, err := json.Marshal(deleteEventRequest{
 		Principal:  principal,
-		CalendarID: "default",
+		CalendarID: calendarID,
 		ObjectID:   objectID,
 	})
 	if err != nil {
