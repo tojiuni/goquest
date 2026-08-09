@@ -202,6 +202,10 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 		log.Printf("warn: publish created: %v", err)
 	}
 
+	if s.cal != nil && t.DueAt != nil {
+		s.syncCalendarEvent(t)
+	}
+
 	if s.nuclex != nil {
 		if err := s.nuclex.EmitCreated(ctx, t); err != nil {
 			log.Printf("warn: nuclex emit created: %v", err)
@@ -336,6 +340,21 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq,
 		log.Printf("warn: publish updated: %v", err)
 	}
 
+	if s.cal != nil {
+		switch {
+		case t.Status == StatusCompleted || t.Status == StatusFailed || t.Status == StatusCancelled:
+			s.deleteCalendarEvent(t)
+		case t.DueAt != nil:
+			s.syncCalendarEvent(t)
+		}
+		// t.DueAt == nil and not terminal: nothing to do. Confirmed against
+		// store_pg.go's Update (internal/ticket/store_pg.go:273-275) — DueAt
+		// is only ever overwritten when req.DueAt is non-nil; there is no
+		// "clear the due date" path through UpdateTicketReq today. So a nil
+		// t.DueAt here always means this ticket never had one, never that a
+		// previously-set one was just cleared — no delete call needed.
+	}
+
 	if t.Status == StatusCompleted || t.Status == StatusFailed {
 		if err := s.pub.PublishCompleted(ctx, t); err != nil {
 			log.Printf("warn: publish completed: %v", err)
@@ -413,6 +432,9 @@ func (s *Service) Reopen(ctx context.Context, id uuid.UUID, actor, reason string
 	}
 	if err := s.pub.PublishUpdated(ctx, reopened); err != nil {
 		log.Printf("warn: publish updated: %v", err)
+	}
+	if s.cal != nil && reopened.DueAt != nil {
+		s.syncCalendarEvent(reopened)
 	}
 	return reopened, nil
 }
@@ -845,4 +867,43 @@ func (s *Service) ListRelationsWithSummary(ctx context.Context, ticketID uuid.UU
 // ListAllRelations is the brain-importer bulk pull path (paginated).
 func (s *Service) ListAllRelations(ctx context.Context, limit, offset int) ([]TicketRelation, int, error) {
 	return s.store.ListAllRelations(ctx, limit, offset)
+}
+
+// calendarSyncTimeout bounds each background tojihub call so a slow or
+// unreachable backend can't leak goroutines indefinitely.
+const calendarSyncTimeout = 10 * time.Second
+
+// syncCalendarEvent upserts t's calendar event in the background. Never
+// blocks the caller and never fails the request it was triggered from —
+// errors are logged only, matching every other s.pub.Publish* call site in
+// this file. Runs on a context.Background()-derived timeout, not the
+// caller's ctx, which is cancelled once the HTTP response for the
+// triggering request is written — a cancelled ctx would kill the tojihub
+// call before it completes.
+func (s *Service) syncCalendarEvent(t *Ticket) {
+	ev := ticketCalendarEvent(t)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), calendarSyncTimeout)
+		defer cancel()
+		if err := s.cal.UpsertEvent(ctx, ev); err != nil {
+			log.Printf("warn: calendar upsert for ticket %s: %v", t.ID, err)
+		}
+	}()
+}
+
+// deleteCalendarEvent removes t's calendar event in the background. See
+// syncCalendarEvent for the goroutine/timeout/error-handling rationale —
+// identical here. tojihub does not implement DeleteEvent yet
+// (infra-tojihub-goquest-delete-event) — until it does, every call here
+// errors and gets logged, same as any other unreachable-backend failure.
+func (s *Service) deleteCalendarEvent(t *Ticket) {
+	principal := ticketCalendarPrincipal(t)
+	objectID := "goquest-" + t.ID.String() + ".ics"
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), calendarSyncTimeout)
+		defer cancel()
+		if err := s.cal.DeleteEvent(ctx, principal, objectID); err != nil {
+			log.Printf("warn: calendar delete for ticket %s: %v", t.ID, err)
+		}
+	}()
 }
