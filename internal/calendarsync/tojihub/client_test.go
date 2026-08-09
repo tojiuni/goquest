@@ -14,9 +14,9 @@ import (
 
 func TestClient_UpsertEvent_SendsExpectedRequest(t *testing.T) {
 	var (
-		gotPath   string
-		gotToken  string
-		gotBody   map[string]any
+		gotPath  string
+		gotToken string
+		gotBody  map[string]any
 	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
