@@ -49,6 +49,10 @@ func (m *mockStore) GetByProjectAndTitleName(_ context.Context, _ uuid.UUID, _ s
 	return m.getTicket, m.getErr
 }
 
+func (m *mockStore) GetByTitleNameAnyProject(_ context.Context, _ string) (*ticket.Ticket, error) {
+	return m.getTicket, m.getErr
+}
+
 func (m *mockStore) Update(_ context.Context, _ uuid.UUID, req ticket.UpdateTicketReq) (*ticket.Ticket, error) {
 	m.updated = &req
 	if m.updateErr != nil {

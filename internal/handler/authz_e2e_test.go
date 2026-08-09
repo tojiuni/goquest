@@ -156,6 +156,14 @@ func (s *memStore) GetByProjectAndTitleName(_ context.Context, projectID uuid.UU
 	}
 	return nil, ticket.ErrNotFound
 }
+func (s *memStore) GetByTitleNameAnyProject(_ context.Context, titleName string) (*ticket.Ticket, error) {
+	for _, ex := range s.byID {
+		if ex.TitleName == titleName {
+			return ex, nil
+		}
+	}
+	return nil, ticket.ErrNotFound
+}
 func (s *memStore) Aggregate(_ context.Context, _ string, _ ticket.ListTicketsFilter) ([]ticket.AggBucket, error) {
 	return nil, nil
 }

@@ -138,6 +138,51 @@ func (s *pgStore) GetByProjectAndTitleName(ctx context.Context, projectID uuid.U
 	return t, nil
 }
 
+// GetByTitleNameAnyProject looks up a ticket by title_name without scoping to
+// a project — used by VCS auto-link's fallback when the ticket a branch/PR
+// implements lives in a different project than the one the repo is
+// registered under (a repo's registered project and the project a given
+// ticket is filed in are not always the same; see goq-vcs-link-cross-project-titlename).
+// title_name is only unique within a project (tickets_project_title_name_key
+// is a per-project partial unique index), so more than one project can have
+// a ticket with the same title_name: this returns ErrAmbiguousTitleName in
+// that case rather than picking one — silently linking the wrong ticket is
+// worse than not linking at all (see goq-vcs-mention-vs-impl).
+func (s *pgStore) GetByTitleNameAnyProject(ctx context.Context, titleName string) (*Ticket, error) {
+	rows, err := s.db.Query(ctx, ticketSelectSQL+"WHERE t.title_name = $1"+ticketGroupBySQL, titleName)
+	if err != nil {
+		return nil, fmt.Errorf("get ticket by title_name (any project): %w", err)
+	}
+	defer rows.Close()
+
+	var matches []*Ticket
+	for rows.Next() {
+		t, err := scanTicket(rows)
+		if err != nil {
+			return nil, fmt.Errorf("get ticket by title_name (any project): %w", err)
+		}
+		matches = append(matches, t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("get ticket by title_name (any project): %w", err)
+	}
+
+	switch len(matches) {
+	case 0:
+		return nil, ErrNotFound
+	case 1:
+		t := matches[0]
+		refs, err := s.ListRefIDsForTickets(ctx, []uuid.UUID{t.ID})
+		if err != nil {
+			return nil, fmt.Errorf("load refs: %w", err)
+		}
+		t.Refs = refs[t.ID]
+		return t, nil
+	default:
+		return nil, ErrAmbiguousTitleName
+	}
+}
+
 // ticketSelectSQL is the base SELECT with LEFT JOINs for tags, project, workspace.
 // Callers append a WHERE clause followed by ticketGroupBySQL.
 //
@@ -816,6 +861,14 @@ var (
 	ErrInvalidGroupBy     = errors.New("invalid group_by")
 	ErrProjectNotFound    = errors.New("target project not found")
 	ErrCrossWorkspaceMove = errors.New("target project is in a different workspace")
+	// ErrAmbiguousTitleName is returned by GetByTitleNameAnyProject when more
+	// than one project has a ticket with the given title_name — title_name is
+	// only guaranteed unique within a project (tickets_project_title_name_key
+	// is a per-project partial unique index), so a cross-project lookup can
+	// genuinely collide. Callers must treat this as "don't guess", not as
+	// not-found — see internal/vcs's resolveTickets, which relies on this to
+	// avoid silently linking the wrong ticket.
+	ErrAmbiguousTitleName = errors.New("title_name matches tickets in more than one project")
 )
 
 func (s *pgStore) ListSubtasks(ctx context.Context, parentID uuid.UUID) ([]*Ticket, error) {

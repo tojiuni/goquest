@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/google/uuid"
 	"github.com/tojiuni/goquest/internal/comment"
@@ -13,6 +14,11 @@ import (
 // TicketService is the narrow slice of *ticket.Service the linker needs.
 type TicketService interface {
 	GetByProjectAndTitleName(ctx context.Context, projectID uuid.UUID, titleName string) (*ticket.Ticket, error)
+	// GetByTitleNameAnyProject is the cross-project fallback resolveTickets
+	// uses when a title_name doesn't resolve in the repo's own registered
+	// project — see resolveTickets for why that's a normal, expected case,
+	// not an error.
+	GetByTitleNameAnyProject(ctx context.Context, titleName string) (*ticket.Ticket, error)
 	Update(ctx context.Context, id uuid.UUID, req ticket.UpdateTicketReq, actor string) (*ticket.Ticket, error)
 }
 
@@ -118,18 +124,44 @@ func (s *Service) resolveTickets(ctx context.Context, provider string, repo *Vcs
 		headRef[tn] = true
 	}
 	for _, tn := range ExtractTitleNames(ev.Branch, ev.CommitMsg, ev.PRTitle, ev.PRBody) {
-		if t, err := s.tickets.GetByProjectAndTitleName(ctx, repo.ProjectID, tn); err == nil {
+		if t := s.resolveTicketByTitleName(ctx, repo, tn); t != nil {
 			add(t, headRef[tn])
 		}
 	}
 	if ev.Kind == CommitPushed {
 		if bl, err := s.store.GetBranchLink(ctx, provider, ev.Repo, ev.Branch); err == nil {
-			if t, err := s.tickets.GetByProjectAndTitleName(ctx, repo.ProjectID, branchTicketTitleName(bl)); err == nil {
+			if t := s.resolveTicketByTitleName(ctx, repo, branchTicketTitleName(bl)); t != nil {
 				add(t, true) // branch-link inheritance is a head-ref signal
 			}
 		}
 	}
 	return out
+}
+
+// resolveTicketByTitleName looks up tn in repo's own registered project
+// first (the common, fast, unambiguous case), then falls back to a
+// cross-project lookup — a repo's registered project and the project a
+// given ticket is filed in are not always the same (e.g. a ticket filed
+// under a parent epic in another project; see
+// goq-vcs-link-cross-project-titlename, where this fallback was added
+// after a real branch/PR/merge sequence silently failed to link at every
+// step). Returns nil (skip, don't link) if neither resolves, or if the
+// fallback is ambiguous — an ambiguous cross-project match must not guess.
+func (s *Service) resolveTicketByTitleName(ctx context.Context, repo *VcsRepo, tn string) *ticket.Ticket {
+	if t, err := s.tickets.GetByProjectAndTitleName(ctx, repo.ProjectID, tn); err == nil {
+		return t
+	}
+	t, err := s.tickets.GetByTitleNameAnyProject(ctx, tn)
+	switch {
+	case err == nil:
+		log.Printf("vcs: title_name %q resolved outside repo %s's registered project (found in a different project) — linking via cross-project fallback", tn, repo.RepoFullName)
+		return t
+	case errors.Is(err, ticket.ErrAmbiguousTitleName):
+		log.Printf("warn: vcs: title_name %q matches tickets in more than one project — skipping link (ambiguous)", tn)
+		return nil
+	default:
+		return nil
+	}
 }
 
 // branchTicketTitleName recovers the title_name a branch link was made for.

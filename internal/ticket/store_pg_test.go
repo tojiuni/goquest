@@ -70,6 +70,40 @@ func TestGetByProjectAndTitleName_NotFound(t *testing.T) {
 	require.ErrorIs(t, err, ticket.ErrNotFound)
 }
 
+// TestGetByTitleNameAnyProject_NotFound mirrors
+// TestGetByProjectAndTitleName_NotFound's miss path for the new
+// project-unscoped lookup (goq-vcs-link-cross-project-titlename).
+func TestGetByTitleNameAnyProject_NotFound(t *testing.T) {
+	ctx, store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	_, err := store.GetByTitleNameAnyProject(ctx, "goq-no-such-name-anywhere")
+	require.ErrorIs(t, err, ticket.ErrNotFound)
+}
+
+// TestGetByTitleNameAnyProject_Finds exercises the found path against the
+// real store — a single ticket with this title_name, no project set. Proves
+// the query (no project filter, unlike GetByProjectAndTitleName) is
+// syntactically and semantically correct against the real schema, not just
+// the fake used by internal/vcs's tests.
+func TestGetByTitleNameAnyProject_Finds(t *testing.T) {
+	ctx, store, cleanup := newTestStore(t)
+	defer cleanup()
+
+	tn := "goq-any-project-lookup-" + uuid.NewString()[:8]
+	tk := &ticket.Ticket{
+		ID: uuid.New(), Title: "any-project lookup test", TitleName: tn,
+		Type: ticket.TypeTask, Status: ticket.StatusPending, Priority: ticket.PriorityNormal,
+		AssigneeType: ticket.AssigneeHuman, RequesterID: "test@example.com",
+		Visibility: ticket.VisibilityProject,
+	}
+	require.NoError(t, store.Create(ctx, tk))
+
+	found, err := store.GetByTitleNameAnyProject(ctx, tn)
+	require.NoError(t, err)
+	assert.Equal(t, tk.ID, found.ID)
+}
+
 // TestList_FilterByTitleName exercises the new title_name list filter against
 // the real store. Uses a unique title_name so the assertion is robust to other
 // rows the shared test DB may contain. (Tag-id filtering is covered by the
