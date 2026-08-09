@@ -2,6 +2,7 @@ package vcs
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/google/uuid"
@@ -442,5 +443,101 @@ func TestProcessBranchCreated_AmbiguousAcrossProjects_SkipsLink(t *testing.T) {
 	}
 	if len(tickets.trans) != 0 {
 		t.Fatalf("ambiguous cross-project match must not transition anything, got %v", tickets.trans)
+	}
+}
+
+// TestProcessBranchCreated_HyphenPrefixedBranch_ResolvesAndTransitions
+// reproduces the real-world failure this fix addresses: a branch name like
+// "worktree-goq-foo" (produced by this workspace's EnterWorktree tool,
+// which prefixes with "worktree-" joined by a hyphen, not a slash) causes
+// ExtractTitleNames to greedily match the WHOLE string as one token
+// ("worktree-goq-foo"), which never resolves to any ticket directly. Before
+// this fix, the ticket only ever linked via prose (the PR title matching
+// the bare title_name), which is headRef=false and so never drove a status
+// transition -- confirmed live against tojiuni/goquest with a real branch,
+// PR, and merge (see goq-vcs-resolve-hyphen-prefixed-branch). Verifies both
+// linking AND transitioning now work from the branch name alone.
+func TestProcessBranchCreated_HyphenPrefixedBranch_ResolvesAndTransitions(t *testing.T) {
+	st := newFakeStore()
+	repo := repoFixture(true)
+	_ = st.CreateRepo(context.Background(), repo)
+
+	tk := &ticket.Ticket{ID: uuid.New(), TitleName: "goq-foo", Status: ticket.StatusPending}
+	tickets := &fakeTickets{byName: map[string]*ticket.Ticket{"goq-foo": tk}}
+	svc := NewService(st, tickets, &fakeComments{})
+
+	err := svc.Process(context.Background(), "github", VcsEvent{
+		Kind: BranchCreated, Repo: "tojiuni/goquest", Branch: "worktree-goq-foo", Actor: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.links) != 1 || st.links[0].Kind != KindBranch {
+		t.Fatalf("expected the ticket to link from the hyphen-prefixed branch name, got %+v", st.links)
+	}
+	if len(tickets.trans) != 2 || tickets.trans[0] != ticket.StatusAssigned || tickets.trans[1] != ticket.StatusInProgress {
+		t.Fatalf("expected assigned then in_progress from the hyphen-prefixed branch name, got %v", tickets.trans)
+	}
+}
+
+// TestTitleNameCandidates covers the suffix-stripping helper directly: the
+// full token always comes first (so an unprefixed title_name resolves on
+// the first try, unchanged from before this fix), followed by up to
+// maxStrippedPrefixSegments progressively shorter suffixes. Stripping is
+// bounded (not unbounded down to 2 segments) deliberately -- see
+// maxStrippedPrefixSegments's doc comment for why: each extra candidate is
+// another chance to false-positive-match an unrelated ticket, and that risk
+// reaches the head-ref (transition-capable) path, not just prose links.
+func TestTitleNameCandidates(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"single segment, no hyphen", "main", nil},
+		{"no prefix", "goq-foo", []string{"goq-foo"}},
+		{"one prefix segment", "worktree-goq-foo", []string{"worktree-goq-foo", "goq-foo"}},
+		{"many prefix segments — stripping still bounded at 1", "worktree-goq-vcs-merge-autocomplete-test", []string{
+			"worktree-goq-vcs-merge-autocomplete-test",
+			"goq-vcs-merge-autocomplete-test",
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := titleNameCandidates(c.in)
+			if !reflect.DeepEqual(got, c.want) {
+				t.Fatalf("titleNameCandidates(%q) = %v, want %v", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// TestProcessBranchCreated_HyphenPrefixedBranch_ResolvesViaProjectScopedPhase
+// pins that the hyphen-prefixed branch resolves through the project-scoped
+// phase specifically (not the cross-project fallback) when the ticket
+// actually lives in the repo's own project — fakeTickets (used by
+// TestProcessBranchCreated_HyphenPrefixedBranch_ResolvesAndTransitions
+// above) is project-blind and can't distinguish the two phases; this uses
+// projectScopedFakeTickets to do so.
+func TestProcessBranchCreated_HyphenPrefixedBranch_ResolvesViaProjectScopedPhase(t *testing.T) {
+	st := newFakeStore()
+	repo := repoFixture(true)
+	_ = st.CreateRepo(context.Background(), repo)
+
+	tk := &ticket.Ticket{ID: uuid.New(), TitleName: "goq-foo", Status: ticket.StatusPending}
+	tickets := &projectScopedFakeTickets{byProject: map[uuid.UUID]map[string]*ticket.Ticket{
+		repo.ProjectID: {"goq-foo": tk},
+	}}
+	svc := NewService(st, tickets, &fakeComments{})
+
+	err := svc.Process(context.Background(), "github", VcsEvent{
+		Kind: BranchCreated, Repo: "tojiuni/goquest", Branch: "worktree-goq-foo", Actor: "alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.links) != 1 || st.links[0].Kind != KindBranch {
+		t.Fatalf("expected the ticket to link from the hyphen-prefixed branch name, got %+v", st.links)
+	}
+	if len(tickets.trans) != 2 || tickets.trans[0] != ticket.StatusAssigned || tickets.trans[1] != ticket.StatusInProgress {
+		t.Fatalf("expected assigned then in_progress via the project-scoped phase, got %v", tickets.trans)
 	}
 }
