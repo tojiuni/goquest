@@ -2,6 +2,7 @@ package ticket_test
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -189,6 +190,45 @@ func TestService_Update_CompletedTicket_NonEmailPrincipal_NoCalendarCall(t *test
 	time.Sleep(50 * time.Millisecond) // give a wrongly-firing goroutine a chance to show up
 	if cal.deleteCount() != 0 {
 		t.Errorf("expected 0 deletes for non-email principal, got %d", cal.deleteCount())
+	}
+}
+
+// failingCalendarClient always errors — used to pin the single most
+// important invariant of this feature: a calendar backend outage must
+// never fail the ticket mutation that triggered it. Every other fake
+// CalendarClient in this suite returns nil, so nothing else exercises this
+// path.
+type failingCalendarClient struct{}
+
+func (failingCalendarClient) UpsertEvent(_ context.Context, _ calendarsync.Event) error {
+	return errors.New("boom")
+}
+
+func (failingCalendarClient) DeleteEvent(_ context.Context, _, _ string) error {
+	return errors.New("boom")
+}
+
+func TestService_Create_CalendarClientFails_TicketCreationStillSucceeds(t *testing.T) {
+	due := time.Now().Add(24 * time.Hour).UTC()
+	store := &mockStore{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(failingCalendarClient{})
+
+	tk, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title: "calendar backend is down",
+		DueAt: &due,
+	}, "user1@example.com")
+	if err != nil {
+		t.Fatalf("expected calendar failure not to fail ticket creation, got error: %v", err)
+	}
+	if tk == nil {
+		t.Fatal("expected non-nil ticket")
+	}
+	if tk.Title != "calendar backend is down" {
+		t.Errorf("unexpected title: %q", tk.Title)
+	}
+	if tk.ID.String() == "" {
+		t.Error("expected a valid ticket ID")
 	}
 }
 

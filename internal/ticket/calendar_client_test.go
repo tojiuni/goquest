@@ -3,6 +3,7 @@ package ticket_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/tojiuni/goquest/internal/calendarsync"
 	"github.com/tojiuni/goquest/internal/ticket"
@@ -19,10 +20,20 @@ func (noopCalendarClient) DeleteEvent(_ context.Context, _, _ string) error     
 
 func TestService_SetCalendarClient_DefaultsToNil(t *testing.T) {
 	// NewService's existing 6-arg call sites must keep compiling and
-	// behaving exactly as before — SetCalendarClient is opt-in.
+	// behaving exactly as before — SetCalendarClient is opt-in. Exercise a
+	// real code path (Create with DueAt set, so the calendar branch would
+	// fire if a client were wired) to confirm calendar sync is a true
+	// no-op — not merely a nil-check assumption — when SetCalendarClient is
+	// never called.
+	due := time.Now().Add(24 * time.Hour).UTC()
 	svc := ticket.NewService(&mockStore{}, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
-	if svc == nil {
-		t.Fatal("expected non-nil service")
+
+	_, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title: "no calendar client wired",
+		DueAt: &due,
+	}, "user1@example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
