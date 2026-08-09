@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tojiuni/goquest/internal/calendarsync"
 	"github.com/google/uuid"
+	"github.com/tojiuni/goquest/internal/calendarsync"
 )
 
 // titleNameRe validates the format: <ABBR>-<keyword1>[-<keyword2>] (lowercase, hyphens only).
