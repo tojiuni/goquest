@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/tojiuni/goquest/internal/comment"
@@ -138,14 +139,19 @@ func (s *Service) resolveTickets(ctx context.Context, provider string, repo *Vcs
 	return out
 }
 
-// resolveTicketByTitleName looks up tn in repo's own registered project
-// first (the common, fast, unambiguous case — always tried first and wins
-// on any match, so a title_name colliding across projects still resolves
-// to the repo's own ticket rather than tripping the ambiguity fallback
-// below), then falls back to a cross-project lookup — a repo's registered
-// project and the project a given ticket is filed in are not always the
-// same (e.g. a ticket filed under a parent epic in another project, in
-// this workspace often a different workspace entirely; see
+// resolveTicketByTitleName looks up tn — trying, in order, tn itself and
+// then its titleNameCandidates suffixes (see that function's doc for why:
+// ExtractTitleNames is unanchored and can't tell a "worktree-" style
+// hyphen-joined prefix from part of the real title_name, so the raw token
+// it hands us may need trimming before it matches anything) — first in
+// repo's own registered project (the common, fast, unambiguous case;
+// always tried first across ALL candidates before any cross-project
+// lookup is attempted, so a title_name colliding across projects still
+// resolves to the repo's own ticket rather than tripping the ambiguity
+// fallback below), then falls back to a cross-project lookup — a repo's
+// registered project and the project a given ticket is filed in are not
+// always the same (e.g. a ticket filed under a parent epic in another
+// project, in this workspace often a different workspace entirely; see
 // goq-vcs-link-cross-project-titlename, where this fallback was added
 // after a real branch/PR/merge sequence silently failed to link at every
 // step). The fallback intentionally has no workspace/project restriction
@@ -156,35 +162,61 @@ func (s *Service) resolveTickets(ctx context.Context, provider string, repo *Vcs
 // head-ref match (see headRef in resolveTickets), only linking/commenting
 // gets wider.
 //
-// Returns nil (skip, don't link) if neither resolves, or if the fallback
-// is ambiguous — an ambiguous cross-project match must not guess. Every
-// non-nil-error outcome is logged: an unexpected DB error on either lookup
-// is exactly the kind of failure this function must not repeat the
-// original bug's silence on.
+// Returns nil (skip, don't link) if nothing resolves, or if a candidate's
+// cross-project lookup is ambiguous — an ambiguous match must not guess,
+// and stops the whole resolution rather than trying a shorter (riskier,
+// more likely to collide) candidate. Every non-nil-error outcome is
+// logged: an unexpected DB error on either lookup is exactly the kind of
+// failure this function must not repeat the original bug's silence on.
 func (s *Service) resolveTicketByTitleName(ctx context.Context, repo *VcsRepo, tn string) *ticket.Ticket {
-	t, err := s.tickets.GetByProjectAndTitleName(ctx, repo.ProjectID, tn)
-	if err == nil {
-		return t
-	}
-	if !errors.Is(err, ticket.ErrNotFound) {
-		log.Printf("warn: vcs: project-scoped lookup of title_name %q in repo %s failed: %v", tn, repo.RepoFullName, err)
-		return nil
+	candidates := titleNameCandidates(tn)
+
+	for _, c := range candidates {
+		t, err := s.tickets.GetByProjectAndTitleName(ctx, repo.ProjectID, c)
+		if err == nil {
+			return t
+		}
+		if !errors.Is(err, ticket.ErrNotFound) {
+			log.Printf("warn: vcs: project-scoped lookup of title_name %q in repo %s failed: %v", c, repo.RepoFullName, err)
+			return nil
+		}
 	}
 
-	t, err = s.tickets.GetByTitleNameAnyProject(ctx, tn)
-	switch {
-	case err == nil:
-		log.Printf("vcs: title_name %q resolved outside repo %s's registered project — linking ticket %s (project %s) via cross-project fallback", tn, repo.RepoFullName, t.ID, projectIDString(t))
-		return t
-	case errors.Is(err, ticket.ErrAmbiguousTitleName):
-		log.Printf("warn: vcs: title_name %q matches tickets in more than one project — skipping link (ambiguous)", tn)
-		return nil
-	case errors.Is(err, ticket.ErrNotFound):
-		return nil
-	default:
-		log.Printf("warn: vcs: cross-project lookup of title_name %q failed: %v", tn, err)
-		return nil
+	for _, c := range candidates {
+		t, err := s.tickets.GetByTitleNameAnyProject(ctx, c)
+		switch {
+		case err == nil:
+			log.Printf("vcs: title_name %q resolved outside repo %s's registered project — linking ticket %s (project %s) via cross-project fallback", c, repo.RepoFullName, t.ID, projectIDString(t))
+			return t
+		case errors.Is(err, ticket.ErrAmbiguousTitleName):
+			log.Printf("warn: vcs: title_name %q matches tickets in more than one project — skipping link (ambiguous)", c)
+			return nil
+		case errors.Is(err, ticket.ErrNotFound):
+			continue
+		default:
+			log.Printf("warn: vcs: cross-project lookup of title_name %q failed: %v", c, err)
+			return nil
+		}
 	}
+	return nil
+}
+
+// titleNameCandidates returns tn itself, followed by progressively shorter
+// suffixes formed by stripping one leading hyphen-joined segment at a time
+// — e.g. "worktree-goq-foo-bar" yields ["worktree-goq-foo-bar",
+// "goq-foo-bar", "foo-bar"]. Stops once fewer than 2 segments remain (a
+// bare single word is never a valid title_name shape:
+// ^[a-z][a-z0-9]*(-[a-z0-9]+)+$ requires at least one hyphen). The full
+// token is always first, so an already-correct title_name (no prefix)
+// resolves on the very first candidate — this only changes behavior when
+// tn itself doesn't resolve to anything.
+func titleNameCandidates(tn string) []string {
+	parts := strings.Split(tn, "-")
+	candidates := make([]string, 0, len(parts))
+	for i := 0; i < len(parts)-1; i++ {
+		candidates = append(candidates, strings.Join(parts[i:], "-"))
+	}
+	return candidates
 }
 
 // branchTicketTitleName recovers the title_name a branch link was made for.
