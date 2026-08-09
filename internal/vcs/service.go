@@ -158,9 +158,14 @@ func (s *Service) resolveTickets(ctx context.Context, provider string, repo *Vcs
 // of its own — restricting it would have missed the exact bug it exists to
 // fix — so it does widen this file's existing false-positive-link surface
 // (see goq-vcs-mention-vs-impl) across every project in the instance, not
-// just the repo's own; accepted for now since transitions still require a
-// head-ref match (see headRef in resolveTickets), only linking/commenting
-// gets wider.
+// just the repo's own. Note this is a narrower claim than it sounds:
+// headRef is keyed on the raw extracted token (see resolveTickets), not on
+// which titleNameCandidates entry actually resolved, so a branch-name token
+// that only resolves via a stripped candidate still counts as a head-ref
+// match and CAN drive a transition through this fallback — not just
+// link/comment. maxStrippedPrefixSegments' bound exists specifically to
+// keep that residual risk small (one extra candidate, not an unbounded
+// search), not to eliminate it.
 //
 // Returns nil (skip, don't link) if nothing resolves, or if a candidate's
 // cross-project lookup is ambiguous — an ambiguous match must not guess,
@@ -201,19 +206,41 @@ func (s *Service) resolveTicketByTitleName(ctx context.Context, repo *VcsRepo, t
 	return nil
 }
 
-// titleNameCandidates returns tn itself, followed by progressively shorter
-// suffixes formed by stripping one leading hyphen-joined segment at a time
-// — e.g. "worktree-goq-foo-bar" yields ["worktree-goq-foo-bar",
-// "goq-foo-bar", "foo-bar"]. Stops once fewer than 2 segments remain (a
-// bare single word is never a valid title_name shape:
+// maxStrippedPrefixSegments bounds how many leading hyphen-joined segments
+// titleNameCandidates will strip. The one real-world case this exists for
+// (EnterWorktree's "worktree-" prefix) needs exactly 1. Bounding this is a
+// deliberate tradeoff, not an oversight: unbounded stripping would try
+// every suffix down to 2 segments, and each extra candidate is another
+// chance to false-positive-match an UNRELATED real ticket elsewhere in the
+// instance — a much bigger blast radius than the original bug, and worse,
+// one that reaches the head-ref (transition-capable) path too, since
+// headRef is keyed on the raw token regardless of which candidate actually
+// resolved (see resolveTickets). Bump this only for a concretely observed
+// prefix shape, not preemptively.
+const maxStrippedPrefixSegments = 1
+
+// titleNameCandidates returns tn itself, followed by up to
+// maxStrippedPrefixSegments progressively shorter suffixes formed by
+// stripping one leading hyphen-joined segment at a time — e.g. with the
+// current bound of 1, "worktree-goq-foo-bar" yields
+// ["worktree-goq-foo-bar", "goq-foo-bar"] (NOT "foo-bar" — that would be a
+// second segment stripped). Never returns a candidate with fewer than 2
+// segments (a bare single word is never a valid title_name shape:
 // ^[a-z][a-z0-9]*(-[a-z0-9]+)+$ requires at least one hyphen). The full
 // token is always first, so an already-correct title_name (no prefix)
 // resolves on the very first candidate — this only changes behavior when
 // tn itself doesn't resolve to anything.
 func titleNameCandidates(tn string) []string {
 	parts := strings.Split(tn, "-")
-	candidates := make([]string, 0, len(parts))
-	for i := 0; i < len(parts)-1; i++ {
+	maxI := len(parts) - 2 // largest i (segments stripped) leaving >=2 parts
+	if maxI > maxStrippedPrefixSegments {
+		maxI = maxStrippedPrefixSegments
+	}
+	if maxI < 0 {
+		return nil // tn itself already has fewer than 2 segments
+	}
+	candidates := make([]string, 0, maxI+1)
+	for i := 0; i <= maxI; i++ {
 		candidates = append(candidates, strings.Join(parts[i:], "-"))
 	}
 	return candidates
