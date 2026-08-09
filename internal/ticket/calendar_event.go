@@ -6,11 +6,11 @@ import (
 	"github.com/tojiuni/goquest/internal/calendarsync"
 )
 
-// ticketCalendarPrincipal resolves the tojihub/CalDAV principal for a
-// ticket: the assignee's email if AssigneeID is email-shaped, otherwise the
-// requester's email — which this workspace's session-account convention
-// already guarantees is email-shaped (see the "principal 매핑" section of
-// geneso:goquest/spec/2026-08-09-tojihub-calendar-integration-design.md).
+// ticketCalendarPrincipal resolves the calendar backend's principal
+// (owner identity) for a ticket: the assignee's email if AssigneeID is
+// email-shaped, otherwise the requester's email — which this workspace's
+// session-account convention already guarantees is email-shaped (see the
+// calendar sync design documentation for the fallback rationale).
 func ticketCalendarPrincipal(t *Ticket) string {
 	if strings.Contains(t.AssigneeID, "@") {
 		return t.AssigneeID
