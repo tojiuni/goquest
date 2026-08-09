@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/tojiuni/goquest/internal/calendarsync"
 )
 
 // titleNameRe validates the format: <ABBR>-<keyword1>[-<keyword2>] (lowercase, hyphens only).
@@ -21,6 +22,16 @@ type Publisher interface {
 	PublishAssigned(ctx context.Context, t *Ticket) error
 	PublishUpdated(ctx context.Context, t *Ticket) error
 	PublishCompleted(ctx context.Context, t *Ticket) error
+}
+
+// CalendarClient syncs a ticket's due date to an external calendar. Backend
+// agnostic — see internal/calendarsync/tojihub for the concrete
+// implementation this repo wires up today. A nil CalendarClient (the
+// zero value, never set via SetCalendarClient) disables calendar sync
+// entirely, same as nuclex/xp/webhook/magic when left unset.
+type CalendarClient interface {
+	UpsertEvent(ctx context.Context, ev calendarsync.Event) error
+	DeleteEvent(ctx context.Context, principal, objectID string) error
 }
 
 type NuclexEmitter interface {
@@ -53,10 +64,20 @@ type Service struct {
 	xp      XPAwarder
 	webhook WebhookSender
 	magic   MagicTokener
+	cal     CalendarClient
 }
 
 func NewService(store Store, pub Publisher, nuclex NuclexEmitter, xp XPAwarder, wh WebhookSender, magic MagicTokener) *Service {
 	return &Service{store: store, pub: pub, nuclex: nuclex, xp: xp, webhook: wh, magic: magic}
+}
+
+// SetCalendarClient wires an optional CalendarClient into the service. Not
+// a NewService parameter deliberately — NewService already has ~100 call
+// sites across this repo's tests; a setter lets calendar sync be adopted
+// without touching any of them. Leaving it unset (nil) disables calendar
+// sync, matching the nuclex/xp/webhook/magic nil-checked pattern.
+func (s *Service) SetCalendarClient(c CalendarClient) {
+	s.cal = c
 }
 
 // Create creates a new ticket. requesterID is pre-extracted from the JWT by the HTTP handler.
@@ -179,6 +200,10 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 
 	if err := s.pub.PublishCreated(ctx, t); err != nil {
 		log.Printf("warn: publish created: %v", err)
+	}
+
+	if s.cal != nil && t.DueAt != nil {
+		s.syncCalendarEvent(t)
 	}
 
 	if s.nuclex != nil {
@@ -315,6 +340,24 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq,
 		log.Printf("warn: publish updated: %v", err)
 	}
 
+	if s.cal != nil {
+		switch {
+		case (t.Status == StatusCompleted || t.Status == StatusFailed || t.Status == StatusCancelled) && t.DueAt != nil:
+			s.deleteCalendarEvent(t)
+		case t.DueAt != nil:
+			s.syncCalendarEvent(t)
+		}
+		// t.DueAt == nil: nothing to do, whether terminal or not. Confirmed
+		// against store_pg.go's Update (internal/ticket/store_pg.go:273-275)
+		// — DueAt is only ever overwritten when req.DueAt is non-nil; there
+		// is no "clear the due date" path through UpdateTicketReq today. So
+		// a nil t.DueAt here always means this ticket never had one, never
+		// that a previously-set one was just cleared — no calendar call
+		// needed either way. Without this guard, every terminal ticket
+		// without a due date (the common case) would fire a doomed delete
+		// call against an event that was never created.
+	}
+
 	if t.Status == StatusCompleted || t.Status == StatusFailed {
 		if err := s.pub.PublishCompleted(ctx, t); err != nil {
 			log.Printf("warn: publish completed: %v", err)
@@ -392,6 +435,9 @@ func (s *Service) Reopen(ctx context.Context, id uuid.UUID, actor, reason string
 	}
 	if err := s.pub.PublishUpdated(ctx, reopened); err != nil {
 		log.Printf("warn: publish updated: %v", err)
+	}
+	if s.cal != nil && reopened.DueAt != nil {
+		s.syncCalendarEvent(reopened)
 	}
 	return reopened, nil
 }
@@ -824,4 +870,59 @@ func (s *Service) ListRelationsWithSummary(ctx context.Context, ticketID uuid.UU
 // ListAllRelations is the brain-importer bulk pull path (paginated).
 func (s *Service) ListAllRelations(ctx context.Context, limit, offset int) ([]TicketRelation, int, error) {
 	return s.store.ListAllRelations(ctx, limit, offset)
+}
+
+// calendarSyncTimeout bounds each background calendar-backend call so a
+// slow or unreachable backend can't leak goroutines indefinitely. Kept
+// meaningfully larger than the calendar client implementation's own
+// internal HTTP timeout so this is a real backstop against a hung inner
+// call rather than a redundant duplicate of it — if the two were equal,
+// this outer timeout could never fire first.
+const calendarSyncTimeout = 15 * time.Second
+
+// syncCalendarEvent upserts t's calendar event in the background. Never
+// blocks the caller and never fails the request it was triggered from —
+// errors are logged only, matching every other s.pub.Publish* call site in
+// this file. Runs on a context.Background()-derived timeout, not the
+// caller's ctx, which is cancelled once the HTTP response for the
+// triggering request is written — a cancelled ctx would kill the calendar
+// backend call before it completes. No-ops (no goroutine, no log) when the
+// resolved principal is empty — ticketCalendarPrincipal returns "" when
+// neither AssigneeID nor RequesterID is email-shaped, and the calendar
+// backend has no use for an empty/non-email principal.
+func (s *Service) syncCalendarEvent(t *Ticket) {
+	ev := ticketCalendarEvent(t)
+	if ev.Principal == "" {
+		return
+	}
+	id := t.ID
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), calendarSyncTimeout)
+		defer cancel()
+		if err := s.cal.UpsertEvent(ctx, ev); err != nil {
+			log.Printf("warn: calendar upsert for ticket %s: %v", id, err)
+		}
+	}()
+}
+
+// deleteCalendarEvent removes t's calendar event in the background. See
+// syncCalendarEvent for the goroutine/timeout/error-handling/empty-principal
+// rationale — identical here. The calendar backend does not implement a
+// delete endpoint yet (infra-tojihub-goquest-delete-event) — until it does,
+// every call here errors and gets logged, same as any other
+// unreachable-backend failure.
+func (s *Service) deleteCalendarEvent(t *Ticket) {
+	principal := ticketCalendarPrincipal(t)
+	if principal == "" {
+		return
+	}
+	id := t.ID
+	objectID := calendarObjectID(t)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), calendarSyncTimeout)
+		defer cancel()
+		if err := s.cal.DeleteEvent(ctx, principal, objectID); err != nil {
+			log.Printf("warn: calendar delete for ticket %s: %v", id, err)
+		}
+	}()
 }
