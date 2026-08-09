@@ -342,17 +342,20 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq,
 
 	if s.cal != nil {
 		switch {
-		case t.Status == StatusCompleted || t.Status == StatusFailed || t.Status == StatusCancelled:
+		case (t.Status == StatusCompleted || t.Status == StatusFailed || t.Status == StatusCancelled) && t.DueAt != nil:
 			s.deleteCalendarEvent(t)
 		case t.DueAt != nil:
 			s.syncCalendarEvent(t)
 		}
-		// t.DueAt == nil and not terminal: nothing to do. Confirmed against
-		// store_pg.go's Update (internal/ticket/store_pg.go:273-275) — DueAt
-		// is only ever overwritten when req.DueAt is non-nil; there is no
-		// "clear the due date" path through UpdateTicketReq today. So a nil
-		// t.DueAt here always means this ticket never had one, never that a
-		// previously-set one was just cleared — no delete call needed.
+		// t.DueAt == nil: nothing to do, whether terminal or not. Confirmed
+		// against store_pg.go's Update (internal/ticket/store_pg.go:273-275)
+		// — DueAt is only ever overwritten when req.DueAt is non-nil; there
+		// is no "clear the due date" path through UpdateTicketReq today. So
+		// a nil t.DueAt here always means this ticket never had one, never
+		// that a previously-set one was just cleared — no calendar call
+		// needed either way. Without this guard, every terminal ticket
+		// without a due date (the common case) would fire a doomed delete
+		// call against an event that was never created.
 	}
 
 	if t.Status == StatusCompleted || t.Status == StatusFailed {
@@ -869,41 +872,57 @@ func (s *Service) ListAllRelations(ctx context.Context, limit, offset int) ([]Ti
 	return s.store.ListAllRelations(ctx, limit, offset)
 }
 
-// calendarSyncTimeout bounds each background tojihub call so a slow or
-// unreachable backend can't leak goroutines indefinitely.
-const calendarSyncTimeout = 10 * time.Second
+// calendarSyncTimeout bounds each background calendar-backend call so a
+// slow or unreachable backend can't leak goroutines indefinitely. Kept
+// meaningfully larger than the calendar client implementation's own
+// internal HTTP timeout so this is a real backstop against a hung inner
+// call rather than a redundant duplicate of it — if the two were equal,
+// this outer timeout could never fire first.
+const calendarSyncTimeout = 15 * time.Second
 
 // syncCalendarEvent upserts t's calendar event in the background. Never
 // blocks the caller and never fails the request it was triggered from —
 // errors are logged only, matching every other s.pub.Publish* call site in
 // this file. Runs on a context.Background()-derived timeout, not the
 // caller's ctx, which is cancelled once the HTTP response for the
-// triggering request is written — a cancelled ctx would kill the tojihub
-// call before it completes.
+// triggering request is written — a cancelled ctx would kill the calendar
+// backend call before it completes. No-ops (no goroutine, no log) when the
+// resolved principal is empty — ticketCalendarPrincipal returns "" when
+// neither AssigneeID nor RequesterID is email-shaped, and the calendar
+// backend has no use for an empty/non-email principal.
 func (s *Service) syncCalendarEvent(t *Ticket) {
 	ev := ticketCalendarEvent(t)
+	if ev.Principal == "" {
+		return
+	}
+	id := t.ID
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), calendarSyncTimeout)
 		defer cancel()
 		if err := s.cal.UpsertEvent(ctx, ev); err != nil {
-			log.Printf("warn: calendar upsert for ticket %s: %v", t.ID, err)
+			log.Printf("warn: calendar upsert for ticket %s: %v", id, err)
 		}
 	}()
 }
 
 // deleteCalendarEvent removes t's calendar event in the background. See
-// syncCalendarEvent for the goroutine/timeout/error-handling rationale —
-// identical here. tojihub does not implement DeleteEvent yet
-// (infra-tojihub-goquest-delete-event) — until it does, every call here
-// errors and gets logged, same as any other unreachable-backend failure.
+// syncCalendarEvent for the goroutine/timeout/error-handling/empty-principal
+// rationale — identical here. The calendar backend does not implement a
+// delete endpoint yet (infra-tojihub-goquest-delete-event) — until it does,
+// every call here errors and gets logged, same as any other
+// unreachable-backend failure.
 func (s *Service) deleteCalendarEvent(t *Ticket) {
 	principal := ticketCalendarPrincipal(t)
-	objectID := "goquest-" + t.ID.String() + ".ics"
+	if principal == "" {
+		return
+	}
+	id := t.ID
+	objectID := calendarObjectID(t)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), calendarSyncTimeout)
 		defer cancel()
 		if err := s.cal.DeleteEvent(ctx, principal, objectID); err != nil {
-			log.Printf("warn: calendar delete for ticket %s: %v", t.ID, err)
+			log.Printf("warn: calendar delete for ticket %s: %v", id, err)
 		}
 	}()
 }
