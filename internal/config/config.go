@@ -80,6 +80,17 @@ type Config struct {
 	CogitoGRPCAddr    string
 	CogitoBearerToken string
 
+	// tojihub Connect API (infra-tojihub-goquest-integration) — syncs ticket
+	// due dates to a tojihub calendar via POST /connect/v1/{Upsert,Delete}Event.
+	// Empty TojihubConnectURL disables calendar sync entirely (SetCalendarClient
+	// is never called). TojihubServiceToken is the shared secret tojihub's
+	// Connect handlers check via X-Tojihub-Service-Token (Vault
+	// secret/neunexus/tojihub#connect_service_token — VSO wiring into this
+	// service's k8s deployment is separate infra work, not part of this repo's
+	// code changes).
+	TojihubConnectURL   string
+	TojihubServiceToken string
+
 	// GitHub App (goq-refdoc-goquest-brain-client) — server-side raw content
 	// fetch from the private tojiuni/geneso repo for /docs/content. Empty
 	// GitHubAppID disables /docs/content (always 404s).
@@ -143,6 +154,9 @@ func Load() *Config {
 
 		CogitoGRPCAddr:    os.Getenv("COGITO_GRPC_ADDR"),
 		CogitoBearerToken: os.Getenv("COGITO_BEARER_TOKEN"),
+
+		TojihubConnectURL:   os.Getenv("TOJIHUB_CONNECT_URL"),
+		TojihubServiceToken: os.Getenv("TOJIHUB_SERVICE_TOKEN"),
 
 		GitHubAppID:             os.Getenv("GITHUB_APP_ID"),
 		GitHubAppInstallationID: os.Getenv("GITHUB_APP_INSTALLATION_ID"),

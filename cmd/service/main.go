@@ -22,6 +22,7 @@ import (
 	"github.com/tojiuni/goquest/internal/audit"
 	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/brainclient"
+	"github.com/tojiuni/goquest/internal/calendarsync/tojihub"
 	"github.com/tojiuni/goquest/internal/cogitoclient"
 	"github.com/tojiuni/goquest/internal/comment"
 	"github.com/tojiuni/goquest/internal/config"
@@ -111,6 +112,12 @@ func main() {
 	nuclexEmitter := integration.NewNuclexEmitter(rdb, cfg.NuclexEventsStream)
 	webhookDeliverer := webhook.New()
 	svc := ticket.NewService(store, pub, nuclexEmitter, xpSvc, webhookDeliverer, magicSvc)
+
+	// tojihub calendar sync (infra-tojihub-goquest-integration) — optional,
+	// same non-fatal-on-missing-config pattern as the cogito client below.
+	if cfg.TojihubConnectURL != "" {
+		svc.SetCalendarClient(tojihub.New(cfg.TojihubConnectURL, cfg.TojihubServiceToken))
+	}
 
 	wsStore := workspace.NewPGStore(pool)
 
