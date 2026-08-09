@@ -68,3 +68,25 @@ func TestTicketCalendarEvent_EmptyAssigneeFallsBackToRequester(t *testing.T) {
 		t.Errorf("expected requester fallback, got %q", ev.Principal)
 	}
 }
+
+// TestTicketCalendarEvent_NeitherIDEmailShaped_EmptyPrincipal covers the
+// case where neither AssigneeID nor RequesterID is email-shaped (some auth
+// paths populate opaque non-email IDs) — the principal must resolve to ""
+// rather than falling back to a non-email RequesterID, so callers can
+// detect "no usable principal" and skip the calendar call entirely.
+func TestTicketCalendarEvent_NeitherIDEmailShaped_EmptyPrincipal(t *testing.T) {
+	due := time.Now().UTC()
+	tk := &ticket.Ticket{
+		ID:          uuid.New(),
+		Title:       "opaque ids only",
+		AssigneeID:  "bob",
+		RequesterID: "svc-account-42",
+		DueAt:       &due,
+	}
+
+	ev := ticket.ExportedTicketCalendarEvent(tk)
+
+	if ev.Principal != "" {
+		t.Errorf("expected empty principal when neither id is email-shaped, got %q", ev.Principal)
+	}
+}

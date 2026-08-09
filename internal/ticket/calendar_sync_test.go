@@ -72,7 +72,7 @@ func TestService_Create_WithDueAt_UpsertsCalendarEvent(t *testing.T) {
 	tk, err := svc.Create(context.Background(), ticket.CreateTicketReq{
 		Title: "with due date",
 		DueAt: &due,
-	}, "user1")
+	}, "user1@example.com")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -104,6 +104,7 @@ func TestService_Update_CompletedTicket_DeletesCalendarEvent(t *testing.T) {
 	due := time.Now().Add(24 * time.Hour).UTC()
 	base := newTestTicket(ticket.StatusInProgress)
 	base.DueAt = &due
+	base.RequesterID = "requester@example.com"
 	store := &mockStore{getTicket: base}
 	cal := &syncFakeCalendarClient{}
 	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
@@ -140,10 +141,62 @@ func TestService_Update_NoDueAt_NotTerminal_NoCalendarCall(t *testing.T) {
 	}
 }
 
+// TestService_Create_NonEmailPrincipal_NoCalendarCall covers finding #2:
+// when neither AssigneeID nor RequesterID is email-shaped,
+// ticketCalendarPrincipal resolves to "" and syncCalendarEvent must no-op
+// rather than sending tojihub a call with an empty/non-email principal.
+func TestService_Create_NonEmailPrincipal_NoCalendarCall(t *testing.T) {
+	due := time.Now().Add(24 * time.Hour).UTC()
+	store := &mockStore{}
+	cal := &syncFakeCalendarClient{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+
+	_, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title:      "opaque requester id",
+		AssigneeID: "bob",
+		DueAt:      &due,
+	}, "svc-account-42") // requesterID is not email-shaped either
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond) // give a wrongly-firing goroutine a chance to show up
+	if cal.upsertCount() != 0 {
+		t.Errorf("expected 0 upserts for non-email principal, got %d", cal.upsertCount())
+	}
+}
+
+// TestService_Update_CompletedTicket_NonEmailPrincipal_NoCalendarCall is the
+// delete-path counterpart of TestService_Create_NonEmailPrincipal_NoCalendarCall.
+func TestService_Update_CompletedTicket_NonEmailPrincipal_NoCalendarCall(t *testing.T) {
+	due := time.Now().Add(24 * time.Hour).UTC()
+	base := newTestTicket(ticket.StatusInProgress)
+	base.DueAt = &due
+	base.AssigneeID = "bob"
+	base.RequesterID = "svc-account-42"
+	store := &mockStore{getTicket: base}
+	cal := &syncFakeCalendarClient{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+
+	completed := ticket.StatusCompleted
+	_, err := svc.Update(context.Background(), base.ID, ticket.UpdateTicketReq{Status: &completed}, "actor")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond) // give a wrongly-firing goroutine a chance to show up
+	if cal.deleteCount() != 0 {
+		t.Errorf("expected 0 deletes for non-email principal, got %d", cal.deleteCount())
+	}
+}
+
 func TestService_Reopen_WithDueAt_UpsertsCalendarEvent(t *testing.T) {
 	due := time.Now().Add(24 * time.Hour).UTC()
 	base := newTestTicket(ticket.StatusCompleted)
 	base.DueAt = &due
+	base.RequesterID = "requester@example.com"
 	// ReopenTerminal's mock (internal/ticket/service_test.go) returns a copy
 	// of getTicket with Status forced to StatusInProgress — DueAt carries
 	// through unchanged, so no extra mockStore wiring is needed here.
