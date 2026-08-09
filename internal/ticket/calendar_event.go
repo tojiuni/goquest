@@ -8,14 +8,27 @@ import (
 
 // ticketCalendarPrincipal resolves the calendar backend's principal
 // (owner identity) for a ticket: the assignee's email if AssigneeID is
-// email-shaped, otherwise the requester's email — which this workspace's
-// session-account convention already guarantees is email-shaped (see the
-// calendar sync design documentation for the fallback rationale).
+// email-shaped, otherwise the requester's email if RequesterID is
+// email-shaped. Some auth paths in this codebase populate identifiers with
+// opaque non-email IDs rather than verified emails, so neither field is
+// guaranteed to be email-shaped — when neither is, this returns "" and
+// callers must not send a calendar call with it (see syncCalendarEvent /
+// deleteCalendarEvent in service.go).
 func ticketCalendarPrincipal(t *Ticket) string {
 	if strings.Contains(t.AssigneeID, "@") {
 		return t.AssigneeID
 	}
-	return t.RequesterID
+	if strings.Contains(t.RequesterID, "@") {
+		return t.RequesterID
+	}
+	return ""
+}
+
+// calendarObjectID is the single source of truth for the tojihub object_id
+// derived from a ticket — used by both ticketCalendarEvent (upsert) and
+// deleteCalendarEvent (service.go) so the two never drift.
+func calendarObjectID(t *Ticket) string {
+	return "goquest-" + t.ID.String() + ".ics"
 }
 
 // ticketCalendarEvent builds the calendarsync.Event for a ticket. Callers
@@ -26,7 +39,7 @@ func ticketCalendarPrincipal(t *Ticket) string {
 func ticketCalendarEvent(t *Ticket) calendarsync.Event {
 	return calendarsync.Event{
 		Principal: ticketCalendarPrincipal(t),
-		ObjectID:  "goquest-" + t.ID.String() + ".ics",
+		ObjectID:  calendarObjectID(t),
 		Summary:   t.Title,
 		DTStart:   *t.DueAt,
 	}
