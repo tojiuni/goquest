@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tojiuni/goquest/internal/calendarsync"
 	"github.com/google/uuid"
 )
 
@@ -21,6 +22,16 @@ type Publisher interface {
 	PublishAssigned(ctx context.Context, t *Ticket) error
 	PublishUpdated(ctx context.Context, t *Ticket) error
 	PublishCompleted(ctx context.Context, t *Ticket) error
+}
+
+// CalendarClient syncs a ticket's due date to an external calendar. Backend
+// agnostic — see internal/calendarsync/tojihub for the concrete
+// implementation this repo wires up today. A nil CalendarClient (the
+// zero value, never set via SetCalendarClient) disables calendar sync
+// entirely, same as nuclex/xp/webhook/magic when left unset.
+type CalendarClient interface {
+	UpsertEvent(ctx context.Context, ev calendarsync.Event) error
+	DeleteEvent(ctx context.Context, principal, objectID string) error
 }
 
 type NuclexEmitter interface {
@@ -53,10 +64,20 @@ type Service struct {
 	xp      XPAwarder
 	webhook WebhookSender
 	magic   MagicTokener
+	cal     CalendarClient
 }
 
 func NewService(store Store, pub Publisher, nuclex NuclexEmitter, xp XPAwarder, wh WebhookSender, magic MagicTokener) *Service {
 	return &Service{store: store, pub: pub, nuclex: nuclex, xp: xp, webhook: wh, magic: magic}
+}
+
+// SetCalendarClient wires an optional CalendarClient into the service. Not
+// a NewService parameter deliberately — NewService already has ~100 call
+// sites across this repo's tests; a setter lets calendar sync be adopted
+// without touching any of them. Leaving it unset (nil) disables calendar
+// sync, matching the nuclex/xp/webhook/magic nil-checked pattern.
+func (s *Service) SetCalendarClient(c CalendarClient) {
+	s.cal = c
 }
 
 // Create creates a new ticket. requesterID is pre-extracted from the JWT by the HTTP handler.
