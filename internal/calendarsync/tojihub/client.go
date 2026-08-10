@@ -38,26 +38,28 @@ func New(baseURL, serviceToken string) *Client {
 }
 
 type upsertEventRequest struct {
-	Principal           string `json:"principal"`
-	CalendarID          string `json:"calendar_id"`
-	ObjectID            string `json:"object_id"`
-	ICalData            string `json:"ical_data"`
-	CalendarDisplayName string `json:"calendar_display_name,omitempty"`
-	CalendarColor       string `json:"calendar_color,omitempty"`
+	Principal             string `json:"principal"`
+	CalendarID            string `json:"calendar_id"`
+	ObjectID              string `json:"object_id"`
+	ICalData              string `json:"ical_data"`
+	CalendarDisplayName   string `json:"calendar_display_name,omitempty"`
+	CalendarColor         string `json:"calendar_color,omitempty"`
+	CalendarWorkspaceName string `json:"calendar_workspace_name,omitempty"`
 }
 
 // UpsertEvent creates or updates ev's calendar event on tojihub, in
 // ev.CalendarID's calendar (creating/relabeling/recoloring that calendar
-// first via tojihub's idempotent ensure_calendar, if CalendarDisplayName or
-// CalendarColor is set).
+// first via tojihub's idempotent ensure_calendar, if CalendarDisplayName,
+// CalendarColor, or CalendarWorkspaceName is set).
 func (c *Client) UpsertEvent(ctx context.Context, ev calendarsync.Event) error {
 	body, err := json.Marshal(upsertEventRequest{
-		Principal:           ev.Principal,
-		CalendarID:          ev.CalendarID,
-		ObjectID:            ev.ObjectID,
-		ICalData:            toICal(ev),
-		CalendarDisplayName: ev.CalendarDisplayName,
-		CalendarColor:       ev.CalendarColor,
+		Principal:             ev.Principal,
+		CalendarID:            ev.CalendarID,
+		ObjectID:              ev.ObjectID,
+		ICalData:              toICal(ev),
+		CalendarDisplayName:   ev.CalendarDisplayName,
+		CalendarColor:         ev.CalendarColor,
+		CalendarWorkspaceName: ev.CalendarWorkspaceName,
 	})
 	if err != nil {
 		return fmt.Errorf("tojihub: marshal UpsertEvent request: %w", err)

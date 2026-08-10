@@ -258,14 +258,18 @@ func TestService_Reopen_WithDueAt_UpsertsCalendarEvent(t *testing.T) {
 // no concurrency concerns beyond syncFakeCalendarClient's (reads happen from
 // the same background goroutine that eventually calls UpsertEvent, never
 // concurrently with the map being built in the test itself).
-type fakeProjectNameResolver map[uuid.UUID]string
+type fakeProjectNameResolverEntry struct {
+	workspaceName string
+	projectName   string
+}
+type fakeProjectNameResolver map[uuid.UUID]fakeProjectNameResolverEntry
 
-func (f fakeProjectNameResolver) ProjectName(_ context.Context, id uuid.UUID) (string, error) {
-	name, ok := f[id]
+func (f fakeProjectNameResolver) ProjectName(_ context.Context, id uuid.UUID) (string, string, error) {
+	e, ok := f[id]
 	if !ok {
-		return "", errors.New("project not found")
+		return "", "", errors.New("project not found")
 	}
-	return name, nil
+	return e.workspaceName, e.projectName, nil
 }
 
 func TestService_Create_WithProject_UsesProjectCalendarIDAndColor(t *testing.T) {
@@ -275,7 +279,9 @@ func TestService_Create_WithProject_UsesProjectCalendarIDAndColor(t *testing.T) 
 	cal := &syncFakeCalendarClient{}
 	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
 	svc.SetCalendarClient(cal)
-	svc.SetProjectNameResolver(fakeProjectNameResolver{projectID: "Project Foo"})
+	svc.SetProjectNameResolver(fakeProjectNameResolver{
+		projectID: {workspaceName: "toji", projectName: "Project Foo"},
+	})
 
 	_, err := svc.Create(context.Background(), ticket.CreateTicketReq{
 		Title:     "project-scoped ticket",
@@ -291,11 +297,50 @@ func TestService_Create_WithProject_UsesProjectCalendarIDAndColor(t *testing.T) 
 	if ev.CalendarID != projectID.String() {
 		t.Errorf("expected calendar_id %q, got %q", projectID.String(), ev.CalendarID)
 	}
-	if ev.CalendarDisplayName != "Project Foo" {
-		t.Errorf("expected calendar display name %q, got %q", "Project Foo", ev.CalendarDisplayName)
+	if ev.CalendarDisplayName != "toji-Project Foo" {
+		t.Errorf("expected calendar display name %q, got %q", "toji-Project Foo", ev.CalendarDisplayName)
+	}
+	if ev.CalendarWorkspaceName != "toji" {
+		t.Errorf("expected calendar workspace name %q, got %q", "toji", ev.CalendarWorkspaceName)
 	}
 	if ev.CalendarColor == "" {
 		t.Error("expected a non-empty deterministic calendar color for a project ticket")
+	}
+}
+
+// TestService_Create_WithProject_WorkspaceNameEmpty_DisplayNameDegradesToProjectOnly
+// covers the resolver's own degrade path (e.g. main.go's real implementation
+// falls back to an empty workspace name when the workspace lookup fails,
+// while still returning the project name) — CalendarDisplayName must fall
+// back to the bare project name (matching this repo's pre-existing behavior
+// before CalendarWorkspaceName existed), not "-Project Foo".
+func TestService_Create_WithProject_WorkspaceNameEmpty_DisplayNameDegradesToProjectOnly(t *testing.T) {
+	due := time.Now().Add(24 * time.Hour).UTC()
+	projectID := uuid.New()
+	store := &mockStore{}
+	cal := &syncFakeCalendarClient{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+	svc.SetProjectNameResolver(fakeProjectNameResolver{
+		projectID: {workspaceName: "", projectName: "Project Foo"},
+	})
+
+	_, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title:     "project-scoped ticket, no workspace name",
+		DueAt:     &due,
+		ProjectID: &projectID,
+	}, "user1@example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	waitFor(t, func() bool { return cal.upsertCount() == 1 })
+	ev := cal.upserted[0]
+	if ev.CalendarDisplayName != "Project Foo" {
+		t.Errorf("expected calendar display name to degrade to bare project name %q, got %q", "Project Foo", ev.CalendarDisplayName)
+	}
+	if ev.CalendarWorkspaceName != "" {
+		t.Errorf("expected empty calendar workspace name, got %q", ev.CalendarWorkspaceName)
 	}
 }
 
@@ -346,5 +391,8 @@ func TestService_Create_ProjectNameResolverNil_StillUpsertsWithEmptyDisplayName(
 	waitFor(t, func() bool { return cal.upsertCount() == 1 })
 	if cal.upserted[0].CalendarDisplayName != "" {
 		t.Errorf("expected empty display name with no resolver wired, got %q", cal.upserted[0].CalendarDisplayName)
+	}
+	if cal.upserted[0].CalendarWorkspaceName != "" {
+		t.Errorf("expected empty workspace name with no resolver wired, got %q", cal.upserted[0].CalendarWorkspaceName)
 	}
 }

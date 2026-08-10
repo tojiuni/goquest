@@ -666,29 +666,33 @@ func (noopLookuper) Lookup(_ context.Context, _ []string) ([]directory.Actor, er
 // above ticket), so this small shape conversion lives at the wiring layer,
 // same pattern as projectMemberLister just below.
 //
-// Returns "{workspace name}-{project name}" (e.g. "lyckabc-수익화") rather
-// than just the project name, since project names aren't unique across
-// workspaces/orgs but tojihub's per-project calendar display name should be
-// unambiguous at a glance in a client that lists every synced org's
-// calendars together.
+// Returns the workspace name and project name separately (rather than a
+// single pre-joined string) so a client can structurally tell them apart —
+// e.g. unicalendar iOS's org>project tree (goquest-calendar-workspace-field)
+// — instead of parsing a combined "{workspace}-{project}" string back apart,
+// which is ambiguous whenever either name itself contains a hyphen. The
+// caller (ticket.Service's syncCalendarEvent) still joins them into
+// CalendarDisplayName the same way as before this split, for backward
+// compatibility with existing calendar_display_name consumers.
 type projectNameResolver struct {
 	projects   project.Store
 	workspaces workspace.Store
 }
 
-func (r projectNameResolver) ProjectName(ctx context.Context, id uuid.UUID) (string, error) {
+func (r projectNameResolver) ProjectName(ctx context.Context, id uuid.UUID) (workspaceName, projectName string, err error) {
 	p, err := r.projects.Get(ctx, id)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	ws, err := r.workspaces.Get(ctx, p.WorkspaceID)
 	if err != nil {
-		// Degrade to the bare project name rather than failing the whole
-		// calendar sync over a workspace lookup hiccup — same
-		// never-block-the-caller philosophy as syncCalendarEvent itself.
-		return p.Name, nil
+		// Degrade to an empty workspace name (keeping the project name)
+		// rather than failing the whole calendar sync over a workspace
+		// lookup hiccup — same never-block-the-caller philosophy as
+		// syncCalendarEvent itself.
+		return "", p.Name, nil
 	}
-	return ws.Name + "-" + p.Name, nil
+	return ws.Name, p.Name, nil
 }
 
 type projectMemberLister struct{ svc *project.Service }

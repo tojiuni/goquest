@@ -29,13 +29,14 @@ func TestClient_UpsertEvent_SendsExpectedRequest(t *testing.T) {
 
 	c := tojihub.New(srv.URL, "test-token")
 	err := c.UpsertEvent(context.Background(), calendarsync.Event{
-		Principal:           "user@example.com",
-		ObjectID:            "goquest-t1.ics",
-		Summary:             "do the thing",
-		DTStart:             time.Now().UTC(),
-		CalendarID:          "project-abc",
-		CalendarDisplayName: "Project Foo",
-		CalendarColor:       "#4A90D9FF",
+		Principal:             "user@example.com",
+		ObjectID:              "goquest-t1.ics",
+		Summary:               "do the thing",
+		DTStart:               time.Now().UTC(),
+		CalendarID:            "project-abc",
+		CalendarDisplayName:   "toji-Project Foo",
+		CalendarColor:         "#4A90D9FF",
+		CalendarWorkspaceName: "toji",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -56,11 +57,14 @@ func TestClient_UpsertEvent_SendsExpectedRequest(t *testing.T) {
 	if gotBody["object_id"] != "goquest-t1.ics" {
 		t.Errorf("unexpected object_id: %v", gotBody["object_id"])
 	}
-	if gotBody["calendar_display_name"] != "Project Foo" {
+	if gotBody["calendar_display_name"] != "toji-Project Foo" {
 		t.Errorf("unexpected calendar_display_name: %v", gotBody["calendar_display_name"])
 	}
 	if gotBody["calendar_color"] != "#4A90D9FF" {
 		t.Errorf("unexpected calendar_color: %v", gotBody["calendar_color"])
+	}
+	if gotBody["calendar_workspace_name"] != "toji" {
+		t.Errorf("unexpected calendar_workspace_name: %v", gotBody["calendar_workspace_name"])
 	}
 	icalData, _ := gotBody["ical_data"].(string)
 	if icalData == "" {

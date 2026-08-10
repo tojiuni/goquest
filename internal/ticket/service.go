@@ -34,14 +34,22 @@ type CalendarClient interface {
 	DeleteEvent(ctx context.Context, principal, calendarID, objectID string) error
 }
 
-// ProjectNameResolver resolves a project ID to its display name, used to
-// label the project-specific calendar tojihub creates for it (see
-// ticketCalendarID in calendar_event.go — each project gets its own
-// calendar). Optional and nil-checked exactly like CalendarClient; a nil
+// ProjectNameResolver resolves a project ID to its workspace (org) name and
+// project name, used to label the project-specific calendar tojihub creates
+// for it (see ticketCalendarID in calendar_event.go — each project gets its
+// own calendar). Optional and nil-checked exactly like CalendarClient; a nil
 // resolver (or a ticket with no project) means the calendar sync omits a
-// display name and tojihub falls back to its own default.
+// display name and workspace name, and tojihub falls back to its own
+// default.
+//
+// workspaceName may be "" even on a nil error — implementations degrade to
+// an empty workspace name (keeping the project name) rather than failing
+// the whole lookup when only the workspace side can't be resolved (e.g. a
+// workspace lookup hiccup); see syncCalendarEvent, which falls back to the
+// bare project name for CalendarDisplayName in that case, same as before
+// this two-value split existed.
 type ProjectNameResolver interface {
-	ProjectName(ctx context.Context, id uuid.UUID) (string, error)
+	ProjectName(ctx context.Context, id uuid.UUID) (workspaceName, projectName string, err error)
 }
 
 type NuclexEmitter interface {
@@ -951,14 +959,15 @@ const calendarSyncTimeout = 15 * time.Second
 // neither AssigneeID nor RequesterID is email-shaped, and the calendar
 // backend has no use for an empty/non-email principal.
 //
-// The project's display name is resolved inside the goroutine (it needs the
-// same context/timeout as the calendar call itself) via s.projects — a nil
-// resolver or a ticket with no project just means an empty display name,
-// never a failed sync; the calendar backend defaults it on its own. `ev` is
-// built synchronously (t is only ever dereferenced on this call path, never
-// inside the background goroutine — matching every other call here) and the
-// goroutine only fills in ev.CalendarDisplayName on its own private copy
-// before sending it.
+// The project's workspace/display names are resolved inside the goroutine
+// (it needs the same context/timeout as the calendar call itself) via
+// s.projects — a nil resolver or a ticket with no project just means an
+// empty display name and workspace name, never a failed sync; the calendar
+// backend defaults them on its own. `ev` is built synchronously (t is only
+// ever dereferenced on this call path, never inside the background
+// goroutine — matching every other call here) and the goroutine only fills
+// in ev.CalendarDisplayName/ev.CalendarWorkspaceName on its own private
+// copy before sending it.
 func (s *Service) syncCalendarEvent(t *Ticket) {
 	principal := ticketCalendarPrincipal(t)
 	if principal == "" {
@@ -972,10 +981,15 @@ func (s *Service) syncCalendarEvent(t *Ticket) {
 		ctx, cancel := context.WithTimeout(context.Background(), calendarSyncTimeout)
 		defer cancel()
 		if projectID != nil && resolver != nil {
-			if name, err := resolver.ProjectName(ctx, *projectID); err != nil {
+			if workspaceName, projectName, err := resolver.ProjectName(ctx, *projectID); err != nil {
 				log.Printf("warn: calendar project name lookup for ticket %s: %v", id, err)
 			} else {
-				ev.CalendarDisplayName = name
+				ev.CalendarWorkspaceName = workspaceName
+				if workspaceName != "" {
+					ev.CalendarDisplayName = workspaceName + "-" + projectName
+				} else {
+					ev.CalendarDisplayName = projectName
+				}
 			}
 		}
 		if err := s.cal.UpsertEvent(ctx, ev); err != nil {
