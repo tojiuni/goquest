@@ -233,6 +233,65 @@ func TestService_Create_CalendarClientFails_TicketCreationStillSucceeds(t *testi
 	}
 }
 
+// TestService_Create_NoDueAt_StillSyncs pins goquest-sync-tickets-without-due-at:
+// a ticket with no due_at (but a resolvable principal) must still be
+// upserted to the calendar — the old due_at requirement is gone.
+func TestService_Create_NoDueAt_StillSyncs(t *testing.T) {
+	store := &mockStore{}
+	cal := &syncFakeCalendarClient{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+
+	_, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title: "no due date at all",
+	}, "user1@example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	waitFor(t, func() bool { return cal.upsertCount() == 1 })
+}
+
+// TestService_Update_TerminalNoDueAt_StillAttemptsDelete pins the delete-branch
+// half of the fix: a terminal ticket that never had a due_at must still get
+// a delete attempt (defense against a partial fix that only updates the
+// upsert branch and leaves due_at-less tickets' events undeleted forever).
+func TestService_Update_TerminalNoDueAt_StillAttemptsDelete(t *testing.T) {
+	base := newTestTicket(ticket.StatusInProgress)
+	base.RequesterID = "requester@example.com"
+	// DueAt intentionally left nil.
+	store := &mockStore{getTicket: base}
+	cal := &syncFakeCalendarClient{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+
+	completed := ticket.StatusCompleted
+	_, err := svc.Update(context.Background(), base.ID, ticket.UpdateTicketReq{Status: &completed}, "actor")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	waitFor(t, func() bool { return cal.deleteCount() == 1 })
+}
+
+// TestService_Reopen_NoDueAt_StillSyncs is the Reopen-side equivalent.
+func TestService_Reopen_NoDueAt_StillSyncs(t *testing.T) {
+	base := newTestTicket(ticket.StatusCompleted)
+	base.RequesterID = "requester@example.com"
+	// DueAt intentionally left nil.
+	store := &mockStore{getTicket: base}
+	cal := &syncFakeCalendarClient{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+
+	_, err := svc.Reopen(context.Background(), base.ID, "actor", "reopened by mistake")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	waitFor(t, func() bool { return cal.upsertCount() == 1 })
+}
+
 func TestService_Reopen_WithDueAt_UpsertsCalendarEvent(t *testing.T) {
 	due := time.Now().Add(24 * time.Hour).UTC()
 	base := newTestTicket(ticket.StatusCompleted)

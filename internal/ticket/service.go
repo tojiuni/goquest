@@ -282,7 +282,7 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 		log.Printf("warn: publish created: %v", err)
 	}
 
-	if s.cal != nil && t.DueAt != nil {
+	if s.cal != nil {
 		s.syncCalendarEvent(t)
 	}
 
@@ -428,21 +428,17 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq,
 	}
 
 	if s.cal != nil {
-		switch {
-		case (t.Status == StatusCompleted || t.Status == StatusFailed || t.Status == StatusCancelled) && t.DueAt != nil:
+		// due_at is no longer a precondition for calendar sync
+		// (goquest-sync-tickets-without-due-at) — every non-terminal ticket
+		// gets an upsert, every terminal one gets a delete attempt,
+		// regardless of whether it ever had a due_at. tojihub's DeleteEvent
+		// is a no-op-safe call against a never-created object (idempotent,
+		// same rationale as the UpsertEvent ON CONFLICT semantics).
+		if t.Status == StatusCompleted || t.Status == StatusFailed || t.Status == StatusCancelled {
 			s.deleteCalendarEvent(t)
-		case t.DueAt != nil:
+		} else {
 			s.syncCalendarEvent(t)
 		}
-		// t.DueAt == nil: nothing to do, whether terminal or not. Confirmed
-		// against store_pg.go's Update (internal/ticket/store_pg.go:273-275)
-		// — DueAt is only ever overwritten when req.DueAt is non-nil; there
-		// is no "clear the due date" path through UpdateTicketReq today. So
-		// a nil t.DueAt here always means this ticket never had one, never
-		// that a previously-set one was just cleared — no calendar call
-		// needed either way. Without this guard, every terminal ticket
-		// without a due date (the common case) would fire a doomed delete
-		// call against an event that was never created.
 	}
 
 	if t.Status == StatusCompleted || t.Status == StatusFailed {
@@ -523,7 +519,7 @@ func (s *Service) Reopen(ctx context.Context, id uuid.UUID, actor, reason string
 	if err := s.pub.PublishUpdated(ctx, reopened); err != nil {
 		log.Printf("warn: publish updated: %v", err)
 	}
-	if s.cal != nil && reopened.DueAt != nil {
+	if s.cal != nil {
 		s.syncCalendarEvent(reopened)
 	}
 	return reopened, nil
