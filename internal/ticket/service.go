@@ -24,11 +24,13 @@ type Publisher interface {
 	PublishCompleted(ctx context.Context, t *Ticket) error
 }
 
-// CalendarClient syncs a ticket's due date to an external calendar. Backend
-// agnostic — see internal/calendarsync/tojihub for the concrete
-// implementation this repo wires up today. A nil CalendarClient (the
-// zero value, never set via SetCalendarClient) disables calendar sync
-// entirely, same as nuclex/xp/webhook/magic when left unset.
+// CalendarClient syncs a ticket's calendar event date to an external
+// calendar — due_at when set, falling back to start_at, falling back to
+// created_at, per ticketCalendarDate's fallback chain (see
+// calendar_event.go). Backend agnostic — see internal/calendarsync/tojihub
+// for the concrete implementation this repo wires up today. A nil
+// CalendarClient (the zero value, never set via SetCalendarClient) disables
+// calendar sync entirely, same as nuclex/xp/webhook/magic when left unset.
 type CalendarClient interface {
 	UpsertEvent(ctx context.Context, ev calendarsync.Event) error
 	DeleteEvent(ctx context.Context, principal, calendarID, objectID string) error
@@ -207,13 +209,25 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 	// time, and due_at (if still unset) defaults to that same start_at —
 	// i.e. a "single day" ticket unless the caller explicitly gives a
 	// different due_at. An explicit start_at/due_at from the caller is
-	// never overridden. The earlier inversion check (start_at after
-	// due_at, a few lines up in this function) already ran against
-	// whatever the caller actually provided, so defaulting here can't
-	// retroactively create an inversion — a value defaulted from the
-	// other one is never "after" it.
+	// never overridden.
+	//
+	// Edge case: a caller can supply only a past due_at (e.g. a backdated
+	// import — "was due yesterday"). Defaulting start_at to now in that
+	// case would put start_at AFTER the caller's due_at, silently creating
+	// an inversion that the earlier check (a few lines up) can't catch
+	// because it only runs when both fields are caller-supplied. store_pg.go's
+	// Update re-validates start_at <= due_at on every future update using the
+	// ticket's current values, so such an inversion would make the ticket
+	// permanently un-updatable. To avoid that, when due_at is caller-supplied
+	// and already in the past, start_at defaults to that due_at instead of
+	// now, so start_at never ends up after a caller-provided due_at.
 	if req.StartAt == nil {
-		req.StartAt = &now
+		if req.DueAt != nil && req.DueAt.Before(now) {
+			startAt := *req.DueAt
+			req.StartAt = &startAt
+		} else {
+			req.StartAt = &now
+		}
 	}
 	if req.DueAt == nil {
 		dueAt := *req.StartAt
@@ -983,6 +997,11 @@ const calendarSyncTimeout = 15 * time.Second
 // goroutine — matching every other call here) and the goroutine only fills
 // in ev.CalendarDisplayName/ev.CalendarWorkspaceName on its own private
 // copy before sending it.
+//
+// SyncCalendarEventNow below intentionally duplicates this function's
+// resolver block (the workspaceName/projectName lookup and
+// CalendarDisplayName composition) for its own synchronous call path — keep
+// the two in sync field-for-field if this resolver logic ever changes.
 func (s *Service) syncCalendarEvent(t *Ticket) {
 	principal := ticketCalendarPrincipal(t)
 	if principal == "" {

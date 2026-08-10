@@ -1239,6 +1239,33 @@ func TestService_Create_DueAtGiven_StartAtNil_StartAtDefaultsToNowDueAtUnchanged
 	}
 }
 
+// TestService_Create_DueAtGivenInPast_StartAtNil_StartAtDefaultsToDueAt pins
+// the C2 fix: when only a past due_at is given (e.g. a backdated import),
+// defaulting StartAt to now would put it AFTER the caller's due_at,
+// inverting the invariant and making the ticket permanently un-updatable
+// (store_pg.go's Update re-validates start_at <= due_at on every future
+// call). StartAt must instead default to that same past due_at.
+func TestService_Create_DueAtGivenInPast_StartAtNil_StartAtDefaultsToDueAt(t *testing.T) {
+	store := &mockStore{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	pastDue := time.Now().Add(-48 * time.Hour).UTC()
+	created, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title: "backdated import, due date already passed",
+		DueAt: &pastDue,
+	}, "user1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if created.StartAt == nil || !created.StartAt.Equal(pastDue) {
+		t.Errorf("expected StartAt to default to the past DueAt %v, got %v", pastDue, created.StartAt)
+	}
+	if created.DueAt == nil || !created.DueAt.Equal(pastDue) {
+		t.Errorf("expected DueAt to stay exactly the given value %v, got %v", pastDue, created.DueAt)
+	}
+}
+
 func TestService_Create_BothGiven_NeitherOverridden(t *testing.T) {
 	store := &mockStore{}
 	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)

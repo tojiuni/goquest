@@ -42,6 +42,25 @@ func main() {
 		log.Fatalf("postgres ping: %v", err)
 	}
 
+	// Validate the calendar-sync (step 2) config BEFORE running the DB
+	// backfill (step 1) below. The DB backfill (start_at/due_at) is
+	// independent of tojihub and always safe to run, so it's unconditional —
+	// but if TOJIHUB_SERVICE_TOKEN is missing while TOJIHUB_CONNECT_URL is
+	// set, that's a misconfiguration we want to catch before mutating
+	// anything: step 1b's UPDATE ... RETURNING id captures the exact set of
+	// tickets that need a calendar sync, and that set only exists once
+	// (due_at goes from NULL to non-NULL). Fatal-ing after the DB backfill
+	// already ran would leave those tickets backfilled but never synced,
+	// with no way for a corrected re-run to find them again (RETURNING id
+	// matches zero rows the second time). An empty TOJIHUB_CONNECT_URL is
+	// not a misconfiguration — it just means calendar sync isn't deployed
+	// here — so the DB backfill still runs unconditionally and only the
+	// calendar-sync portion (step 2) is skipped for that case.
+	syncCalendar := cfg.TojihubConnectURL != ""
+	if syncCalendar && cfg.TojihubServiceToken == "" {
+		log.Fatalf("TOJIHUB_CONNECT_URL set but TOJIHUB_SERVICE_TOKEN empty — cannot run calendar sync")
+	}
+
 	// ── 1a. Fill start_at for tickets missing it ──────────────────────────
 	startAtTag, err := pool.Exec(ctx, `UPDATE tickets SET start_at = created_at WHERE start_at IS NULL`)
 	if err != nil {
@@ -77,12 +96,9 @@ func main() {
 	// ones (they don't need a calendar entry — mirrors ticket.Service's
 	// live Update path, which deletes rather than upserts for terminal
 	// tickets) ─────────────────────────────────────────────────────────
-	if cfg.TojihubConnectURL == "" {
+	if !syncCalendar {
 		log.Printf("TOJIHUB_CONNECT_URL not set — skipping calendar sync (DB backfill above already ran)")
 		return
-	}
-	if cfg.TojihubServiceToken == "" {
-		log.Fatalf("TOJIHUB_CONNECT_URL set but TOJIHUB_SERVICE_TOKEN empty — cannot run calendar sync")
 	}
 	if len(backfilledIDs) == 0 {
 		log.Printf("no tickets needed a due_at backfill — nothing to sync")

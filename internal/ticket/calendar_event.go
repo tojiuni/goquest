@@ -76,8 +76,9 @@ func ticketCalendarEvent(t *Ticket, calendarID, calendarDisplayName, calendarCol
 // due_at-less tickets are included in calendar sync
 // (goquest-sync-tickets-without-due-at) rather than excluded, so this
 // always returns a usable date. created_at is only reached for tickets
-// that predate Create's start_at/due_at defaulting (see Task 2) or that
-// arrive through some other path that bypasses it.
+// that predate Create's start_at/due_at defaulting (see Service.Create in
+// internal/ticket/service.go) or that arrive through some other path that
+// bypasses it.
 func ticketCalendarDate(t *Ticket) time.Time {
 	if t.DueAt != nil {
 		return *t.DueAt
