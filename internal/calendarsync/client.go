@@ -32,4 +32,12 @@ type Event struct {
 	// the next ticket sync with no separate call needed.
 	CalendarDisplayName string
 	CalendarColor       string
+	// CalendarWorkspaceName is the workspace (org) name, sent alongside
+	// CalendarDisplayName rather than folded into it — CalendarDisplayName
+	// stays "{workspace}-{project}" for backward compatibility, and this
+	// field lets a client (e.g. unicalendar iOS's org>project tree) get the
+	// workspace structurally instead of parsing it back out of the combined
+	// display name. Empty when the workspace name couldn't be resolved (see
+	// ProjectNameResolver in package ticket) or the ticket has no project.
+	CalendarWorkspaceName string
 }
