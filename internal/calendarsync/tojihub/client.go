@@ -45,12 +45,17 @@ type upsertEventRequest struct {
 	CalendarDisplayName   string `json:"calendar_display_name,omitempty"`
 	CalendarColor         string `json:"calendar_color,omitempty"`
 	CalendarWorkspaceName string `json:"calendar_workspace_name,omitempty"`
+	CalendarProjectName   string `json:"calendar_project_name,omitempty"`
 }
 
 // UpsertEvent creates or updates ev's calendar event on tojihub, in
 // ev.CalendarID's calendar (creating/relabeling/recoloring that calendar
 // first via tojihub's idempotent ensure_calendar, if CalendarDisplayName,
-// CalendarColor, or CalendarWorkspaceName is set).
+// CalendarColor, CalendarWorkspaceName, or CalendarProjectName is set).
+// CalendarDisplayName is still sent alongside CalendarProjectName for
+// backward compatibility with tojihub deployments that don't yet compose
+// the display name themselves (goquest-calendar-send-project-name) —
+// remove it once tojihub-calendar-display-name-compose has shipped.
 func (c *Client) UpsertEvent(ctx context.Context, ev calendarsync.Event) error {
 	body, err := json.Marshal(upsertEventRequest{
 		Principal:             ev.Principal,
@@ -60,6 +65,7 @@ func (c *Client) UpsertEvent(ctx context.Context, ev calendarsync.Event) error {
 		CalendarDisplayName:   ev.CalendarDisplayName,
 		CalendarColor:         ev.CalendarColor,
 		CalendarWorkspaceName: ev.CalendarWorkspaceName,
+		CalendarProjectName:   ev.CalendarProjectName,
 	})
 	if err != nil {
 		return fmt.Errorf("tojihub: marshal UpsertEvent request: %w", err)

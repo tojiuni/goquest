@@ -985,9 +985,14 @@ func (s *Service) syncCalendarEvent(t *Ticket) {
 				log.Printf("warn: calendar project name lookup for ticket %s: %v", id, err)
 			} else {
 				ev.CalendarWorkspaceName = workspaceName
+				ev.CalendarProjectName = projectName
 				// "{workspace}-{project}" format rationale documented at
 				// cmd/service/main.go's projectNameResolver doc comment —
 				// keep the two in sync if this format ever changes.
+				// CalendarDisplayName stays goquest-composed for backward
+				// compatibility (goquest-calendar-send-project-name) until
+				// tojihub-calendar-display-name-compose ships and this
+				// service can stop sending it.
 				if workspaceName != "" {
 					ev.CalendarDisplayName = workspaceName + "-" + projectName
 				} else {

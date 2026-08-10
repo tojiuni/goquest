@@ -37,6 +37,7 @@ func TestClient_UpsertEvent_SendsExpectedRequest(t *testing.T) {
 		CalendarDisplayName:   "toji-Project Foo",
 		CalendarColor:         "#4A90D9FF",
 		CalendarWorkspaceName: "toji",
+		CalendarProjectName:   "Project Foo",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -65,6 +66,9 @@ func TestClient_UpsertEvent_SendsExpectedRequest(t *testing.T) {
 	}
 	if gotBody["calendar_workspace_name"] != "toji" {
 		t.Errorf("unexpected calendar_workspace_name: %v", gotBody["calendar_workspace_name"])
+	}
+	if gotBody["calendar_project_name"] != "Project Foo" {
+		t.Errorf("unexpected calendar_project_name: %v", gotBody["calendar_project_name"])
 	}
 	icalData, _ := gotBody["ical_data"].(string)
 	if icalData == "" {
