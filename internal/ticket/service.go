@@ -200,6 +200,25 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 	}
 
 	now := time.Now().UTC()
+	// due_at-less tickets are still included in calendar sync
+	// (goquest-sync-tickets-without-due-at), so a ticket that doesn't
+	// specify start_at/due_at gets a same-day default here rather than
+	// staying permanently unscheduled: start_at defaults to the creation
+	// time, and due_at (if still unset) defaults to that same start_at —
+	// i.e. a "single day" ticket unless the caller explicitly gives a
+	// different due_at. An explicit start_at/due_at from the caller is
+	// never overridden. The earlier inversion check (start_at after
+	// due_at, a few lines up in this function) already ran against
+	// whatever the caller actually provided, so defaulting here can't
+	// retroactively create an inversion — a value defaulted from the
+	// other one is never "after" it.
+	if req.StartAt == nil {
+		req.StartAt = &now
+	}
+	if req.DueAt == nil {
+		dueAt := *req.StartAt
+		req.DueAt = &dueAt
+	}
 	t := &Ticket{
 		ID:             uuid.New(),
 		TitleName:      req.TitleName,

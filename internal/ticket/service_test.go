@@ -1166,3 +1166,98 @@ func TestCreate_RejectsInvertedStartDueRange(t *testing.T) {
 		t.Fatalf("want ErrValidation, got %v", err)
 	}
 }
+
+func TestService_Create_NeitherStartNorDueAt_DefaultsBothToNow(t *testing.T) {
+	store := &mockStore{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	before := time.Now().UTC()
+	created, err := svc.Create(context.Background(), ticket.CreateTicketReq{Title: "no dates given"}, "user1")
+	after := time.Now().UTC()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if created.StartAt == nil {
+		t.Fatal("expected StartAt to be defaulted, got nil")
+	}
+	if created.DueAt == nil {
+		t.Fatal("expected DueAt to be defaulted, got nil")
+	}
+	if created.StartAt.Before(before) || created.StartAt.After(after) {
+		t.Errorf("expected StartAt to be set to roughly now, got %v (window %v..%v)", created.StartAt, before, after)
+	}
+	if !created.DueAt.Equal(*created.StartAt) {
+		t.Errorf("expected DueAt to equal the defaulted StartAt, got StartAt=%v DueAt=%v", created.StartAt, created.DueAt)
+	}
+}
+
+func TestService_Create_StartAtGiven_DueAtNil_DueAtDefaultsToStartAt(t *testing.T) {
+	store := &mockStore{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	givenStart := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	created, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title:   "explicit start, no due",
+		StartAt: &givenStart,
+	}, "user1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if created.StartAt == nil || !created.StartAt.Equal(givenStart) {
+		t.Errorf("expected StartAt to stay exactly the given value %v, got %v", givenStart, created.StartAt)
+	}
+	if created.DueAt == nil || !created.DueAt.Equal(givenStart) {
+		t.Errorf("expected DueAt to default to the given StartAt %v, got %v", givenStart, created.DueAt)
+	}
+}
+
+func TestService_Create_DueAtGiven_StartAtNil_StartAtDefaultsToNowDueAtUnchanged(t *testing.T) {
+	store := &mockStore{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	givenDue := time.Date(2026, 12, 25, 0, 0, 0, 0, time.UTC)
+	before := time.Now().UTC()
+	created, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title: "explicit due, no start",
+		DueAt: &givenDue,
+	}, "user1")
+	after := time.Now().UTC()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if created.StartAt == nil {
+		t.Fatal("expected StartAt to be defaulted, got nil")
+	}
+	if created.StartAt.Before(before) || created.StartAt.After(after) {
+		t.Errorf("expected defaulted StartAt to be roughly now, got %v (window %v..%v)", created.StartAt, before, after)
+	}
+	if created.DueAt == nil || !created.DueAt.Equal(givenDue) {
+		t.Errorf("expected DueAt to stay exactly the given value %v, got %v", givenDue, created.DueAt)
+	}
+}
+
+func TestService_Create_BothGiven_NeitherOverridden(t *testing.T) {
+	store := &mockStore{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	givenStart := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	givenDue := time.Date(2026, 9, 5, 0, 0, 0, 0, time.UTC)
+	created, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title:   "both given",
+		StartAt: &givenStart,
+		DueAt:   &givenDue,
+	}, "user1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if created.StartAt == nil || !created.StartAt.Equal(givenStart) {
+		t.Errorf("expected StartAt untouched at %v, got %v", givenStart, created.StartAt)
+	}
+	if created.DueAt == nil || !created.DueAt.Equal(givenDue) {
+		t.Errorf("expected DueAt untouched at %v, got %v", givenDue, created.DueAt)
+	}
+}
