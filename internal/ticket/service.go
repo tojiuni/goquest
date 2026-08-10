@@ -204,12 +204,15 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 	now := time.Now().UTC()
 	// due_at-less tickets are still included in calendar sync
 	// (goquest-sync-tickets-without-due-at), so a ticket that doesn't
-	// specify start_at/due_at gets a same-day default here rather than
+	// specify start_at/due_at gets a default here rather than
 	// staying permanently unscheduled: start_at defaults to the creation
-	// time, and due_at (if still unset) defaults to that same start_at —
-	// i.e. a "single day" ticket unless the caller explicitly gives a
-	// different due_at. An explicit start_at/due_at from the caller is
-	// never overridden.
+	// time, and due_at (if still unset) defaults to start_at + 12 hours.
+	// This 12-hour offset is a partial mitigation for the SLA worker
+	// treating newly-created tickets as immediately overdue (tracked in
+	// goquest-sla-worker-due-at-default-conflict). Tickets left
+	// in_progress past the 12-hour window can still be auto-failed by the
+	// SLA worker. An explicit start_at/due_at from the caller is never
+	// overridden.
 	//
 	// Edge case: a caller can supply only a past due_at (e.g. a backdated
 	// import — "was due yesterday"). Defaulting start_at to now in that
@@ -230,7 +233,7 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 		}
 	}
 	if req.DueAt == nil {
-		dueAt := *req.StartAt
+		dueAt := req.StartAt.Add(12 * time.Hour)
 		req.DueAt = &dueAt
 	}
 	t := &Ticket{

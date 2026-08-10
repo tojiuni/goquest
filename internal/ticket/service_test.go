@@ -1167,7 +1167,7 @@ func TestCreate_RejectsInvertedStartDueRange(t *testing.T) {
 	}
 }
 
-func TestService_Create_NeitherStartNorDueAt_DefaultsBothToNow(t *testing.T) {
+func TestService_Create_NeitherStartNorDueAt_StartNowDueAt12hLater(t *testing.T) {
 	store := &mockStore{}
 	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
 
@@ -1187,12 +1187,13 @@ func TestService_Create_NeitherStartNorDueAt_DefaultsBothToNow(t *testing.T) {
 	if created.StartAt.Before(before) || created.StartAt.After(after) {
 		t.Errorf("expected StartAt to be set to roughly now, got %v (window %v..%v)", created.StartAt, before, after)
 	}
-	if !created.DueAt.Equal(*created.StartAt) {
-		t.Errorf("expected DueAt to equal the defaulted StartAt, got StartAt=%v DueAt=%v", created.StartAt, created.DueAt)
+	expectedDueAt := created.StartAt.Add(12 * time.Hour)
+	if !created.DueAt.Equal(expectedDueAt) {
+		t.Errorf("expected DueAt to equal StartAt + 12h, got StartAt=%v DueAt=%v expected=%v", created.StartAt, created.DueAt, expectedDueAt)
 	}
 }
 
-func TestService_Create_StartAtGiven_DueAtNil_DueAtDefaultsToStartAt(t *testing.T) {
+func TestService_Create_StartAtGiven_DueAtNil_DueAtDefaultsToStartAtPlus12h(t *testing.T) {
 	store := &mockStore{}
 	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
 
@@ -1208,8 +1209,9 @@ func TestService_Create_StartAtGiven_DueAtNil_DueAtDefaultsToStartAt(t *testing.
 	if created.StartAt == nil || !created.StartAt.Equal(givenStart) {
 		t.Errorf("expected StartAt to stay exactly the given value %v, got %v", givenStart, created.StartAt)
 	}
-	if created.DueAt == nil || !created.DueAt.Equal(givenStart) {
-		t.Errorf("expected DueAt to default to the given StartAt %v, got %v", givenStart, created.DueAt)
+	expectedDueAt := givenStart.Add(12 * time.Hour)
+	if created.DueAt == nil || !created.DueAt.Equal(expectedDueAt) {
+		t.Errorf("expected DueAt to default to StartAt + 12h (%v), got %v", expectedDueAt, created.DueAt)
 	}
 }
 
