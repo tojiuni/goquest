@@ -40,4 +40,11 @@ type Event struct {
 	// display name. Empty when the workspace name couldn't be resolved (see
 	// ProjectNameResolver in package ticket) or the ticket has no project.
 	CalendarWorkspaceName string
+	// CalendarProjectName is the project name alone, without the workspace
+	// prefix CalendarDisplayName still carries (goquest-calendar-send-project-name).
+	// Sent alongside CalendarDisplayName/CalendarWorkspaceName rather than
+	// replacing either yet, so the composing responsibility can move to the
+	// backend (tojihub-calendar-display-name-compose) without a coordinated
+	// cutover. Empty under the same conditions as CalendarWorkspaceName.
+	CalendarProjectName string
 }

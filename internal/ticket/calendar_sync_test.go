@@ -303,6 +303,9 @@ func TestService_Create_WithProject_UsesProjectCalendarIDAndColor(t *testing.T) 
 	if ev.CalendarWorkspaceName != "toji" {
 		t.Errorf("expected calendar workspace name %q, got %q", "toji", ev.CalendarWorkspaceName)
 	}
+	if ev.CalendarProjectName != "Project Foo" {
+		t.Errorf("expected calendar project name %q, got %q", "Project Foo", ev.CalendarProjectName)
+	}
 	if ev.CalendarColor == "" {
 		t.Error("expected a non-empty deterministic calendar color for a project ticket")
 	}
@@ -341,6 +344,9 @@ func TestService_Create_WithProject_WorkspaceNameEmpty_DisplayNameDegradesToProj
 	}
 	if ev.CalendarWorkspaceName != "" {
 		t.Errorf("expected empty calendar workspace name, got %q", ev.CalendarWorkspaceName)
+	}
+	if ev.CalendarProjectName != "Project Foo" {
+		t.Errorf("expected calendar project name %q, got %q", "Project Foo", ev.CalendarProjectName)
 	}
 }
 
@@ -394,5 +400,8 @@ func TestService_Create_ProjectNameResolverNil_StillUpsertsWithEmptyDisplayName(
 	}
 	if cal.upserted[0].CalendarWorkspaceName != "" {
 		t.Errorf("expected empty workspace name with no resolver wired, got %q", cal.upserted[0].CalendarWorkspaceName)
+	}
+	if cal.upserted[0].CalendarProjectName != "" {
+		t.Errorf("expected empty project name with no resolver wired, got %q", cal.upserted[0].CalendarProjectName)
 	}
 }
