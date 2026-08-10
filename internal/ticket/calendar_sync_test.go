@@ -20,11 +20,15 @@ type syncFakeCalendarClient struct {
 	mu       sync.Mutex
 	upserted []calendarsync.Event
 	deleted  []string
+	err      error
 }
 
 func (f *syncFakeCalendarClient) UpsertEvent(_ context.Context, ev calendarsync.Event) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
 	f.upserted = append(f.upserted, ev)
 	return nil
 }
@@ -85,7 +89,13 @@ func TestService_Create_WithDueAt_UpsertsCalendarEvent(t *testing.T) {
 	}
 }
 
-func TestService_Create_WithoutDueAt_NoCalendarCall(t *testing.T) {
+// TestService_Create_NonEmailPrincipal_NoDueAt_NoCalendarCall pins that an
+// unresolvable principal (requesterID "user1" is not email-shaped, and no
+// AssigneeID is set) still causes syncCalendarEvent to no-op, even though
+// due_at-less tickets are otherwise included in calendar sync
+// (goquest-sync-tickets-without-due-at) — the no-op here is because
+// ticketCalendarPrincipal resolves to "", not because due_at is missing.
+func TestService_Create_NonEmailPrincipal_NoDueAt_NoCalendarCall(t *testing.T) {
 	store := &mockStore{}
 	cal := &syncFakeCalendarClient{}
 	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
@@ -124,7 +134,15 @@ func TestService_Update_CompletedTicket_DeletesCalendarEvent(t *testing.T) {
 	}
 }
 
-func TestService_Update_NoDueAt_NotTerminal_NoCalendarCall(t *testing.T) {
+// TestService_Update_NonEmailPrincipal_NotTerminal_NoCalendarCall pins that
+// an unresolvable principal (newTestTicket sets neither RequesterID nor
+// AssigneeID, so ticketCalendarPrincipal resolves to "") causes no calendar
+// call on a non-terminal update, regardless of due_at — due_at is left nil
+// here, but that's incidental: due_at-less tickets are otherwise included
+// in calendar sync (goquest-sync-tickets-without-due-at); see
+// TestService_Update_NonTerminalNoDueAt_StillSyncs for the case where the
+// principal *does* resolve and the upsert must fire.
+func TestService_Update_NonEmailPrincipal_NotTerminal_NoCalendarCall(t *testing.T) {
 	base := newTestTicket(ticket.StatusInProgress) // DueAt left nil
 	store := &mockStore{getTicket: base}
 	cal := &syncFakeCalendarClient{}
@@ -141,6 +159,32 @@ func TestService_Update_NoDueAt_NotTerminal_NoCalendarCall(t *testing.T) {
 	if cal.upsertCount() != 0 || cal.deleteCount() != 0 {
 		t.Errorf("expected no calendar calls, got %d upserts / %d deletes", cal.upsertCount(), cal.deleteCount())
 	}
+}
+
+// TestService_Update_NonTerminalNoDueAt_StillSyncs pins the upsert-branch
+// half of goquest-sync-tickets-without-due-at for Update: a due_at-less
+// ticket with a resolvable principal that stays non-terminal after the
+// update must still get a calendar upsert. This is the positive
+// counterpart to TestService_Update_NonEmailPrincipal_NotTerminal_NoCalendarCall
+// above (which no-ops for an unrelated reason — an unresolvable principal)
+// and to TestService_Update_TerminalNoDueAt_StillAttemptsDelete (which
+// covers the terminal/delete branch).
+func TestService_Update_NonTerminalNoDueAt_StillSyncs(t *testing.T) {
+	base := newTestTicket(ticket.StatusInProgress)
+	base.RequesterID = "requester@example.com"
+	// DueAt intentionally left nil.
+	store := &mockStore{getTicket: base}
+	cal := &syncFakeCalendarClient{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+
+	newTitle := "renamed, still in progress"
+	_, err := svc.Update(context.Background(), base.ID, ticket.UpdateTicketReq{Title: &newTitle}, "actor")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	waitFor(t, func() bool { return cal.upsertCount() == 1 })
 }
 
 // TestService_Create_NonEmailPrincipal_NoCalendarCall covers finding #2:
@@ -231,6 +275,65 @@ func TestService_Create_CalendarClientFails_TicketCreationStillSucceeds(t *testi
 	if tk.ID.String() == "" {
 		t.Error("expected a valid ticket ID")
 	}
+}
+
+// TestService_Create_NoDueAt_StillSyncs pins goquest-sync-tickets-without-due-at:
+// a ticket with no due_at (but a resolvable principal) must still be
+// upserted to the calendar — the old due_at requirement is gone.
+func TestService_Create_NoDueAt_StillSyncs(t *testing.T) {
+	store := &mockStore{}
+	cal := &syncFakeCalendarClient{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+
+	_, err := svc.Create(context.Background(), ticket.CreateTicketReq{
+		Title: "no due date at all",
+	}, "user1@example.com")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	waitFor(t, func() bool { return cal.upsertCount() == 1 })
+}
+
+// TestService_Update_TerminalNoDueAt_StillAttemptsDelete pins the delete-branch
+// half of the fix: a terminal ticket that never had a due_at must still get
+// a delete attempt (defense against a partial fix that only updates the
+// upsert branch and leaves due_at-less tickets' events undeleted forever).
+func TestService_Update_TerminalNoDueAt_StillAttemptsDelete(t *testing.T) {
+	base := newTestTicket(ticket.StatusInProgress)
+	base.RequesterID = "requester@example.com"
+	// DueAt intentionally left nil.
+	store := &mockStore{getTicket: base}
+	cal := &syncFakeCalendarClient{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+
+	completed := ticket.StatusCompleted
+	_, err := svc.Update(context.Background(), base.ID, ticket.UpdateTicketReq{Status: &completed}, "actor")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	waitFor(t, func() bool { return cal.deleteCount() == 1 })
+}
+
+// TestService_Reopen_NoDueAt_StillSyncs is the Reopen-side equivalent.
+func TestService_Reopen_NoDueAt_StillSyncs(t *testing.T) {
+	base := newTestTicket(ticket.StatusCompleted)
+	base.RequesterID = "requester@example.com"
+	// DueAt intentionally left nil.
+	store := &mockStore{getTicket: base}
+	cal := &syncFakeCalendarClient{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+
+	_, err := svc.Reopen(context.Background(), base.ID, "actor", "reopened by mistake")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	waitFor(t, func() bool { return cal.upsertCount() == 1 })
 }
 
 func TestService_Reopen_WithDueAt_UpsertsCalendarEvent(t *testing.T) {
@@ -403,5 +506,88 @@ func TestService_Create_ProjectNameResolverNil_StillUpsertsWithEmptyDisplayName(
 	}
 	if cal.upserted[0].CalendarProjectName != "" {
 		t.Errorf("expected empty project name with no resolver wired, got %q", cal.upserted[0].CalendarProjectName)
+	}
+}
+
+func TestService_SyncCalendarEventNow_NoCalendarClient_NoopNilError(t *testing.T) {
+	store := &mockStore{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	// SetCalendarClient never called.
+
+	due := time.Now().UTC()
+	tk := &ticket.Ticket{ID: uuid.New(), Title: "x", RequesterID: "user@example.com", DueAt: &due}
+
+	if err := svc.SyncCalendarEventNow(context.Background(), tk); err != nil {
+		t.Errorf("expected nil error with no CalendarClient wired, got %v", err)
+	}
+}
+
+func TestService_SyncCalendarEventNow_EmptyPrincipal_NoopNilError(t *testing.T) {
+	store := &mockStore{}
+	cal := &syncFakeCalendarClient{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+
+	due := time.Now().UTC()
+	tk := &ticket.Ticket{ID: uuid.New(), Title: "x", AssigneeID: "bob", RequesterID: "svc-account", DueAt: &due}
+
+	if err := svc.SyncCalendarEventNow(context.Background(), tk); err != nil {
+		t.Errorf("expected nil error with an unresolvable principal, got %v", err)
+	}
+	if cal.upsertCount() != 0 {
+		t.Errorf("expected no upsert call with an unresolvable principal, got %d", cal.upsertCount())
+	}
+}
+
+func TestService_SyncCalendarEventNow_Success_CallsUpsertSynchronously(t *testing.T) {
+	store := &mockStore{}
+	cal := &syncFakeCalendarClient{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+	projectID := uuid.New()
+	svc.SetProjectNameResolver(fakeProjectNameResolver{
+		projectID: {workspaceName: "toji", projectName: "Project Foo"},
+	})
+
+	due := time.Now().UTC()
+	tk := &ticket.Ticket{
+		ID: uuid.New(), Title: "sync me now", RequesterID: "user@example.com",
+		DueAt: &due, ProjectID: &projectID,
+	}
+
+	err := svc.SyncCalendarEventNow(context.Background(), tk)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// No waitFor: SyncCalendarEventNow is synchronous, the call must have
+	// already happened by the time it returns.
+	if cal.upsertCount() != 1 {
+		t.Fatalf("expected 1 synchronous upsert call, got %d", cal.upsertCount())
+	}
+	ev := cal.upserted[0]
+	if ev.CalendarDisplayName != "toji-Project Foo" {
+		t.Errorf("expected calendar display name %q, got %q", "toji-Project Foo", ev.CalendarDisplayName)
+	}
+	if ev.CalendarWorkspaceName != "toji" {
+		t.Errorf("expected calendar workspace name %q, got %q", "toji", ev.CalendarWorkspaceName)
+	}
+	if ev.CalendarProjectName != "Project Foo" {
+		t.Errorf("expected calendar project name %q, got %q", "Project Foo", ev.CalendarProjectName)
+	}
+}
+
+func TestService_SyncCalendarEventNow_PropagatesCalendarClientError(t *testing.T) {
+	store := &mockStore{}
+	cal := &syncFakeCalendarClient{err: errors.New("tojihub unavailable")}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+
+	due := time.Now().UTC()
+	tk := &ticket.Ticket{ID: uuid.New(), Title: "x", RequesterID: "user@example.com", DueAt: &due}
+
+	err := svc.SyncCalendarEventNow(context.Background(), tk)
+	if err == nil {
+		t.Fatal("expected the CalendarClient's error to propagate, got nil")
 	}
 }

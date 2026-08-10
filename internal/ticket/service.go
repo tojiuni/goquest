@@ -24,11 +24,13 @@ type Publisher interface {
 	PublishCompleted(ctx context.Context, t *Ticket) error
 }
 
-// CalendarClient syncs a ticket's due date to an external calendar. Backend
-// agnostic — see internal/calendarsync/tojihub for the concrete
-// implementation this repo wires up today. A nil CalendarClient (the
-// zero value, never set via SetCalendarClient) disables calendar sync
-// entirely, same as nuclex/xp/webhook/magic when left unset.
+// CalendarClient syncs a ticket's calendar event date to an external
+// calendar — due_at when set, falling back to start_at, falling back to
+// created_at, per ticketCalendarDate's fallback chain (see
+// calendar_event.go). Backend agnostic — see internal/calendarsync/tojihub
+// for the concrete implementation this repo wires up today. A nil
+// CalendarClient (the zero value, never set via SetCalendarClient) disables
+// calendar sync entirely, same as nuclex/xp/webhook/magic when left unset.
 type CalendarClient interface {
 	UpsertEvent(ctx context.Context, ev calendarsync.Event) error
 	DeleteEvent(ctx context.Context, principal, calendarID, objectID string) error
@@ -200,6 +202,40 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 	}
 
 	now := time.Now().UTC()
+	// due_at-less tickets are still included in calendar sync
+	// (goquest-sync-tickets-without-due-at), so a ticket that doesn't
+	// specify start_at/due_at gets a default here rather than
+	// staying permanently unscheduled: start_at defaults to the creation
+	// time, and due_at (if still unset) defaults to start_at + 12 hours.
+	// This 12-hour offset is a partial mitigation for the SLA worker
+	// treating newly-created tickets as immediately overdue (tracked in
+	// goquest-sla-worker-due-at-default-conflict). Tickets left
+	// in_progress past the 12-hour window can still be auto-failed by the
+	// SLA worker. An explicit start_at/due_at from the caller is never
+	// overridden.
+	//
+	// Edge case: a caller can supply only a past due_at (e.g. a backdated
+	// import — "was due yesterday"). Defaulting start_at to now in that
+	// case would put start_at AFTER the caller's due_at, silently creating
+	// an inversion that the earlier check (a few lines up) can't catch
+	// because it only runs when both fields are caller-supplied. store_pg.go's
+	// Update re-validates start_at <= due_at on every future update using the
+	// ticket's current values, so such an inversion would make the ticket
+	// permanently un-updatable. To avoid that, when due_at is caller-supplied
+	// and already in the past, start_at defaults to that due_at instead of
+	// now, so start_at never ends up after a caller-provided due_at.
+	if req.StartAt == nil {
+		if req.DueAt != nil && req.DueAt.Before(now) {
+			startAt := *req.DueAt
+			req.StartAt = &startAt
+		} else {
+			req.StartAt = &now
+		}
+	}
+	if req.DueAt == nil {
+		dueAt := req.StartAt.Add(12 * time.Hour)
+		req.DueAt = &dueAt
+	}
 	t := &Ticket{
 		ID:             uuid.New(),
 		TitleName:      req.TitleName,
@@ -263,7 +299,7 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 		log.Printf("warn: publish created: %v", err)
 	}
 
-	if s.cal != nil && t.DueAt != nil {
+	if s.cal != nil {
 		s.syncCalendarEvent(t)
 	}
 
@@ -409,21 +445,17 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq,
 	}
 
 	if s.cal != nil {
-		switch {
-		case (t.Status == StatusCompleted || t.Status == StatusFailed || t.Status == StatusCancelled) && t.DueAt != nil:
+		// due_at is no longer a precondition for calendar sync
+		// (goquest-sync-tickets-without-due-at) — every non-terminal ticket
+		// gets an upsert, every terminal one gets a delete attempt,
+		// regardless of whether it ever had a due_at. tojihub's DeleteEvent
+		// is a no-op-safe call against a never-created object (idempotent,
+		// same rationale as the UpsertEvent ON CONFLICT semantics).
+		if t.Status == StatusCompleted || t.Status == StatusFailed || t.Status == StatusCancelled {
 			s.deleteCalendarEvent(t)
-		case t.DueAt != nil:
+		} else {
 			s.syncCalendarEvent(t)
 		}
-		// t.DueAt == nil: nothing to do, whether terminal or not. Confirmed
-		// against store_pg.go's Update (internal/ticket/store_pg.go:273-275)
-		// — DueAt is only ever overwritten when req.DueAt is non-nil; there
-		// is no "clear the due date" path through UpdateTicketReq today. So
-		// a nil t.DueAt here always means this ticket never had one, never
-		// that a previously-set one was just cleared — no calendar call
-		// needed either way. Without this guard, every terminal ticket
-		// without a due date (the common case) would fire a doomed delete
-		// call against an event that was never created.
 	}
 
 	if t.Status == StatusCompleted || t.Status == StatusFailed {
@@ -504,7 +536,7 @@ func (s *Service) Reopen(ctx context.Context, id uuid.UUID, actor, reason string
 	if err := s.pub.PublishUpdated(ctx, reopened); err != nil {
 		log.Printf("warn: publish updated: %v", err)
 	}
-	if s.cal != nil && reopened.DueAt != nil {
+	if s.cal != nil {
 		s.syncCalendarEvent(reopened)
 	}
 	return reopened, nil
@@ -968,6 +1000,11 @@ const calendarSyncTimeout = 15 * time.Second
 // goroutine — matching every other call here) and the goroutine only fills
 // in ev.CalendarDisplayName/ev.CalendarWorkspaceName on its own private
 // copy before sending it.
+//
+// SyncCalendarEventNow below intentionally duplicates this function's
+// resolver block (the workspaceName/projectName lookup and
+// CalendarDisplayName composition) for its own synchronous call path — keep
+// the two in sync field-for-field if this resolver logic ever changes.
 func (s *Service) syncCalendarEvent(t *Ticket) {
 	principal := ticketCalendarPrincipal(t)
 	if principal == "" {
@@ -1004,6 +1041,39 @@ func (s *Service) syncCalendarEvent(t *Ticket) {
 			log.Printf("warn: calendar upsert for ticket %s: %v", id, err)
 		}
 	}()
+}
+
+// SyncCalendarEventNow upserts t's calendar event synchronously — unlike
+// syncCalendarEvent's goroutine-dispatched fire-and-forget version, built
+// for the live request path where blocking on a slow calendar backend
+// would be the wrong tradeoff. Batch tools (cmd/backfill-calendar-sync)
+// need each ticket's actual success/failure to log accurate counts, so
+// this returns the real error instead. No-ops (nil error, no call) when no
+// CalendarClient is wired or the resolved principal is empty, the same
+// conditions syncCalendarEvent checks. Callers own ctx's timeout.
+func (s *Service) SyncCalendarEventNow(ctx context.Context, t *Ticket) error {
+	if s.cal == nil {
+		return nil
+	}
+	principal := ticketCalendarPrincipal(t)
+	if principal == "" {
+		return nil
+	}
+	ev := ticketCalendarEvent(t, ticketCalendarID(t), "", ticketCalendarColor(t))
+	if t.ProjectID != nil && s.projects != nil {
+		if workspaceName, projectName, err := s.projects.ProjectName(ctx, *t.ProjectID); err != nil {
+			log.Printf("warn: calendar project name lookup for ticket %s: %v", t.ID, err)
+		} else {
+			ev.CalendarWorkspaceName = workspaceName
+			ev.CalendarProjectName = projectName
+			if workspaceName != "" {
+				ev.CalendarDisplayName = workspaceName + "-" + projectName
+			} else {
+				ev.CalendarDisplayName = projectName
+			}
+		}
+	}
+	return s.cal.UpsertEvent(ctx, ev)
 }
 
 // deleteCalendarEvent removes t's calendar event in the background. See
