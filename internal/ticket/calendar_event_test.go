@@ -90,3 +90,44 @@ func TestTicketCalendarEvent_NeitherIDEmailShaped_EmptyPrincipal(t *testing.T) {
 		t.Errorf("expected empty principal when neither id is email-shaped, got %q", ev.Principal)
 	}
 }
+
+// TestTicketCalendarEvent_NoDueAt_FallsBackToStartAt covers
+// goquest-sync-tickets-without-due-at: a ticket with no due_at but a
+// start_at must use start_at for DTSTART, not fail or zero out.
+func TestTicketCalendarEvent_NoDueAt_FallsBackToStartAt(t *testing.T) {
+	start := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	tk := &ticket.Ticket{
+		ID:          uuid.New(),
+		Title:       "no due date, has a start date",
+		AssigneeID:  "assignee@example.com",
+		RequesterID: "requester@example.com",
+		StartAt:     &start,
+	}
+
+	ev := ticket.ExportedTicketCalendarEvent(tk)
+
+	if !ev.DTStart.Equal(start) {
+		t.Errorf("expected DTStart to fall back to start_at %v, got %v", start, ev.DTStart)
+	}
+}
+
+// TestTicketCalendarEvent_NoDueAtNoStartAt_FallsBackToCreatedAt covers the
+// last-resort fallback for a ticket with neither due_at nor start_at set —
+// reachable for tickets that predate Create's start_at/due_at defaulting,
+// or that arrive through a path that bypasses it.
+func TestTicketCalendarEvent_NoDueAtNoStartAt_FallsBackToCreatedAt(t *testing.T) {
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	tk := &ticket.Ticket{
+		ID:          uuid.New(),
+		Title:       "neither due nor start date",
+		AssigneeID:  "assignee@example.com",
+		RequesterID: "requester@example.com",
+		CreatedAt:   created,
+	}
+
+	ev := ticket.ExportedTicketCalendarEvent(tk)
+
+	if !ev.DTStart.Equal(created) {
+		t.Errorf("expected DTStart to fall back to created_at %v, got %v", created, ev.DTStart)
+	}
+}

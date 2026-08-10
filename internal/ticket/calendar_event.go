@@ -2,6 +2,7 @@ package ticket
 
 import (
 	"strings"
+	"time"
 
 	"github.com/tojiuni/goquest/internal/calendarsync"
 )
@@ -53,22 +54,36 @@ func ticketCalendarColor(t *Ticket) string {
 	return calendarsync.ProjectColor(*t.ProjectID)
 }
 
-// ticketCalendarEvent builds the calendarsync.Event for a ticket. Callers
-// must check t.DueAt != nil before calling this — DTStart is meaningless
-// otherwise (this function does not guard against a nil DueAt itself,
-// since call sites already branch on DueAt presence to decide
-// UpsertEvent-vs-DeleteEvent; see Task 3). calendarID/calendarDisplayName/
-// calendarColor are passed in rather than derived here because
-// calendarDisplayName needs an async project-name lookup the caller does on
-// its own timeout (see syncCalendarEvent in service.go).
+// ticketCalendarEvent builds the calendarsync.Event for a ticket.
+// calendarID/calendarDisplayName/calendarColor are passed in rather than
+// derived here because calendarDisplayName needs an async project-name
+// lookup the caller does on its own timeout (see syncCalendarEvent in
+// service.go).
 func ticketCalendarEvent(t *Ticket, calendarID, calendarDisplayName, calendarColor string) calendarsync.Event {
 	return calendarsync.Event{
 		Principal:           ticketCalendarPrincipal(t),
 		ObjectID:            calendarObjectID(t),
 		Summary:             t.Title,
-		DTStart:             *t.DueAt,
+		DTStart:             ticketCalendarDate(t),
 		CalendarID:          calendarID,
 		CalendarDisplayName: calendarDisplayName,
 		CalendarColor:       calendarColor,
 	}
+}
+
+// ticketCalendarDate resolves the date used for a ticket's calendar event
+// DTSTART: due_at if set, else start_at, else created_at as a last resort.
+// due_at-less tickets are included in calendar sync
+// (goquest-sync-tickets-without-due-at) rather than excluded, so this
+// always returns a usable date. created_at is only reached for tickets
+// that predate Create's start_at/due_at defaulting (see Task 2) or that
+// arrive through some other path that bypasses it.
+func ticketCalendarDate(t *Ticket) time.Time {
+	if t.DueAt != nil {
+		return *t.DueAt
+	}
+	if t.StartAt != nil {
+		return *t.StartAt
+	}
+	return t.CreatedAt
 }
