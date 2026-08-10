@@ -1021,6 +1021,39 @@ func (s *Service) syncCalendarEvent(t *Ticket) {
 	}()
 }
 
+// SyncCalendarEventNow upserts t's calendar event synchronously — unlike
+// syncCalendarEvent's goroutine-dispatched fire-and-forget version, built
+// for the live request path where blocking on a slow calendar backend
+// would be the wrong tradeoff. Batch tools (cmd/backfill-calendar-sync)
+// need each ticket's actual success/failure to log accurate counts, so
+// this returns the real error instead. No-ops (nil error, no call) when no
+// CalendarClient is wired or the resolved principal is empty, the same
+// conditions syncCalendarEvent checks. Callers own ctx's timeout.
+func (s *Service) SyncCalendarEventNow(ctx context.Context, t *Ticket) error {
+	if s.cal == nil {
+		return nil
+	}
+	principal := ticketCalendarPrincipal(t)
+	if principal == "" {
+		return nil
+	}
+	ev := ticketCalendarEvent(t, ticketCalendarID(t), "", ticketCalendarColor(t))
+	if t.ProjectID != nil && s.projects != nil {
+		if workspaceName, projectName, err := s.projects.ProjectName(ctx, *t.ProjectID); err != nil {
+			log.Printf("warn: calendar project name lookup for ticket %s: %v", t.ID, err)
+		} else {
+			ev.CalendarWorkspaceName = workspaceName
+			ev.CalendarProjectName = projectName
+			if workspaceName != "" {
+				ev.CalendarDisplayName = workspaceName + "-" + projectName
+			} else {
+				ev.CalendarDisplayName = projectName
+			}
+		}
+	}
+	return s.cal.UpsertEvent(ctx, ev)
+}
+
 // deleteCalendarEvent removes t's calendar event in the background. See
 // syncCalendarEvent for the goroutine/timeout/error-handling/empty-principal
 // rationale — identical here.

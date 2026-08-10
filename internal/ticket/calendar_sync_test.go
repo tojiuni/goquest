@@ -20,11 +20,15 @@ type syncFakeCalendarClient struct {
 	mu       sync.Mutex
 	upserted []calendarsync.Event
 	deleted  []string
+	err      error
 }
 
 func (f *syncFakeCalendarClient) UpsertEvent(_ context.Context, ev calendarsync.Event) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
 	f.upserted = append(f.upserted, ev)
 	return nil
 }
@@ -462,5 +466,88 @@ func TestService_Create_ProjectNameResolverNil_StillUpsertsWithEmptyDisplayName(
 	}
 	if cal.upserted[0].CalendarProjectName != "" {
 		t.Errorf("expected empty project name with no resolver wired, got %q", cal.upserted[0].CalendarProjectName)
+	}
+}
+
+func TestService_SyncCalendarEventNow_NoCalendarClient_NoopNilError(t *testing.T) {
+	store := &mockStore{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	// SetCalendarClient never called.
+
+	due := time.Now().UTC()
+	tk := &ticket.Ticket{ID: uuid.New(), Title: "x", RequesterID: "user@example.com", DueAt: &due}
+
+	if err := svc.SyncCalendarEventNow(context.Background(), tk); err != nil {
+		t.Errorf("expected nil error with no CalendarClient wired, got %v", err)
+	}
+}
+
+func TestService_SyncCalendarEventNow_EmptyPrincipal_NoopNilError(t *testing.T) {
+	store := &mockStore{}
+	cal := &syncFakeCalendarClient{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+
+	due := time.Now().UTC()
+	tk := &ticket.Ticket{ID: uuid.New(), Title: "x", AssigneeID: "bob", RequesterID: "svc-account", DueAt: &due}
+
+	if err := svc.SyncCalendarEventNow(context.Background(), tk); err != nil {
+		t.Errorf("expected nil error with an unresolvable principal, got %v", err)
+	}
+	if cal.upsertCount() != 0 {
+		t.Errorf("expected no upsert call with an unresolvable principal, got %d", cal.upsertCount())
+	}
+}
+
+func TestService_SyncCalendarEventNow_Success_CallsUpsertSynchronously(t *testing.T) {
+	store := &mockStore{}
+	cal := &syncFakeCalendarClient{}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+	projectID := uuid.New()
+	svc.SetProjectNameResolver(fakeProjectNameResolver{
+		projectID: {workspaceName: "toji", projectName: "Project Foo"},
+	})
+
+	due := time.Now().UTC()
+	tk := &ticket.Ticket{
+		ID: uuid.New(), Title: "sync me now", RequesterID: "user@example.com",
+		DueAt: &due, ProjectID: &projectID,
+	}
+
+	err := svc.SyncCalendarEventNow(context.Background(), tk)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// No waitFor: SyncCalendarEventNow is synchronous, the call must have
+	// already happened by the time it returns.
+	if cal.upsertCount() != 1 {
+		t.Fatalf("expected 1 synchronous upsert call, got %d", cal.upsertCount())
+	}
+	ev := cal.upserted[0]
+	if ev.CalendarDisplayName != "toji-Project Foo" {
+		t.Errorf("expected calendar display name %q, got %q", "toji-Project Foo", ev.CalendarDisplayName)
+	}
+	if ev.CalendarWorkspaceName != "toji" {
+		t.Errorf("expected calendar workspace name %q, got %q", "toji", ev.CalendarWorkspaceName)
+	}
+	if ev.CalendarProjectName != "Project Foo" {
+		t.Errorf("expected calendar project name %q, got %q", "Project Foo", ev.CalendarProjectName)
+	}
+}
+
+func TestService_SyncCalendarEventNow_PropagatesCalendarClientError(t *testing.T) {
+	store := &mockStore{}
+	cal := &syncFakeCalendarClient{err: errors.New("tojihub unavailable")}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetCalendarClient(cal)
+
+	due := time.Now().UTC()
+	tk := &ticket.Ticket{ID: uuid.New(), Title: "x", RequesterID: "user@example.com", DueAt: &due}
+
+	err := svc.SyncCalendarEventNow(context.Background(), tk)
+	if err == nil {
+		t.Fatal("expected the CalendarClient's error to propagate, got nil")
 	}
 }
