@@ -68,11 +68,11 @@ func main() {
 	}
 
 	// ── 1b. Fill due_at for tickets missing it, capturing exactly which
-	// ones needed it — this exact id set (not "due_at = start_at", which
-	// would also match tickets that already legitimately had matching
-	// values) is what step 2 syncs to tojihub. Must run after 1a: a ticket
-	// whose start_at was just filled above needs that same value here.
-	dueAtRows, err := pool.Query(ctx, `UPDATE tickets SET due_at = start_at WHERE due_at IS NULL RETURNING id`)
+	// ones needed it. Sets due_at = start_at + 12 hours, matching live
+	// ticket.Service.Create default. This exact id set is what step 2 syncs
+	// to tojihub. Must run after 1a: a ticket whose start_at was just filled
+	// above needs that same value here.
+	dueAtRows, err := pool.Query(ctx, `UPDATE tickets SET due_at = start_at + INTERVAL '12 hours' WHERE due_at IS NULL RETURNING id`)
 	if err != nil {
 		log.Fatalf("backfill due_at: %v", err)
 	}
