@@ -5,7 +5,11 @@
 // CalendarClient interface that consumes Event lives in package ticket.
 package calendarsync
 
-import "time"
+import (
+	"time"
+
+	"github.com/google/uuid"
+)
 
 // Event is a calendar event derived from a goquest ticket, backend-agnostic.
 // Concrete CalendarClient implementations translate this into whatever wire
@@ -47,4 +51,31 @@ type Event struct {
 	// backend (tojihub-calendar-display-name-compose) without a coordinated
 	// cutover. Empty under the same conditions as CalendarWorkspaceName.
 	CalendarProjectName string
+	// TicketID is the source ticket's ID (goq-ical-ticket-metadata), sent as
+	// X-GOQUEST-TICKET-ID so downstream consumers (e.g. unicalendar's
+	// uni-rdb-goquest-ext) can link the calendar event back to its ticket.
+	TicketID uuid.UUID
+	// Status is the ticket's status (string(ticket.Status) — kept as a plain
+	// string here rather than ticket.Status to avoid an import cycle, since
+	// package ticket already imports this package), sent as X-GOQUEST-STATUS.
+	Status string
+	// ProjectID is the ticket's project, sent as X-GOQUEST-PROJECT-ID. Nil
+	// when the ticket has no project — distinct from CalendarID above, which
+	// is a derived value ("default" for no-project tickets) rather than the
+	// raw project ID.
+	ProjectID *uuid.UUID
+	// AssigneeID is the ticket's assignee identifier, sent as
+	// X-GOQUEST-ASSIGNEE-ID. Empty when the ticket is unassigned.
+	AssigneeID string
+	// AssigneeType is the ticket's assignee type (string(ticket.AssigneeType)
+	// — plain string for the same import-cycle reason as Status), sent as
+	// X-GOQUEST-ASSIGNEE-TYPE.
+	AssigneeType string
+	// RequesterID is the ticket's requester identifier, sent as
+	// X-GOQUEST-REQUESTER-ID.
+	RequesterID string
+	// StartAt and DueAt are the ticket's start_at/due_at, sent as
+	// X-GOQUEST-START-AT/X-GOQUEST-DUE-AT. Nil when unset on the ticket.
+	StartAt *time.Time
+	DueAt   *time.Time
 }

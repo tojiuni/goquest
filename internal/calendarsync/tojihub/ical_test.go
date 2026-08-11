@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/tojiuni/goquest/internal/calendarsync"
 )
 
@@ -64,6 +65,89 @@ func TestToICal_HasRequiredProperties(t *testing.T) {
 	}
 	if !strings.Contains(out, "DTSTAMP:") {
 		t.Errorf("expected DTSTAMP in output, got:\n%s", out)
+	}
+}
+
+// TestToICal_IncludesGoquestTicketMetadata asserts every X-GOQUEST-* property
+// is emitted with the expected value/format when the corresponding Event
+// field is populated.
+func TestToICal_IncludesGoquestTicketMetadata(t *testing.T) {
+	ticketID := uuid.New()
+	projectID := uuid.New()
+	start := time.Date(2026, 8, 15, 8, 0, 0, 0, time.UTC)
+	due := time.Date(2026, 8, 20, 9, 30, 0, 0, time.UTC)
+	ev := calendarsync.Event{
+		ObjectID:     "goquest-meta.ics",
+		Summary:      "with metadata",
+		DTStart:      due,
+		TicketID:     ticketID,
+		Status:       "in_progress",
+		ProjectID:    &projectID,
+		AssigneeID:   "assignee@example.com",
+		AssigneeType: "user",
+		RequesterID:  "requester@example.com",
+		StartAt:      &start,
+		DueAt:        &due,
+	}
+
+	out := toICal(ev)
+
+	for _, want := range []string{
+		"X-GOQUEST-TICKET-ID:" + ticketID.String(),
+		"X-GOQUEST-STATUS:in_progress",
+		"X-GOQUEST-PROJECT-ID:" + projectID.String(),
+		"X-GOQUEST-ASSIGNEE-ID:assignee@example.com",
+		"X-GOQUEST-ASSIGNEE-TYPE:user",
+		"X-GOQUEST-REQUESTER-ID:requester@example.com",
+		"X-GOQUEST-START-AT:20260815T080000Z",
+		"X-GOQUEST-DUE-AT:20260820T093000Z",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected iCal output to contain %q, got:\n%s", want, out)
+		}
+	}
+}
+
+// TestToICal_OmitsNullableGoquestMetadataWhenUnset asserts the
+// nullable/optional X-GOQUEST-* properties (PROJECT-ID, ASSIGNEE-ID,
+// START-AT, DUE-AT) are omitted entirely when their source Event field is
+// nil/empty, while the always-emitted properties still appear.
+func TestToICal_OmitsNullableGoquestMetadataWhenUnset(t *testing.T) {
+	ev := calendarsync.Event{
+		ObjectID:     "goquest-nometa.ics",
+		Summary:      "no optional metadata",
+		DTStart:      time.Now().UTC(),
+		TicketID:     uuid.New(),
+		Status:       "pending",
+		ProjectID:    nil,
+		AssigneeID:   "",
+		AssigneeType: "unassigned",
+		RequesterID:  "requester@example.com",
+		StartAt:      nil,
+		DueAt:        nil,
+	}
+
+	out := toICal(ev)
+
+	for _, notWant := range []string{
+		"X-GOQUEST-PROJECT-ID:",
+		"X-GOQUEST-ASSIGNEE-ID:",
+		"X-GOQUEST-START-AT:",
+		"X-GOQUEST-DUE-AT:",
+	} {
+		if strings.Contains(out, notWant) {
+			t.Errorf("expected iCal output NOT to contain %q, got:\n%s", notWant, out)
+		}
+	}
+	for _, want := range []string{
+		"X-GOQUEST-TICKET-ID:",
+		"X-GOQUEST-STATUS:pending",
+		"X-GOQUEST-REQUESTER-ID:requester@example.com",
+		"X-GOQUEST-ASSIGNEE-TYPE:unassigned",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected iCal output to contain %q, got:\n%s", want, out)
+		}
 	}
 }
 
