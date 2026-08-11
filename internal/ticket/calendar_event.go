@@ -58,7 +58,9 @@ func ticketCalendarColor(t *Ticket) string {
 // calendarID/calendarDisplayName/calendarColor are passed in rather than
 // derived here because calendarDisplayName needs an async project-name
 // lookup the caller does on its own timeout (see syncCalendarEvent in
-// service.go).
+// service.go). The remaining fields (TicketID/Status/ProjectID/AssigneeID/
+// AssigneeType/RequesterID/StartAt/DueAt) are copied straight from t for the
+// X-GOQUEST-* iCal properties (goq-ical-ticket-metadata).
 func ticketCalendarEvent(t *Ticket, calendarID, calendarDisplayName, calendarColor string) calendarsync.Event {
 	return calendarsync.Event{
 		Principal:           ticketCalendarPrincipal(t),
@@ -68,6 +70,14 @@ func ticketCalendarEvent(t *Ticket, calendarID, calendarDisplayName, calendarCol
 		CalendarID:          calendarID,
 		CalendarDisplayName: calendarDisplayName,
 		CalendarColor:       calendarColor,
+		TicketID:            t.ID,
+		Status:              string(t.Status),
+		ProjectID:           t.ProjectID,
+		AssigneeID:          t.AssigneeID,
+		AssigneeType:        string(t.AssigneeType),
+		RequesterID:         t.RequesterID,
+		StartAt:             t.StartAt,
+		DueAt:               t.DueAt,
 	}
 }
 

@@ -111,6 +111,53 @@ func TestTicketCalendarEvent_NoDueAt_FallsBackToStartAt(t *testing.T) {
 	}
 }
 
+// TestTicketCalendarEvent_PopulatesGoquestMetadataFields asserts the
+// TicketID/Status/ProjectID/AssigneeID/AssigneeType/RequesterID/StartAt/
+// DueAt fields on the resulting Event mirror the source ticket exactly.
+func TestTicketCalendarEvent_PopulatesGoquestMetadataFields(t *testing.T) {
+	projectID := uuid.New()
+	start := time.Date(2026, 8, 1, 9, 0, 0, 0, time.UTC)
+	due := time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC)
+	tk := &ticket.Ticket{
+		ID:           uuid.New(),
+		Title:        "with metadata",
+		Status:       ticket.StatusInProgress,
+		ProjectID:    &projectID,
+		AssigneeID:   "assignee@example.com",
+		AssigneeType: ticket.AssigneeHuman,
+		RequesterID:  "requester@example.com",
+		StartAt:      &start,
+		DueAt:        &due,
+	}
+
+	ev := ticket.ExportedTicketCalendarEvent(tk)
+
+	if ev.TicketID != tk.ID {
+		t.Errorf("expected TicketID %v, got %v", tk.ID, ev.TicketID)
+	}
+	if ev.Status != string(tk.Status) {
+		t.Errorf("expected Status %q, got %q", tk.Status, ev.Status)
+	}
+	if ev.ProjectID == nil || *ev.ProjectID != *tk.ProjectID {
+		t.Errorf("expected ProjectID %v, got %v", tk.ProjectID, ev.ProjectID)
+	}
+	if ev.AssigneeID != tk.AssigneeID {
+		t.Errorf("expected AssigneeID %q, got %q", tk.AssigneeID, ev.AssigneeID)
+	}
+	if ev.AssigneeType != string(tk.AssigneeType) {
+		t.Errorf("expected AssigneeType %q, got %q", tk.AssigneeType, ev.AssigneeType)
+	}
+	if ev.RequesterID != tk.RequesterID {
+		t.Errorf("expected RequesterID %q, got %q", tk.RequesterID, ev.RequesterID)
+	}
+	if ev.StartAt == nil || !ev.StartAt.Equal(*tk.StartAt) {
+		t.Errorf("expected StartAt %v, got %v", tk.StartAt, ev.StartAt)
+	}
+	if ev.DueAt == nil || !ev.DueAt.Equal(*tk.DueAt) {
+		t.Errorf("expected DueAt %v, got %v", tk.DueAt, ev.DueAt)
+	}
+}
+
 // TestTicketCalendarEvent_NoDueAtNoStartAt_FallsBackToCreatedAt covers the
 // last-resort fallback for a ticket with neither due_at nor start_at set —
 // reachable for tickets that predate Create's start_at/due_at defaulting,

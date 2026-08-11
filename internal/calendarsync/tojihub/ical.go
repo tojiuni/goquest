@@ -30,6 +30,28 @@ func toICal(ev calendarsync.Event) string {
 	fmt.Fprintf(&b, "DTSTAMP:%s\r\n", time.Now().UTC().Format(icalTimeFormat))
 	fmt.Fprintf(&b, "SUMMARY:%s\r\n", escapeICalText(ev.Summary))
 	fmt.Fprintf(&b, "DTSTART:%s\r\n", ev.DTStart.UTC().Format(icalTimeFormat))
+	// X-GOQUEST-* properties carry ticket metadata for downstream consumers
+	// (e.g. unicalendar's uni-rdb-goquest-ext), goq-ical-ticket-metadata.
+	// TICKET-ID/STATUS/REQUESTER-ID/ASSIGNEE-TYPE are always populated on a
+	// real ticket so they're always emitted; PROJECT-ID/ASSIGNEE-ID/
+	// START-AT/DUE-AT are nullable and omitted entirely (not emitted empty)
+	// when unset.
+	fmt.Fprintf(&b, "X-GOQUEST-TICKET-ID:%s\r\n", ev.TicketID)
+	fmt.Fprintf(&b, "X-GOQUEST-STATUS:%s\r\n", escapeICalText(ev.Status))
+	if ev.ProjectID != nil {
+		fmt.Fprintf(&b, "X-GOQUEST-PROJECT-ID:%s\r\n", *ev.ProjectID)
+	}
+	if ev.AssigneeID != "" {
+		fmt.Fprintf(&b, "X-GOQUEST-ASSIGNEE-ID:%s\r\n", escapeICalText(ev.AssigneeID))
+	}
+	fmt.Fprintf(&b, "X-GOQUEST-ASSIGNEE-TYPE:%s\r\n", escapeICalText(ev.AssigneeType))
+	fmt.Fprintf(&b, "X-GOQUEST-REQUESTER-ID:%s\r\n", escapeICalText(ev.RequesterID))
+	if ev.StartAt != nil {
+		fmt.Fprintf(&b, "X-GOQUEST-START-AT:%s\r\n", ev.StartAt.UTC().Format(icalTimeFormat))
+	}
+	if ev.DueAt != nil {
+		fmt.Fprintf(&b, "X-GOQUEST-DUE-AT:%s\r\n", ev.DueAt.UTC().Format(icalTimeFormat))
+	}
 	b.WriteString("END:VEVENT\r\n")
 	b.WriteString("END:VCALENDAR\r\n")
 	return b.String()
