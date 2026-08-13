@@ -526,8 +526,14 @@ func (s *Service) Reopen(ctx context.Context, id uuid.UUID, actor, reason string
 	if err != nil {
 		return nil, err
 	}
-	if t.Status != StatusCompleted && t.Status != StatusCancelled {
-		return nil, fmt.Errorf("%w: only completed or cancelled tickets can be reopened (current: %s)", ErrInvalidTransition, t.Status)
+	// failed is accepted alongside completed/cancelled as an escape hatch: the
+	// SLA overdue worker can force a ticket to failed with no awareness of
+	// linked VCS activity (goquest-sla-worker-due-at-default-conflict), and
+	// failed's only other legal transition is back to pending (loses the
+	// completion signal) — reopen is the practical way to recover a ticket
+	// whose underlying work actually finished.
+	if t.Status != StatusCompleted && t.Status != StatusCancelled && t.Status != StatusFailed {
+		return nil, fmt.Errorf("%w: only completed, cancelled, or failed tickets can be reopened (current: %s)", ErrInvalidTransition, t.Status)
 	}
 	reopened, err := s.store.ReopenTerminal(ctx, id)
 	if err != nil {

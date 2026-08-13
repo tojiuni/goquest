@@ -708,10 +708,12 @@ func (h *TicketHandler) Approve(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, t)
 }
 
-// Reopen moves a completed/cancelled ticket back to in_progress. This is the
-// audited escape hatch for tickets closed in error (e.g. a VCS auto-link
-// false-positive completion) — see goq-ticket-reopen-terminal. Gated by
-// requireTicketManage same as Update/Cancel/Approve. POST /tickets/{id}/reopen
+// Reopen moves a completed/cancelled/failed ticket back to in_progress. This
+// is the audited escape hatch for tickets closed in error (e.g. a VCS
+// auto-link false-positive completion, or the SLA overdue worker force-failing
+// a ticket with no VCS-activity awareness — infra-goquest-vcs-autolink-failed-status-bug)
+// — see goq-ticket-reopen-terminal. Gated by requireTicketManage same as
+// Update/Cancel/Approve. POST /tickets/{id}/reopen
 func (h *TicketHandler) Reopen(w http.ResponseWriter, r *http.Request) {
 	id, err := parseUUID(chi.URLParam(r, "id"))
 	if err != nil {

@@ -255,6 +255,78 @@ func TestProcessPRBodyMentionLinksButDoesNotTransition(t *testing.T) {
 	}
 }
 
+// infra-goquest-vcs-autolink-failed-status-bug: a PR closed without merge
+// (e.g. GitHub auto-closing it because its base branch was deleted) must not
+// change ticket status — only leave an informational comment — since the
+// underlying work can resume under a different PR.
+func TestProcessPRClosedUnmergedLeavesStatusUnchangedAndNotes(t *testing.T) {
+	st := newFakeStore()
+	_ = st.CreateRepo(context.Background(), repoFixture(true))
+	tk := &ticket.Ticket{ID: uuid.New(), TitleName: "goq-foo", Status: ticket.StatusInProgress}
+	tickets := &fakeTickets{byName: map[string]*ticket.Ticket{"goq-foo": tk}}
+	comments := &fakeComments{}
+	svc := NewService(st, tickets, comments)
+
+	err := svc.Process(context.Background(), "github", VcsEvent{
+		Kind: PRClosed, Repo: "tojiuni/goquest", Branch: "feature/goq-foo", PRBaseRef: "main",
+		PRNumber: 2, PRTitle: "goq-foo", PRMerged: false, URL: "https://gh/pr/2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk.Status != ticket.StatusInProgress {
+		t.Fatalf("unmerged PR close must not change status, got %s", tk.Status)
+	}
+	if len(tickets.trans) != 0 {
+		t.Fatalf("unmerged PR close must not call Update, got %v", tickets.trans)
+	}
+	if comments.n != 1 {
+		t.Fatalf("expected 1 informational comment, got %d", comments.n)
+	}
+}
+
+// Same contract as above, for a bare branch-delete event (no PR involved).
+func TestProcessBranchDeletedLeavesStatusUnchangedAndNotes(t *testing.T) {
+	st := newFakeStore()
+	_ = st.CreateRepo(context.Background(), repoFixture(true))
+	tk := &ticket.Ticket{ID: uuid.New(), TitleName: "goq-foo", Status: ticket.StatusInProgress}
+	tickets := &fakeTickets{byName: map[string]*ticket.Ticket{"goq-foo": tk}}
+	comments := &fakeComments{}
+	svc := NewService(st, tickets, comments)
+
+	err := svc.Process(context.Background(), "github", VcsEvent{
+		Kind: BranchDeleted, Repo: "tojiuni/goquest", Branch: "feature/goq-foo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tk.Status != ticket.StatusInProgress {
+		t.Fatalf("branch delete must not change status, got %s", tk.Status)
+	}
+	if comments.n != 1 {
+		t.Fatalf("expected 1 informational comment, got %d", comments.n)
+	}
+}
+
+// A PRClosed/BranchDeleted event on an already-terminal ticket must not even
+// reach the note logic — the existing isTerminal guard short-circuits first,
+// same as every other event kind.
+func TestProcessPRClosedTerminalGuard(t *testing.T) {
+	st := newFakeStore()
+	_ = st.CreateRepo(context.Background(), repoFixture(true))
+	tk := &ticket.Ticket{ID: uuid.New(), TitleName: "goq-foo", Status: ticket.StatusCompleted}
+	tickets := &fakeTickets{byName: map[string]*ticket.Ticket{"goq-foo": tk}}
+	comments := &fakeComments{}
+	svc := NewService(st, tickets, comments)
+
+	err := svc.Process(context.Background(), "github", VcsEvent{
+		Kind: PRClosed, Repo: "tojiuni/goquest", Branch: "feature/goq-foo", PRNumber: 2, PRTitle: "goq-foo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if comments.n != 0 {
+		t.Fatalf("terminal ticket must not get a VCS note either, got %d comments", comments.n)
+	}
+}
+
 func TestProcessTerminalGuard(t *testing.T) {
 	st := newFakeStore()
 	_ = st.CreateRepo(context.Background(), repoFixture(true))

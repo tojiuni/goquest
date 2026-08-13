@@ -514,8 +514,8 @@ func (s *pgStore) ReopenTerminal(ctx context.Context, id uuid.UUID) (*Ticket, er
 	now := time.Now().UTC()
 	ct, err := s.db.Exec(ctx, `
 		UPDATE tickets SET status=$2, completed_at=NULL, updated_at=$3
-		WHERE id=$1 AND status IN ($4, $5)`,
-		id, string(StatusInProgress), now, string(StatusCompleted), string(StatusCancelled),
+		WHERE id=$1 AND status IN ($4, $5, $6)`,
+		id, string(StatusInProgress), now, string(StatusCompleted), string(StatusCancelled), string(StatusFailed),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("reopen ticket: %w", err)

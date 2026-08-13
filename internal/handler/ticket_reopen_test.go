@@ -1,9 +1,12 @@
 package handler_test
 
 // Tests for TicketHandler.Reopen (goq-ticket-reopen-terminal): the audited
-// escape hatch that moves a completed/cancelled ticket back to in_progress
-// without touching the validateTransition state machine (terminals stay
-// closed for the normal PATCH path — see statemachine_quality_test.go).
+// escape hatch that moves a completed/cancelled/failed ticket back to
+// in_progress without touching the validateTransition state machine
+// (terminals stay closed for the normal PATCH path — see
+// statemachine_quality_test.go). failed is included
+// (infra-goquest-vcs-autolink-failed-status-bug) as a recovery path for
+// tickets the SLA overdue worker force-failed with no VCS-activity awareness.
 
 import (
 	"bytes"
@@ -71,6 +74,29 @@ func TestReopen_CompletedTicket_Succeeds(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, reopenReq(tk.ID, "reopened by mistake"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
+	}
+	if store.reopenedID != tk.ID {
+		t.Errorf("store.ReopenTerminal called with %s, want %s", store.reopenedID, tk.ID)
+	}
+	if tk.Status != ticket.StatusInProgress {
+		t.Errorf("ticket status = %s, want in_progress", tk.Status)
+	}
+}
+
+func TestReopen_FailedTicket_Succeeds(t *testing.T) {
+	tk := &ticket.Ticket{
+		ID: uuid.New(), Status: ticket.StatusFailed, Priority: ticket.PriorityNormal,
+		Visibility: ticket.VisibilityProject, AssigneeType: ticket.AssigneeHuman,
+	}
+	store := &reopenStore{memStore: newMemStore(tk)}
+	svc := ticket.NewService(store, noopPublisher{}, nil, nil, nil, nil)
+	r := reopenRouter(svc, &worldChecker{})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, reopenReq(tk.ID, "SLA worker force-failed this despite the linked PR merging"))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body: %s", rec.Code, rec.Body.String())
