@@ -225,6 +225,15 @@ const ticketSelectSQL = `
 	) cc ON cc.parent_id = t.id
 `
 
+// projectIDsEqual reports whether two nullable project IDs refer to the same
+// project. Two nil pointers ("no project") are considered equal.
+func projectIDsEqual(a, b *uuid.UUID) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
 func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq) (*Ticket, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -366,6 +375,56 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 		}
 		newProjectID = req.ProjectID
 	}
+
+	// Reparent: validate the target exists, shares this ticket's project, and
+	// is not this ticket itself or one of its own descendants (would create a
+	// cycle). Cross-project reparenting is out of scope — move project_id
+	// first, then reparent within the new project.
+	newParentID := current.ParentID
+	if req.ParentID != nil && (current.ParentID == nil || *current.ParentID != *req.ParentID) {
+		if *req.ParentID == id {
+			return nil, ErrParentCycle
+		}
+		var targetProjectID *uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT project_id FROM tickets WHERE id = $1`, *req.ParentID).Scan(&targetProjectID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, ErrParentNotFound
+			}
+			return nil, fmt.Errorf("lookup target parent: %w", err)
+		}
+		// Compare against newProjectID (post-move), not current.ProjectID, so a
+		// request that sets project_id and parent_id together is validated
+		// against where the ticket is ending up, not where it started.
+		if !projectIDsEqual(newProjectID, targetProjectID) {
+			return nil, ErrCrossProjectParent
+		}
+		// Cycle check only holds a row lock on this ticket (acquired above via
+		// FOR UPDATE); the target parent's ancestor chain is read unlocked, so
+		// two concurrent reparents on two different tickets (A->parent:B racing
+		// B->parent:A) could each see a pre-commit acyclic state and jointly
+		// commit a cycle. Accepted for now: this is the first code path that
+		// ever writes parent_id post-create, so no pre-existing cycles can
+		// exist in stored data yet, and the race window is narrow. The CTE
+		// below also assumes no pre-existing cycle in the data — WITH RECURSIVE
+		// has no built-in cycle guard and would loop indefinitely if one existed.
+		var isDescendant bool
+		if err := tx.QueryRow(ctx, `
+			WITH RECURSIVE ancestors AS (
+				SELECT id, parent_id FROM tickets WHERE id = $1
+				UNION ALL
+				SELECT t.id, t.parent_id FROM tickets t JOIN ancestors a ON t.id = a.parent_id
+			)
+			SELECT EXISTS (SELECT 1 FROM ancestors WHERE id = $2)`,
+			*req.ParentID, id,
+		).Scan(&isDescendant); err != nil {
+			return nil, fmt.Errorf("check parent cycle: %w", err)
+		}
+		if isDescendant {
+			return nil, ErrParentCycle
+		}
+		newParentID = req.ParentID
+	}
+
 	var titleNamePtr *string
 	if newTitleName != "" {
 		titleNamePtr = &newTitleName
@@ -419,7 +478,7 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 			reward_xp=$14, due_at=$15, start_at=$16, callback_url=$17,
 			updated_at=$18, completed_at=$19,
 			cancellation_note=$20, risk_tier=$21,
-			project_id=$22, assignee_org_id=$23
+			project_id=$22, assignee_org_id=$23, parent_id=$24
 		WHERE id=$1`,
 		id,
 		titleNamePtr, newTitle, newDescription,
@@ -429,7 +488,7 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 		newRewardXP, newDueAt, newStartAt, callbackURL,
 		now, completedAt,
 		cancellationNote, string(newRiskTier),
-		newProjectID, newAssigneeOrgID,
+		newProjectID, newAssigneeOrgID, newParentID,
 	)
 	if err != nil {
 		if isUniqueViolation(err, "tickets_project_title_name_key") {
@@ -871,6 +930,9 @@ var (
 	ErrInvalidGroupBy     = errors.New("invalid group_by")
 	ErrProjectNotFound    = errors.New("target project not found")
 	ErrCrossWorkspaceMove = errors.New("target project is in a different workspace")
+	ErrParentNotFound     = errors.New("parent ticket not found")
+	ErrCrossProjectParent = errors.New("parent ticket is in a different project")
+	ErrParentCycle        = errors.New("parent assignment would create a cycle")
 	// ErrAmbiguousTitleName is returned by GetByTitleNameAnyProject when more
 	// than one ticket has the given title_name — title_name is only
 	// guaranteed unique within a project (tickets_project_title_name_key is a
