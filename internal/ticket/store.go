@@ -16,10 +16,12 @@ type Store interface {
 	// ErrAmbiguousTitleName contract.
 	GetByTitleNameAnyProject(ctx context.Context, titleName string) (*Ticket, error)
 	Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq) (*Ticket, error)
-	// ReopenTerminal moves a completed/cancelled ticket back to in_progress,
-	// intentionally bypassing the validateTransition state machine (terminals
-	// are closed by design — see statemachine_quality_test.go). Callers must
-	// verify the ticket is actually terminal before calling; this method does
+	// ReopenTerminal moves a completed/cancelled/failed ticket back to
+	// in_progress, intentionally bypassing the validateTransition state
+	// machine (terminals are closed by design — see
+	// statemachine_quality_test.go). failed is included as an escape hatch:
+	// see the comment on Service.Reopen for why. Callers must verify the
+	// ticket is actually one of these three before calling; this method does
 	// not re-check status.
 	ReopenTerminal(ctx context.Context, id uuid.UUID) (*Ticket, error)
 	List(ctx context.Context, f ListTicketsFilter) ([]*Ticket, int, error)

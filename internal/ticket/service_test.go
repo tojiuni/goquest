@@ -510,6 +510,23 @@ func TestService_Reopen_CancelledToInProgress(t *testing.T) {
 	}
 }
 
+func TestService_Reopen_FailedToInProgress(t *testing.T) {
+	base := newTestTicket(ticket.StatusFailed)
+	store := &mockStore{getTicket: base}
+	svc := ticket.NewService(store, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+
+	got, err := svc.Reopen(context.Background(), base.ID, "test-actor", "SLA worker force-failed this despite the linked PR merging")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Status != ticket.StatusInProgress {
+		t.Errorf("status = %s, want in_progress", got.Status)
+	}
+	if store.reopenedID != base.ID {
+		t.Errorf("store.ReopenTerminal called with %s, want %s", store.reopenedID, base.ID)
+	}
+}
+
 func TestService_Reopen_NonTerminalRejected(t *testing.T) {
 	base := newTestTicket(ticket.StatusInProgress)
 	store := &mockStore{getTicket: base}

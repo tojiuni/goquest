@@ -303,8 +303,29 @@ func (s *Service) autoTransition(ctx context.Context, provider string, repo *Vcs
 				fmt.Sprintf("linked PR #%d (merged) → pending_approval (awaiting approval: risk_tier=%s) by vcs:%s", ev.PRNumber, t.RiskTier, provider))
 		}
 		return s.transitionAndNote(ctx, t, target, fmt.Sprintf("linked PR #%d (merged) → %s by vcs:%s", ev.PRNumber, target, provider))
+	case PRClosed:
+		// Closed without merge — e.g. GitHub auto-closes a PR when its base
+		// branch is deleted, which can happen mid-rebase even when the work
+		// continues (and merges) under a different PR. No status or due_at
+		// change: this is informational only (infra-goquest-vcs-autolink-failed-status-bug),
+		// so a human/agent reviewing the ticket sees why a PR disappeared
+		// without assuming abandonment.
+		s.note(ctx, t, fmt.Sprintf("linked PR #%d closed without merge by vcs:%s (no status change)", ev.PRNumber, provider))
+		return nil
+	case BranchDeleted:
+		s.note(ctx, t, fmt.Sprintf("linked branch %q deleted by vcs:%s (no status change)", ev.Branch, provider))
+		return nil
 	}
 	return nil
+}
+
+// note posts an internal system comment without touching ticket status —
+// used for VCS events that are informational only (see PRClosed/BranchDeleted
+// above). Best-effort: a comment failure must not fail webhook processing.
+func (s *Service) note(ctx context.Context, t *ticket.Ticket, body string) {
+	if _, err := s.comments.Create(ctx, t.ID, "vcs", comment.AuthorKindSystem, comment.CreateReq{Body: body, IsInternal: true}); err != nil {
+		log.Printf("warn: vcs note comment on ticket %s: %v", t.ID, err)
+	}
 }
 
 func (s *Service) moveToInProgress(ctx context.Context, t *ticket.Ticket, ev VcsEvent, provider string) error {
