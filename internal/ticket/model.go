@@ -259,7 +259,12 @@ type UpdateTicketReq struct {
 	// ProjectID moves the ticket to another project. The target must exist and
 	// live in the same workspace as the current project (tags, title_name
 	// uniqueness and visibility are all workspace/project-scoped).
-	ProjectID      *uuid.UUID      `json:"project_id,omitempty"`
+	ProjectID *uuid.UUID `json:"project_id,omitempty"`
+	// ParentID reparents the ticket. The target must exist and live in the
+	// same project as this ticket; a target that is this ticket itself or
+	// one of its own descendants is rejected (would create a cycle).
+	// Un-parenting (clearing to top-level) is not supported yet.
+	ParentID       *uuid.UUID      `json:"parent_id,omitempty"`
 	AgentContext   map[string]any  `json:"agent_context,omitempty"`
 	Metadata       map[string]any  `json:"metadata,omitempty"`
 	Visibility     *Visibility     `json:"visibility,omitempty"`

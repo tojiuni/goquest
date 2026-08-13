@@ -370,12 +370,16 @@ paths:
       description: >
         Partial update. project_id moves the ticket to another project in the
         SAME workspace (400 on unknown target or cross-workspace move, 409 on a
-        title_name collision in the target project).
+        title_name collision in the target project). parent_id reparents the
+        ticket; the target must exist and be in the SAME project as this
+        ticket (400 on unknown target, cross-project target, self-parenting,
+        or a target that is one of this ticket's own descendants). Clearing
+        parent_id to make the ticket top-level is not supported.
       parameters:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         '200': { description: ok }
-        '400': { description: unknown target project or cross-workspace move }
+        '400': { description: unknown target project/parent, cross-workspace move, cross-project parent, or a parent cycle }
         '409': { description: title_name already exists in the target project }
   /tickets/{id}/comments:
     get:

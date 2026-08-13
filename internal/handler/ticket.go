@@ -391,6 +391,10 @@ func (h *TicketHandler) Update(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if errors.Is(err, ticket.ErrParentNotFound) || errors.Is(err, ticket.ErrCrossProjectParent) || errors.Is(err, ticket.ErrParentCycle) {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		if errors.Is(err, ticket.ErrRefConflict) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
