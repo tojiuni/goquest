@@ -1,4 +1,7 @@
 # syntax=docker/dockerfile:1
+# NOTE: ./Dockerfile.bot is a byte-for-byte duplicate of this file (dagger CI
+# workaround — see its header comment, infra-toji-ci-goquest-dagger-linuxresources-wiretype).
+# Mirror any change here into that file too.
 # CACHE: RUN --mount=type=cache 로 의존성 재사용. --no-cache/--pull 로 빌드하지 말 것
 # (둘 다 cache mount 를 폐기해 매 빌드 전부 재다운로드함).
 FROM golang:1.25-alpine AS builder
