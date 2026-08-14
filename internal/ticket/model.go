@@ -21,9 +21,8 @@ const (
 	StatusPendingRevision Status = "pending_revision"
 	// StatusOnHold marks a ticket intentionally paused (goq-ticket-on-hold-status).
 	// Non-terminal: does not count as "settled" for AllSubtasksTerminal (a paused
-	// child must keep blocking its parent's auto-complete), but IS excluded from
-	// ListOverdue so the SLA worker never auto-fails a ticket someone deliberately
-	// held. The only allowed outgoing transition is back to StatusPending.
+	// child must keep blocking its parent's auto-complete). The only allowed
+	// outgoing transition is back to StatusPending.
 	StatusOnHold Status = "on_hold"
 )
 

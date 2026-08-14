@@ -181,7 +181,6 @@ func (s *memStore) CreateAttempt(_ context.Context, _ *ticket.Attempt) error    
 func (s *memStore) CountAttempts(_ context.Context, _ uuid.UUID, _ string) (int, error) {
 	return 0, nil
 }
-func (s *memStore) ListOverdue(_ context.Context) ([]*ticket.Ticket, error) { return nil, nil }
 
 // refs: real in-memory behavior so HTTP-level handler tests can exercise the
 // service+store contract hermetically (no PG dependency). Mirrors the PG store

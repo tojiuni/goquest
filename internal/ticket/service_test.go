@@ -114,10 +114,6 @@ func (m *mockStore) CountAttempts(_ context.Context, _ uuid.UUID, _ string) (int
 	return 0, nil
 }
 
-func (m *mockStore) ListOverdue(_ context.Context) ([]*ticket.Ticket, error) {
-	return nil, nil
-}
-
 // --- refs no-op stubs (Task 4 compile-glue; real behavior may be added in Task 5) ---
 
 func (m *mockStore) AddRefs(_ context.Context, _ uuid.UUID, _ []string, _ string) ([]ticket.TicketRef, error) {
