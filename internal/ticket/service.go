@@ -207,12 +207,10 @@ func (s *Service) Create(ctx context.Context, req CreateTicketReq, requesterID s
 	// specify start_at/due_at gets a default here rather than
 	// staying permanently unscheduled: start_at defaults to the creation
 	// time, and due_at (if still unset) defaults to start_at + 12 hours.
-	// This 12-hour offset is a partial mitigation for the SLA worker
-	// treating newly-created tickets as immediately overdue (tracked in
-	// goquest-sla-worker-due-at-default-conflict). Tickets left
-	// in_progress past the 12-hour window can still be auto-failed by the
-	// SLA worker. An explicit start_at/due_at from the caller is never
-	// overridden.
+	// An explicit start_at/due_at from the caller is never overridden.
+	// (The SLA auto-fail worker that once made this defaulting risky —
+	// an auto-filled due_at could get a ticket force-failed within hours —
+	// was removed entirely; see goquest-sla-worker-due-at-default-conflict.)
 	//
 	// Edge case: a caller can supply only a past due_at (e.g. a backdated
 	// import — "was due yesterday"). Defaulting start_at to now in that

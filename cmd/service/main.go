@@ -44,7 +44,6 @@ import (
 	"github.com/tojiuni/goquest/internal/project"
 	"github.com/tojiuni/goquest/internal/queue"
 	"github.com/tojiuni/goquest/internal/resolve"
-	"github.com/tojiuni/goquest/internal/sla"
 	"github.com/tojiuni/goquest/internal/spicedb"
 	"github.com/tojiuni/goquest/internal/sse"
 	"github.com/tojiuni/goquest/internal/tag"
@@ -578,14 +577,6 @@ func main() {
 	go func() {
 		if err := sseHub.Run(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("sse hub exited: %v", err)
-		}
-	}()
-
-	// --- SLA worker (background) ---
-	slaWorker := sla.New(store, svc)
-	go func() {
-		if err := slaWorker.Run(ctx); err != nil && ctx.Err() == nil {
-			log.Printf("sla worker exited: %v", err)
 		}
 	}()
 

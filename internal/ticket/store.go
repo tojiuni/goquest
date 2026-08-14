@@ -39,9 +39,6 @@ type Store interface {
 	ListAttempts(ctx context.Context, ticketID uuid.UUID) ([]*Attempt, error)
 	CountAttempts(ctx context.Context, ticketID uuid.UUID, userID string) (int, error)
 
-	// SLA
-	ListOverdue(ctx context.Context) ([]*Ticket, error)
-
 	// Refs (id-only). All methods are transaction-internal where needed; callers
 	// do not assume cross-call atomicity except where explicitly noted.
 	AddRefs(ctx context.Context, ticketID uuid.UUID, gopediaL1IDs []string, createdBy string) ([]TicketRef, error)
