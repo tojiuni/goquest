@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/project"
+	"github.com/tojiuni/goquest/internal/spicedb"
 )
 
 type ProjectSvc interface {
@@ -25,11 +26,17 @@ type ProjectSvc interface {
 }
 
 type ProjectHandler struct {
-	svc ProjectSvc
+	svc     ProjectSvc
+	checker spicedb.PermissionChecker
 }
 
-func NewProjectHandler(svc ProjectSvc) *ProjectHandler {
-	return &ProjectHandler{svc: svc}
+// NewProjectHandler wires the project HTTP handlers. checker may be nil in
+// tests that don't exercise List — it is required for correct visibility
+// filtering in production (goq-project-list-missing-spicedb-visibility-filter);
+// callers that want unfiltered legacy behavior should pass &spicedb.NoopChecker{}
+// explicitly rather than nil, since a nil checker panics in List.
+func NewProjectHandler(svc ProjectSvc, checker spicedb.PermissionChecker) *ProjectHandler {
+	return &ProjectHandler{svc: svc, checker: checker}
 }
 
 // POST /workspaces/:wid/projects
@@ -54,6 +61,13 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 }
 
 // GET /workspaces/:wid/projects
+//
+// goq-project-list-missing-spicedb-visibility-filter: ListByWorkspace returns
+// every project in the workspace with no per-caller filtering — the route is
+// only gated by requireWsViewer (any workspace role), so a caller who only
+// has project-level access to one project could see every other project's
+// name/description too. Filter by the same SpiceDB can_view permission
+// GET /tickets already uses (via visibleFilter), so the two endpoints agree.
 func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 	wid, err := uuid.Parse(chi.URLParam(r, "wid"))
 	if err != nil {
@@ -65,6 +79,29 @@ func (h *ProjectHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	uid := auth.RequesterID(r)
+	visibleIDs, unrestricted, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeProject, "can_view", uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+		return
+	}
+	if !unrestricted {
+		visible := make(map[uuid.UUID]bool, len(visibleIDs))
+		for _, s := range visibleIDs {
+			if pid, err := uuid.Parse(s); err == nil {
+				visible[pid] = true
+			}
+		}
+		filtered := list[:0]
+		for _, p := range list {
+			if visible[p.ID] {
+				filtered = append(filtered, p)
+			}
+		}
+		list = filtered
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"projects": list})
 }
 
@@ -189,4 +226,3 @@ func (h *ProjectHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-

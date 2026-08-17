@@ -231,7 +231,7 @@ func main() {
 		log.Fatalf("openapi: %v", err)
 	}
 	wsH := handler.NewWorkspaceHandler(wsSvc)
-	pjH := handler.NewProjectHandler(pjSvc)
+	pjH := handler.NewProjectHandler(pjSvc, sdbChecker)
 	tagH := handler.NewTagHandler(tagSvc)
 	xpH := handler.NewXPHandler(xpSvc)
 

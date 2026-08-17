@@ -14,6 +14,7 @@ import (
 	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/handler"
 	"github.com/tojiuni/goquest/internal/project"
+	"github.com/tojiuni/goquest/internal/spicedb"
 )
 
 // ── stub project service ──────────────────────────────────────────
@@ -82,7 +83,7 @@ func (s *stubPJSvc) RemoveMember(_ context.Context, _ uuid.UUID, _ string) error
 
 func TestProjectHandler_Create_201(t *testing.T) {
 	stub := &stubPJSvc{}
-	h := handler.NewProjectHandler(stub)
+	h := handler.NewProjectHandler(stub, &spicedb.NoopChecker{})
 
 	wid := uuid.New()
 	body, _ := json.Marshal(project.CreateReq{Name: "Sprint 1"})
@@ -110,7 +111,7 @@ func TestProjectHandler_Create_201(t *testing.T) {
 
 func TestProjectHandler_Create_BadBody(t *testing.T) {
 	stub := &stubPJSvc{}
-	h := handler.NewProjectHandler(stub)
+	h := handler.NewProjectHandler(stub, &spicedb.NoopChecker{})
 
 	wid := uuid.New()
 	r := chi.NewRouter()
@@ -136,7 +137,7 @@ func TestProjectHandler_List_200(t *testing.T) {
 			{ID: uuid.New(), WorkspaceID: wid, Name: "proj-2"},
 		},
 	}
-	h := handler.NewProjectHandler(stub)
+	h := handler.NewProjectHandler(stub, &spicedb.NoopChecker{})
 
 	r := chi.NewRouter()
 	r.Use(auth.Middleware("", true))
@@ -172,7 +173,7 @@ func TestProjectHandler_List_200(t *testing.T) {
 func TestProjectHandler_AddMember_UsesUserIDFromBody(t *testing.T) {
 	pid := uuid.New()
 	stub := &stubPJSvc{}
-	h := handler.NewProjectHandler(stub)
+	h := handler.NewProjectHandler(stub, &spicedb.NoopChecker{})
 
 	body, _ := json.Marshal(project.AddMemberReq{UserID: "lymphhub@toji.homes", Role: project.RoleMember})
 
@@ -204,7 +205,7 @@ func TestProjectHandler_AddMember_UsesUserIDFromBody(t *testing.T) {
 func TestProjectHandler_AddMember_MissingUserIDIs400(t *testing.T) {
 	pid := uuid.New()
 	stub := &stubPJSvc{}
-	h := handler.NewProjectHandler(stub)
+	h := handler.NewProjectHandler(stub, &spicedb.NoopChecker{})
 
 	body, _ := json.Marshal(project.AddMemberReq{Role: project.RoleMember}) // no user_id
 
@@ -221,5 +222,85 @@ func TestProjectHandler_AddMember_MissingUserIDIs400(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400 (must fail loudly, not silently add an empty-uid member); body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// TestProjectHandler_List_FiltersUnviewableProjects covers
+// goq-project-list-missing-spicedb-visibility-filter: a caller who can only
+// view one of the workspace's projects (per SpiceDB) must not see the
+// others' names/descriptions in the response, even though the route itself
+// only gates on workspace-level access.
+func TestProjectHandler_List_FiltersUnviewableProjects(t *testing.T) {
+	wid := uuid.New()
+	visibleID := uuid.New()
+	hiddenID := uuid.New()
+	stub := &stubPJSvc{
+		listed: []*project.Project{
+			{ID: visibleID, WorkspaceID: wid, Name: "visible-proj"},
+			{ID: hiddenID, WorkspaceID: wid, Name: "hidden-proj"},
+		},
+	}
+	checker := &worldChecker{
+		proj: map[string]map[uuid.UUID]bool{
+			"dev-user": {visibleID: true},
+		},
+	}
+	h := handler.NewProjectHandler(stub, checker)
+
+	r := chi.NewRouter()
+	r.Use(auth.Middleware("", true))
+	r.Get("/workspaces/{wid}/projects", h.List)
+
+	req := httptest.NewRequest(http.MethodGet, "/workspaces/"+wid.String()+"/projects", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	var out struct {
+		Projects []*project.Project `json:"projects"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Projects) != 1 || out.Projects[0].ID != visibleID {
+		t.Errorf("expected only visible-proj, got %+v", out.Projects)
+	}
+}
+
+// TestProjectHandler_List_UnrestrictedChecker_ReturnsAll covers the
+// shadow/Noop path: when the checker reports unrestricted access, every
+// project in the workspace is still returned (matches GET /tickets'
+// visibleFilter behavior for the same case).
+func TestProjectHandler_List_UnrestrictedChecker_ReturnsAll(t *testing.T) {
+	wid := uuid.New()
+	stub := &stubPJSvc{
+		listed: []*project.Project{
+			{ID: uuid.New(), WorkspaceID: wid, Name: "proj-1"},
+			{ID: uuid.New(), WorkspaceID: wid, Name: "proj-2"},
+		},
+	}
+	h := handler.NewProjectHandler(stub, &spicedb.NoopChecker{})
+
+	r := chi.NewRouter()
+	r.Use(auth.Middleware("", true))
+	r.Get("/workspaces/{wid}/projects", h.List)
+
+	req := httptest.NewRequest(http.MethodGet, "/workspaces/"+wid.String()+"/projects", nil)
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	var out struct {
+		Projects []*project.Project `json:"projects"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(out.Projects) != 2 {
+		t.Errorf("expected 2 projects (unrestricted), got %d", len(out.Projects))
 	}
 }
