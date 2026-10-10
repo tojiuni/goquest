@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -18,6 +19,8 @@ import (
 // ── stub workspace service ────────────────────────────────────────
 
 type stubWSSvc struct {
+	addMemberErr error
+	addMemberGot workspace.AddMemberReq
 	created    *workspace.Workspace
 	listed     []*workspace.Workspace
 	got        *workspace.Workspace
@@ -72,6 +75,11 @@ func (s *stubWSSvc) ListMembers(_ context.Context, _ uuid.UUID) ([]*workspace.Me
 
 func (s *stubWSSvc) SetMemberRole(_ context.Context, _ uuid.UUID, _ string, _ workspace.SetRoleReq, _ workspace.Role) error {
 	return nil
+}
+
+func (s *stubWSSvc) AddMember(_ context.Context, _ uuid.UUID, req workspace.AddMemberReq, _ workspace.Role) error {
+	s.addMemberGot = req
+	return s.addMemberErr
 }
 
 func (s *stubWSSvc) RemoveMember(_ context.Context, _ uuid.UUID, _ string, _ workspace.Role) error {
@@ -278,5 +286,54 @@ func TestWorkspaceHandler_AcceptInvitation_Error(t *testing.T) {
 
 	if rr.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", rr.Code)
+	}
+}
+
+// ── WorkspaceHandler.AddMember ────────────────────────────────────
+
+func postAddMember(t *testing.T, stub *stubWSSvc, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	h := handler.NewWorkspaceHandler(stub)
+	r := newRouter()
+	r.Post("/workspaces/{wid}/members", h.AddMember)
+	req := httptest.NewRequest(http.MethodPost, "/workspaces/"+uuid.New().String()+"/members", bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+	return rr
+}
+
+func TestWorkspaceHandler_AddMember_204(t *testing.T) {
+	stub := &stubWSSvc{}
+	rr := postAddMember(t, stub, `{"user_id":"cv2418@naver.com","role":"owner"}`)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body: %s", rr.Code, rr.Body.String())
+	}
+	if stub.addMemberGot.UserID != "cv2418@naver.com" || stub.addMemberGot.Role != workspace.RoleOwner {
+		t.Errorf("req = %+v", stub.addMemberGot)
+	}
+}
+
+func TestWorkspaceHandler_AddMember_ErrorMapping(t *testing.T) {
+	cases := map[string]struct {
+		err  error
+		want int
+	}{
+		"invalid": {workspace.ErrInvalidMember, http.StatusBadRequest},
+		"forbid":  {workspace.ErrOwnerRequired, http.StatusForbidden},
+		"other":   {errors.New("boom"), http.StatusInternalServerError},
+	}
+	for name, c := range cases {
+		rr := postAddMember(t, &stubWSSvc{addMemberErr: c.err}, `{"user_id":"u","role":"member"}`)
+		if rr.Code != c.want {
+			t.Errorf("%s: status = %d, want %d", name, rr.Code, c.want)
+		}
+	}
+}
+
+func TestWorkspaceHandler_AddMember_BadBody(t *testing.T) {
+	rr := postAddMember(t, &stubWSSvc{}, "{not json")
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", rr.Code)
 	}
 }

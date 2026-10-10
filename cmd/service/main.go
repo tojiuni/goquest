@@ -484,6 +484,7 @@ func main() {
 				r.With(requireWsViewer).Get("/xp/history", xpH.GetXPHistory)
 
 				r.With(requireWsViewer).Get("/members", wsH.ListMembers)
+				r.With(requireWsOwner).Post("/members", wsH.AddMember)
 				r.With(requireWsOwner).Patch("/members/{uid}/role", wsH.SetMemberRole)
 				r.With(requireWsAdmin).Delete("/members/{uid}", wsH.RemoveMember)
 

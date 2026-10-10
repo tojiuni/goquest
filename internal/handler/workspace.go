@@ -23,6 +23,7 @@ type WorkspaceSvc interface {
 	ListMembers(ctx context.Context, workspaceID uuid.UUID) ([]*workspace.Member, error)
 	SetMemberRole(ctx context.Context, workspaceID uuid.UUID, targetUserID string, req workspace.SetRoleReq, callerRole workspace.Role) error
 	RemoveMember(ctx context.Context, workspaceID uuid.UUID, targetUserID string, callerRole workspace.Role) error
+	AddMember(ctx context.Context, workspaceID uuid.UUID, req workspace.AddMemberReq, callerRole workspace.Role) error
 	CreateInvitation(ctx context.Context, workspaceID uuid.UUID, inviterID string, req workspace.InviteReq) (*workspace.Invitation, error)
 	ListInvitations(ctx context.Context, workspaceID uuid.UUID) ([]*workspace.Invitation, error)
 	DeleteInvitation(ctx context.Context, invID uuid.UUID) error
@@ -152,6 +153,34 @@ func (h *WorkspaceHandler) SetMemberRole(w http.ResponseWriter, r *http.Request)
 	callerRole := auth.WorkspaceRoleFromCtx(r.Context())
 	if err := h.svc.SetMemberRole(r.Context(), wid, targetUID, req, callerRole); err != nil {
 		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// POST /workspaces/:wid/members
+// Owner-only direct member registration (no invitation token). Body: {"user_id","role"}.
+func (h *WorkspaceHandler) AddMember(w http.ResponseWriter, r *http.Request) {
+	wid, err := uuid.Parse(chi.URLParam(r, "wid"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid workspace id")
+		return
+	}
+	var req workspace.AddMemberReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	callerRole := auth.WorkspaceRoleFromCtx(r.Context())
+	if err := h.svc.AddMember(r.Context(), wid, req, callerRole); err != nil {
+		switch {
+		case errors.Is(err, workspace.ErrInvalidMember):
+			writeError(w, http.StatusBadRequest, err.Error())
+		case errors.Is(err, workspace.ErrOwnerRequired):
+			writeError(w, http.StatusForbidden, err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, err.Error())
+		}
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

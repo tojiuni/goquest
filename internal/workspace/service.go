@@ -174,6 +174,47 @@ func (svc *Service) ListMembers(ctx context.Context, workspaceID uuid.UUID) ([]*
 	return svc.store.ListMembers(ctx, workspaceID)
 }
 
+// AddMember registers userID as a workspace member directly, bypassing the
+// invitation-accept flow (which only the invitee themself can complete). It is
+// owner-only and idempotent: an existing member just gets the requested role.
+// The SpiceDB dual-write mirrors AcceptInvitation.
+func (svc *Service) AddMember(ctx context.Context, workspaceID uuid.UUID, req AddMemberReq, callerRole Role) error {
+	if callerRole != RoleOwner {
+		return ErrOwnerRequired
+	}
+	userID := strings.TrimSpace(req.UserID)
+	if userID == "" {
+		return fmt.Errorf("%w: user_id is required", ErrInvalidMember)
+	}
+	switch req.Role {
+	case RoleOwner, RoleAdmin, RoleMember, RoleViewer:
+	default:
+		return fmt.Errorf("%w: role must be owner, admin, member or viewer", ErrInvalidMember)
+	}
+
+	if _, err := svc.store.GetMember(ctx, workspaceID, userID); err == nil {
+		return svc.SetMemberRole(ctx, workspaceID, userID, SetRoleReq{Role: req.Role}, callerRole)
+	} else if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+
+	now := time.Now().UTC()
+	if err := svc.store.AddMember(ctx, &Member{
+		WorkspaceID: workspaceID,
+		UserID:      userID,
+		Role:        req.Role,
+		Level:       1,
+		Title:       "Novice",
+		JoinedAt:    now,
+	}); err != nil {
+		return err
+	}
+	if err := svc.writer.WriteWorkspaceMember(ctx, workspaceID, userID, string(req.Role)); err != nil {
+		log.Printf("spicedb dual-write ws add-member %s/%s: %v (continuing)", workspaceID, userID, err)
+	}
+	return nil
+}
+
 func (svc *Service) SetMemberRole(ctx context.Context, workspaceID uuid.UUID, targetUserID string, req SetRoleReq, callerRole Role) error {
 	if callerRole != RoleOwner {
 		return errors.New("only workspace owner can change roles")

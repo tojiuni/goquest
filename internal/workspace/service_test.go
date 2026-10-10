@@ -624,3 +624,66 @@ func TestRemoveMember_DualDeletesFromSpiceDB(t *testing.T) {
 		t.Errorf("wsDeletes = %v, want [%q]", mw.wsDeletes, want)
 	}
 }
+
+// ── Service.AddMember tests (goq-workspace-member-direct-add-api) ─
+
+func TestService_AddMember_OnlyOwner(t *testing.T) {
+	svc := workspace.NewService(newMockStore(), &mockWriter{})
+	err := svc.AddMember(context.Background(), uuid.New(), workspace.AddMemberReq{UserID: "u@x.com", Role: workspace.RoleMember}, workspace.RoleAdmin)
+	if err == nil {
+		t.Fatal("expected error: only owner can add members directly")
+	}
+}
+
+func TestService_AddMember_InsertsAndWritesSpiceDB(t *testing.T) {
+	store := newMockStore()
+	w := &mockWriter{}
+	svc := workspace.NewService(store, w)
+	wid := uuid.New()
+
+	err := svc.AddMember(context.Background(), wid, workspace.AddMemberReq{UserID: " cv2418@naver.com ", Role: workspace.RoleOwner}, workspace.RoleOwner)
+	if err != nil {
+		t.Fatalf("AddMember: %v", err)
+	}
+	mem, ok := store.members[memberKey(wid, "cv2418@naver.com")]
+	if !ok {
+		t.Fatal("member not inserted (user_id should be trimmed)")
+	}
+	if mem.Role != workspace.RoleOwner {
+		t.Errorf("role = %q, want owner", mem.Role)
+	}
+	want := wid.String() + "|cv2418@naver.com|owner"
+	if len(w.wsWrites) != 1 || w.wsWrites[0] != want {
+		t.Errorf("spicedb writes = %v, want [%s]", w.wsWrites, want)
+	}
+}
+
+func TestService_AddMember_ExistingUpdatesRole(t *testing.T) {
+	store := newMockStore()
+	svc := workspace.NewService(store, &mockWriter{})
+	wid := uuid.New()
+	store.members[memberKey(wid, "u@x.com")] = &workspace.Member{WorkspaceID: wid, UserID: "u@x.com", Role: workspace.RoleViewer}
+
+	err := svc.AddMember(context.Background(), wid, workspace.AddMemberReq{UserID: "u@x.com", Role: workspace.RoleAdmin}, workspace.RoleOwner)
+	if err != nil {
+		t.Fatalf("AddMember: %v", err)
+	}
+	if got := store.members[memberKey(wid, "u@x.com")].Role; got != workspace.RoleAdmin {
+		t.Errorf("role = %q, want admin", got)
+	}
+}
+
+func TestService_AddMember_Validation(t *testing.T) {
+	svc := workspace.NewService(newMockStore(), &mockWriter{})
+	wid := uuid.New()
+	for name, req := range map[string]workspace.AddMemberReq{
+		"empty user":   {UserID: "  ", Role: workspace.RoleMember},
+		"invalid role": {UserID: "u@x.com", Role: workspace.Role("god")},
+		"empty role":   {UserID: "u@x.com"},
+	} {
+		err := svc.AddMember(context.Background(), wid, req, workspace.RoleOwner)
+		if !errors.Is(err, workspace.ErrInvalidMember) {
+			t.Errorf("%s: err = %v, want ErrInvalidMember", name, err)
+		}
+	}
+}

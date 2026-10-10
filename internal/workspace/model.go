@@ -76,3 +76,10 @@ type InviteReq struct {
 type SetRoleReq struct {
 	Role Role `json:"role"`
 }
+
+// AddMemberReq registers an existing identity (user_id = verified email or sub)
+// as a workspace member without going through an invitation token.
+type AddMemberReq struct {
+	UserID string `json:"user_id"`
+	Role   Role   `json:"role"`
+}
