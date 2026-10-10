@@ -317,3 +317,9 @@ func scanInvitation(s rowScanner) (*Invitation, error) {
 var ErrNotFound = errors.New("workspace: not found")
 
 var ErrDuplicateName = errors.New("workspace: name already in use")
+
+// ErrInvalidMember marks a bad AddMember request (blank user_id, unknown role).
+var ErrInvalidMember = errors.New("workspace: invalid member")
+
+// ErrOwnerRequired is returned when a non-owner attempts an owner-only member operation.
+var ErrOwnerRequired = errors.New("workspace: owner role required")
