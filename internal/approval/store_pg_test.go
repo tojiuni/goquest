@@ -3,10 +3,12 @@ package approval_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/tojiuni/goquest/internal/approval"
 	"github.com/tojiuni/goquest/internal/migrate"
@@ -61,21 +63,66 @@ func TestPG_AppendOnlyAndCAS(t *testing.T) {
 	if _, err := st.Transition(ctx, a.ID, approval.StatusPending, approval.StatusRejected, "user", "", d); !errors.Is(err, approval.ErrStale) {
 		t.Errorf("want ErrStale, got %v", err)
 	}
+	// Each statement targets a row that exists (a.ID), so a rejection can only
+	// come from the guard trigger (raise_exception, P0001), not from 0 rows matched.
 	for name, q := range map[string]string{
 		"delete approval": `DELETE FROM approvals WHERE id=$1`,
 		"rewrite request": `UPDATE approvals SET request_note='x' WHERE id=$1`,
 		"rewrite decider": `UPDATE approvals SET decided_by='someone-else' WHERE id=$1`,
+		"rewrite basis":   `UPDATE approvals SET basis='desk_delegated' WHERE id=$1`,
 	} {
-		if _, err := pool.Exec(ctx, q, a.ID); err == nil {
-			t.Errorf("%s must be rejected by the append-only guard", name)
-		}
+		_, err := pool.Exec(ctx, q, a.ID)
+		wantPGCode(t, name, err, "P0001")
 	}
 	if _, err := pool.Exec(ctx, `UPDATE approval_events SET note='x' WHERE approval_id=$1`, a.ID); err == nil {
 		t.Error("approval_events update must be rejected")
+	} else {
+		wantPGCode(t, "update event", err, "P0001")
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO delegation_rules (workspace_id, principal, kinds, created_by)
-		SELECT id,'p','{infra}','u' FROM workspaces LIMIT 1`); err == nil {
-		t.Error("delegation rule for a non-delegable kind must violate the CHECK")
+	_, err = pool.Exec(ctx, `DELETE FROM approval_events WHERE approval_id=$1`, a.ID)
+	wantPGCode(t, "delete event", err, "P0001")
+
+	// the record is untouched by all of the above
+	after, err := st.Get(ctx, a.ID)
+	if err != nil || after.RequestNote != "" || after.DecidedBy == nil || *after.DecidedBy != "user" || len(after.Events) != 1 {
+		t.Fatalf("record changed despite guard: %v %+v", err, after)
+	}
+}
+
+func TestPG_DelegationRuleCeiling(t *testing.T) {
+	ctx := context.Background()
+	pool, _, _ := setup(t)
+	var wid uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO workspaces (name, slug, owner_id)
+		VALUES ('approval pg test', $1, 'test') RETURNING id`, "approval-pg-"+uuid.NewString()).Scan(&wid); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `DELETE FROM delegation_rules WHERE workspace_id=$1`, wid)
+		pool.Exec(ctx, `DELETE FROM workspaces WHERE id=$1`, wid)
+	})
+	ins := `INSERT INTO delegation_rules (workspace_id, principal, kinds, created_by) VALUES ($1,'p',$2,'u')`
+	for _, kinds := range [][]string{{"infra"}, {"design"}, {"ops"}, {"ticket"}, {"merge", "infra"}, {}} {
+		_, err := pool.Exec(ctx, ins, wid, kinds)
+		wantPGCode(t, fmt.Sprintf("kinds %v", kinds), err, "23514")
+	}
+	for _, kinds := range [][]string{{"merge"}, {"deviation"}, {"merge", "deviation"}} {
+		if _, err := pool.Exec(ctx, ins, wid, kinds); err != nil {
+			t.Errorf("kinds %v must be allowed: %v", kinds, err)
+		}
+	}
+}
+
+// wantPGCode fails unless err is a Postgres error with the given SQLSTATE.
+func wantPGCode(t *testing.T, what string, err error, code string) {
+	t.Helper()
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		t.Errorf("%s: want pg error %s, got %v", what, code, err)
+		return
+	}
+	if pgErr.Code != code {
+		t.Errorf("%s: want SQLSTATE %s, got %s (%s)", what, code, pgErr.Code, pgErr.Message)
 	}
 }
 
