@@ -75,6 +75,12 @@ func (h *TemplateHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // GET /workspaces/{wid}/projects/{pid}/templates/{tid}
 func (h *TemplateHandler) Get(w http.ResponseWriter, r *http.Request) {
+	pid, err := uuid.Parse(chi.URLParam(r, "pid"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid project id")
+		return
+	}
+
 	tid, err := uuid.Parse(chi.URLParam(r, "tid"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid template id")
@@ -86,15 +92,35 @@ func (h *TemplateHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "template not found")
 		return
 	}
+	if tmpl.ProjectID != pid {
+		writeError(w, http.StatusNotFound, "template not found")
+		return
+	}
 
 	writeJSON(w, http.StatusOK, tmpl)
 }
 
 // DELETE /workspaces/{wid}/projects/{pid}/templates/{tid}
 func (h *TemplateHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	pid, err := uuid.Parse(chi.URLParam(r, "pid"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid project id")
+		return
+	}
+
 	tid, err := uuid.Parse(chi.URLParam(r, "tid"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid template id")
+		return
+	}
+
+	tmpl, err := h.svc.Get(r.Context(), tid)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "template not found")
+		return
+	}
+	if tmpl.ProjectID != pid {
+		writeError(w, http.StatusNotFound, "template not found")
 		return
 	}
 
@@ -109,6 +135,12 @@ func (h *TemplateHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // POST /workspaces/{wid}/projects/{pid}/templates/{tid}/instantiate
 // Creates a ticket from a template with optional field overrides.
 func (h *TemplateHandler) Instantiate(w http.ResponseWriter, r *http.Request) {
+	pid, err := uuid.Parse(chi.URLParam(r, "pid"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid project id")
+		return
+	}
+
 	tid, err := uuid.Parse(chi.URLParam(r, "tid"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid template id")
@@ -117,6 +149,10 @@ func (h *TemplateHandler) Instantiate(w http.ResponseWriter, r *http.Request) {
 
 	tmpl, err := h.svc.Get(r.Context(), tid)
 	if err != nil {
+		writeError(w, http.StatusNotFound, "template not found")
+		return
+	}
+	if tmpl.ProjectID != pid {
 		writeError(w, http.StatusNotFound, "template not found")
 		return
 	}

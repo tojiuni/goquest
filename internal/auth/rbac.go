@@ -18,6 +18,38 @@ type projectRoleGetter interface {
 	GetMember(ctx context.Context, projectID uuid.UUID, userID string) (*pjpkg.Member, error)
 }
 
+type projectGetter interface {
+	Get(ctx context.Context, id uuid.UUID) (*pjpkg.Project, error)
+}
+
+// RequireProjectInWorkspace rejects requests whose `pid` project does not belong
+// to the `wid` workspace in the URL. Workspace membership is checked against
+// `wid` only, so without this a member of any workspace could address another
+// workspace's project by pairing their own `wid` with a foreign `pid`.
+// Mismatch and unknown project both return 404 so project ids can't be probed.
+func RequireProjectInWorkspace(pj projectGetter) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			wid, err := uuid.Parse(chi.URLParam(r, "wid"))
+			if err != nil {
+				http.Error(w, "invalid workspace id", http.StatusBadRequest)
+				return
+			}
+			pid, err := uuid.Parse(chi.URLParam(r, "pid"))
+			if err != nil {
+				http.Error(w, "invalid project id", http.StatusBadRequest)
+				return
+			}
+			p, err := pj.Get(r.Context(), pid)
+			if err != nil || p == nil || p.WorkspaceID != wid {
+				http.Error(w, "project not found", http.StatusNotFound)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // RequireWorkspaceRole enforces that the caller has at least `minRole` in the workspace
 // identified by the `wid` URL parameter.
 func RequireWorkspaceRole(ws workspaceRoleGetter, minRole wskg.Role) func(http.Handler) http.Handler {

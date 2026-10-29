@@ -208,3 +208,45 @@ func TestWorkspaceRoleFromCtx_Empty(t *testing.T) {
 		t.Errorf("expected empty role from empty ctx, got %q", role)
 	}
 }
+
+// ── RequireProjectInWorkspace tests ───────────────────────────────
+
+type mockPJGetter struct {
+	p   *pjpkg.Project
+	err error
+}
+
+func (m *mockPJGetter) Get(_ context.Context, _ uuid.UUID) (*pjpkg.Project, error) {
+	return m.p, m.err
+}
+
+func TestRequireProjectInWorkspace(t *testing.T) {
+	wid, other := uuid.New(), uuid.New()
+	pid := uuid.New()
+	cases := []struct {
+		name string
+		get  *mockPJGetter
+		wid  string
+		pid  string
+		want int
+	}{
+		{"same workspace", &mockPJGetter{p: &pjpkg.Project{ID: pid, WorkspaceID: wid}}, wid.String(), pid.String(), http.StatusOK},
+		{"project in another workspace", &mockPJGetter{p: &pjpkg.Project{ID: pid, WorkspaceID: other}}, wid.String(), pid.String(), http.StatusNotFound},
+		{"unknown project", &mockPJGetter{err: pjpkg.ErrNotFound}, wid.String(), pid.String(), http.StatusNotFound},
+		{"invalid wid", &mockPJGetter{}, "nope", pid.String(), http.StatusBadRequest},
+		{"invalid pid", &mockPJGetter{}, wid.String(), "nope", http.StatusBadRequest},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			next := &okHandler{}
+			rec := httptest.NewRecorder()
+			auth.RequireProjectInWorkspace(c.get)(next).ServeHTTP(rec, newChiRequest(c.wid, c.pid))
+			if rec.Code != c.want {
+				t.Fatalf("status = %d, want %d", rec.Code, c.want)
+			}
+			if next.called != (c.want == http.StatusOK) {
+				t.Fatalf("next called = %v for status %d", next.called, c.want)
+			}
+		})
+	}
+}

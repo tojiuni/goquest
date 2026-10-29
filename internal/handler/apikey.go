@@ -69,6 +69,30 @@ func (h *APIKeyHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The store deletes by key id alone, so confirm the key belongs to the
+	// {pid} the caller was authorized for.
+	pid, err := uuid.Parse(chi.URLParam(r, "pid"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid project id")
+		return
+	}
+	keys, err := h.svc.List(r.Context(), pid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	owned := false
+	for _, k := range keys {
+		if k.ID == kid {
+			owned = true
+			break
+		}
+	}
+	if !owned {
+		writeError(w, http.StatusNotFound, "api key not found")
+		return
+	}
+
 	if err := h.svc.Delete(r.Context(), kid); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
