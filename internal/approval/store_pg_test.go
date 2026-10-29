@@ -126,17 +126,32 @@ func wantPGCode(t *testing.T, what string, err error, code string) {
 	}
 }
 
-func TestPG_SupersedeOpenMerge(t *testing.T) {
+func TestPG_CreateSupersedesAndRejectsDuplicates(t *testing.T) {
 	ctx := context.Background()
 	_, st, tid := setup(t)
-	old, _ := st.Create(ctx, approval.NewReq{TicketID: tid, Kind: approval.KindMerge, RequestedBy: "desk",
-		Subject: approval.Subject{Repo: "o/r", PR: 9, HeadSHA: "old"}})
-	ids, err := st.SupersedeOpenMerge(ctx, tid, "o/r", 9, "new", "desk")
-	if err != nil || len(ids) != 1 || ids[0] != old.ID {
-		t.Fatalf("supersede: %v %v", ids, err)
+	req := func(sha string) approval.NewReq {
+		return approval.NewReq{TicketID: tid, Kind: approval.KindMerge, RequestedBy: "desk",
+			Subject: approval.Subject{Repo: "o/r", PR: 9, HeadSHA: sha}}
+	}
+	old, err := st.Create(ctx, req("old"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Create(ctx, req("old")); !errors.Is(err, approval.ErrDuplicatePending) {
+		t.Fatalf("want ErrDuplicatePending, got %v", err)
+	}
+	fresh, err := st.Create(ctx, req("new"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.SupersedesID == nil || *fresh.SupersedesID != old.ID {
+		t.Fatalf("supersedes_id = %v want %v", fresh.SupersedesID, old.ID)
 	}
 	a, _ := st.Get(ctx, old.ID)
-	if a.Status != approval.StatusSuperseded {
-		t.Errorf("status %s", a.Status)
+	if a.Status != approval.StatusSuperseded || len(a.Events) != 1 {
+		t.Errorf("old record: %+v", a)
+	}
+	if ids, err := st.SupersedeOpenMerge(ctx, tid, "o/r", 9, "new", "desk"); err != nil || len(ids) != 0 {
+		t.Errorf("idempotent supersede: %v %v", ids, err)
 	}
 }

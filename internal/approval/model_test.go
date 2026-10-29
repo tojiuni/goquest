@@ -137,41 +137,58 @@ func TestMemStore_CreateValidates(t *testing.T) {
 	}
 }
 
-func TestMemStore_SupersedeOpenMerge(t *testing.T) {
+func TestMemStore_CreateSupersedesOlderHead(t *testing.T) {
 	ctx := context.Background()
 	st, tid := NewMemStore(), uuid.New()
-	pending, _ := st.Create(ctx, mergeReq(tid, "old1"))
-	approved, _ := st.Create(ctx, mergeReq(tid, "old2"))
-	if _, err := st.Transition(ctx, approved.ID, StatusPending, StatusApproved, "u", "", &Decision{DecidedBy: "u", Basis: BasisUserDirect}); err != nil {
-		t.Fatal(err)
-	}
-	same, _ := st.Create(ctx, mergeReq(tid, "new"))
 	otherPR := mergeReq(tid, "x")
 	otherPR.Subject.PR = 8
 	other, _ := st.Create(ctx, otherPR)
 	otherTicket, _ := st.Create(ctx, mergeReq(uuid.New(), "old1"))
 
-	ids, err := st.SupersedeOpenMerge(ctx, tid, "o/r", 7, "new", "desk")
-	if err != nil || len(ids) != 2 {
-		t.Fatalf("want 2 superseded, got %v %v", ids, err)
+	old1, _ := st.Create(ctx, mergeReq(tid, "old1"))
+	old2, err := st.Create(ctx, mergeReq(tid, "old2")) // new head: old1 superseded
+	if err != nil {
+		t.Fatal(err)
 	}
-	for id, want := range map[uuid.UUID]Status{
-		pending.ID: StatusSuperseded, approved.ID: StatusSuperseded, same.ID: StatusPending,
-		other.ID: StatusPending, otherTicket.ID: StatusPending,
-	} {
-		a, _ := st.Get(ctx, id)
-		if a.Status != want {
+	if old2.SupersedesID == nil || *old2.SupersedesID != old1.ID {
+		t.Fatalf("old2 should supersede old1: %+v", old2.SupersedesID)
+	}
+	if a, _ := st.Get(ctx, old1.ID); a.Status != StatusSuperseded || len(a.Events) != 1 {
+		t.Fatalf("old1 not superseded: %+v", a)
+	}
+	if _, err := st.Transition(ctx, old2.ID, StatusPending, StatusApproved, "u", "", &Decision{DecidedBy: "u", Basis: BasisUserDirect}); err != nil {
+		t.Fatal(err)
+	}
+	fresh, _ := st.Create(ctx, mergeReq(tid, "new")) // approved old2 is superseded too
+	if fresh.SupersedesID == nil || *fresh.SupersedesID != old2.ID {
+		t.Fatalf("fresh should supersede old2: %+v", fresh.SupersedesID)
+	}
+	a, _ := st.Get(ctx, old2.ID)
+	if a.Status != StatusSuperseded || a.DecidedBy == nil || len(a.Events) != 2 {
+		t.Errorf("approved record must keep its decision: %+v", a)
+	}
+	for id, want := range map[uuid.UUID]Status{fresh.ID: StatusPending, other.ID: StatusPending, otherTicket.ID: StatusPending} {
+		if a, _ := st.Get(ctx, id); a.Status != want {
 			t.Errorf("%s: status %s want %s", id, a.Status, want)
 		}
 	}
-	// the approved row's decision survives supersession
-	a, _ := st.Get(ctx, approved.ID)
-	if a.DecidedBy == nil || len(a.Events) != 2 {
-		t.Errorf("decision/events lost: %+v", a)
-	}
-	// idempotent: nothing left to supersede
+	// nothing left to supersede
 	if ids, _ := st.SupersedeOpenMerge(ctx, tid, "o/r", 7, "new", "desk"); len(ids) != 0 {
 		t.Errorf("second call superseded %v", ids)
+	}
+}
+
+func TestMemStore_DuplicatePending(t *testing.T) {
+	ctx := context.Background()
+	st, tid := NewMemStore(), uuid.New()
+	first, _ := st.Create(ctx, mergeReq(tid, "a"))
+	if _, err := st.Create(ctx, mergeReq(tid, "a")); !errors.Is(err, ErrDuplicatePending) {
+		t.Fatalf("want ErrDuplicatePending, got %v", err)
+	}
+	// once decided, the same subject may be requested again
+	st.Transition(ctx, first.ID, StatusPending, StatusRejected, "u", "", &Decision{DecidedBy: "u", Basis: BasisUserDirect})
+	if _, err := st.Create(ctx, mergeReq(tid, "a")); err != nil {
+		t.Errorf("re-request after decision: %v", err)
 	}
 }
 

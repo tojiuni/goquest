@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/tojiuni/goquest/internal/apikey"
+	"github.com/tojiuni/goquest/internal/approval"
 	"github.com/tojiuni/lymphhub/authz"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
@@ -148,6 +149,7 @@ func main() {
 		log.Printf("tojihub calendar sync enabled: %s", cfg.TojihubConnectURL)
 	}
 
+	approvalH := handler.NewApprovalHandler(approval.NewService(approval.NewPGStore(pool)))
 	tagStore := tag.NewPGStore(pool)
 	tagSvc := tag.NewService(tagStore)
 
@@ -430,6 +432,13 @@ func main() {
 				r.With(requireTicketManage).Post("/approve", ticketH.Approve)
 				r.With(requireTicketManage).Post("/reopen", ticketH.Reopen)
 				r.Post("/org-reassign", ticketH.OrgReassign)
+				// ── Approval records (goq-approvals-p2-service) ──
+				// Request/read/withdraw are open to anyone who can view the ticket;
+				// deciding is a separate, stricter route (P3).
+				r.Post("/approvals", approvalH.Request)
+				r.Get("/approvals", approvalH.List)
+				r.Get("/approvals/{aid}", approvalH.Get)
+				r.Post("/approvals/{aid}/withdraw", approvalH.Withdraw)
 				r.Get("/subtasks", ticketH.ListSubtasks)
 				r.Post("/attempts", ticketH.SubmitAttempt)
 				r.Get("/attempts", ticketH.ListAttempts)
