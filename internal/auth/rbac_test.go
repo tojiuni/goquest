@@ -250,3 +250,29 @@ func TestRequireProjectInWorkspace(t *testing.T) {
 		})
 	}
 }
+
+// A non-member must get 403 whether or not {pid} belongs to {wid}; only a
+// member sees the 404 for a foreign project (no membership-free probing).
+func TestProjectInWorkspace_AfterMembershipCheck(t *testing.T) {
+	wid, other, pid := uuid.New(), uuid.New(), uuid.New()
+	foreign := &mockPJGetter{p: &pjpkg.Project{ID: pid, WorkspaceID: other}}
+
+	serve := func(ws *mockWSStore) int {
+		r := chi.NewRouter()
+		r.Route("/workspaces/{wid}/projects/{pid}", func(r chi.Router) {
+			r.Use(auth.RequireWorkspaceRole(ws, wskg.RoleViewer), auth.RequireProjectInWorkspace(foreign))
+			r.Get("/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+		})
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/workspaces/"+wid.String()+"/projects/"+pid.String(), nil)
+		r.ServeHTTP(rec, req.WithContext(auth.WithRequesterID(req.Context(), "user-1")))
+		return rec.Code
+	}
+
+	if got := serve(&mockWSStore{err: wskg.ErrNotFound}); got != http.StatusForbidden {
+		t.Fatalf("non-member with foreign pid: status=%d, want 403", got)
+	}
+	if got := serve(&mockWSStore{member: &wskg.Member{Role: wskg.RoleViewer}}); got != http.StatusNotFound {
+		t.Fatalf("member with foreign pid: status=%d, want 404", got)
+	}
+}
