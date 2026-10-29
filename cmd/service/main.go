@@ -518,9 +518,11 @@ func main() {
 				r.With(requireWsViewer).Get("/projects", pjH.List)
 
 				r.Route("/projects/{pid}", func(r chi.Router) {
-					// Runs before the per-route role checks: every {wid}/{pid}
-					// route must see a project that belongs to {wid}.
-					r.Use(auth.RequireProjectInWorkspace(pjStore))
+					// Membership first, then ownership: a non-member must get the same
+					// 403 for any {pid}, so 404-vs-403 can't reveal which project
+					// belongs to {wid}. Every {wid}/{pid} route then sees a project
+					// that belongs to {wid}.
+					r.Use(requireWsViewer, auth.RequireProjectInWorkspace(pjStore))
 					r.With(requireWsViewer, requirePjViewer).Get("/", pjH.Get)
 					r.With(requireWsViewer, requirePjAdmin).Patch("/", pjH.Update)
 					r.With(requireWsAdmin).Delete("/", pjH.Delete)
