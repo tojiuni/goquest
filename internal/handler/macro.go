@@ -66,11 +66,38 @@ func (h *MacroHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"macros": list})
 }
 
+// inWorkspace confirms macro `mid` belongs to the {wid} the caller was authorized
+// for; the store addresses macros by id alone. Writes the 404/500 itself.
+func (h *MacroHandler) inWorkspace(w http.ResponseWriter, r *http.Request, mid uuid.UUID) bool {
+	wid, err := parseUUID(chi.URLParam(r, "wid"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid workspace id")
+		return false
+	}
+	m, err := h.svc.Get(r.Context(), mid)
+	if err != nil {
+		if errors.Is(err, macro.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "macro not found")
+			return false
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	if m.WorkspaceID != wid {
+		writeError(w, http.StatusNotFound, "macro not found")
+		return false
+	}
+	return true
+}
+
 // PATCH /workspaces/{wid}/macros/{mid}
 func (h *MacroHandler) Update(w http.ResponseWriter, r *http.Request) {
 	mid, err := parseUUID(chi.URLParam(r, "mid"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid macro id")
+		return
+	}
+	if !h.inWorkspace(w, r, mid) {
 		return
 	}
 	var req macro.UpdateReq
@@ -95,6 +122,9 @@ func (h *MacroHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	mid, err := parseUUID(chi.URLParam(r, "mid"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid macro id")
+		return
+	}
+	if !h.inWorkspace(w, r, mid) {
 		return
 	}
 	if err := h.svc.Delete(r.Context(), mid); err != nil {

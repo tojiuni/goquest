@@ -245,6 +245,28 @@ func (h *WorkspaceHandler) DeleteInvitation(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "invalid invitation id")
 		return
 	}
+	// The store deletes by invitation id alone, so confirm it is one of {wid}'s.
+	wid, err := uuid.Parse(chi.URLParam(r, "wid"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid workspace id")
+		return
+	}
+	invs, err := h.svc.ListInvitations(r.Context(), wid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	owned := false
+	for _, inv := range invs {
+		if inv.ID == iid {
+			owned = true
+			break
+		}
+	}
+	if !owned {
+		writeError(w, http.StatusNotFound, "invitation not found")
+		return
+	}
 	if err := h.svc.DeleteInvitation(r.Context(), iid); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return

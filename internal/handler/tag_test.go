@@ -121,8 +121,9 @@ func TestTagHandler_Get_NotFound(t *testing.T) {
 }
 
 func TestTagHandler_Delete(t *testing.T) {
-	h := handler.NewTagHandler(&stubTagSvc{})
 	wid, tid := uuid.New(), uuid.New()
+	// Delete now verifies the tag belongs to {wid} before removing it.
+	h := handler.NewTagHandler(&stubTagSvc{list: []*tag.Tag{{ID: tid, WorkspaceID: wid}}})
 
 	req := httptest.NewRequest(http.MethodDelete, "/workspaces/"+wid.String()+"/tags/"+tid.String(), nil)
 	w := httptest.NewRecorder()

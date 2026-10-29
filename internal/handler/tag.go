@@ -63,10 +63,37 @@ func (h *TagHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"tags": tags})
 }
 
+// inWorkspace confirms tag `tid` belongs to the {wid} the caller was authorized
+// for; the store addresses tags by id alone. Writes the 404/500 itself.
+func (h *TagHandler) inWorkspace(w http.ResponseWriter, r *http.Request, tid uuid.UUID) bool {
+	wid, err := parseUUID(chi.URLParam(r, "wid"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid workspace id")
+		return false
+	}
+	t, err := h.svc.Get(r.Context(), tid)
+	if err != nil {
+		if errors.Is(err, tag.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "tag not found")
+			return false
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	if t.WorkspaceID != wid {
+		writeError(w, http.StatusNotFound, "tag not found")
+		return false
+	}
+	return true
+}
+
 func (h *TagHandler) Get(w http.ResponseWriter, r *http.Request) {
 	tid, err := parseUUID(chi.URLParam(r, "tid"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid tag id")
+		return
+	}
+	if !h.inWorkspace(w, r, tid) {
 		return
 	}
 
@@ -87,6 +114,9 @@ func (h *TagHandler) Update(w http.ResponseWriter, r *http.Request) {
 	tid, err := parseUUID(chi.URLParam(r, "tid"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid tag id")
+		return
+	}
+	if !h.inWorkspace(w, r, tid) {
 		return
 	}
 
@@ -113,6 +143,9 @@ func (h *TagHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	tid, err := parseUUID(chi.URLParam(r, "tid"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid tag id")
+		return
+	}
+	if !h.inWorkspace(w, r, tid) {
 		return
 	}
 
