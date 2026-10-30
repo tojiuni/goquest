@@ -53,6 +53,9 @@ var (
 	ErrNotFound          = errors.New("approval not found")
 	ErrInvalidTransition = errors.New("invalid approval status transition")
 	ErrInvalidSubject    = errors.New("invalid approval subject")
+	// ErrDuplicatePending means an identical request (same ticket, kind and
+	// subject) is already pending.
+	ErrDuplicatePending = errors.New("identical approval already pending")
 	// ErrStale means the compare-and-set status guard did not match: someone
 	// else moved the approval first.
 	ErrStale = errors.New("approval status changed concurrently")

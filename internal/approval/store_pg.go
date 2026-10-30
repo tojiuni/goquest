@@ -62,16 +62,51 @@ func (s *pgStore) Create(ctx context.Context, req NewReq) (*Approval, error) {
 		ev = []EvidenceItem{}
 	}
 	evid, _ := json.Marshal(ev)
-	row := s.db.QueryRow(ctx, `
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+
+	// Serialise requests per ticket so the duplicate check and the head_sha
+	// supersede below cannot race with a concurrent request.
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM tickets WHERE id=$1 FOR UPDATE`, req.TicketID); err != nil {
+		return nil, fmt.Errorf("lock ticket: %w", err)
+	}
+	var dup bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS(SELECT 1 FROM approvals
+		WHERE ticket_id=$1 AND kind=$2 AND subject=$3::jsonb AND status='pending')`,
+		req.TicketID, string(req.Kind), subj).Scan(&dup); err != nil {
+		return nil, fmt.Errorf("check duplicate approval: %w", err)
+	}
+	if dup {
+		return nil, ErrDuplicatePending
+	}
+	supersedes := req.SupersedesID
+	if req.Kind == KindMerge && supersedes == nil {
+		ids, err := supersedeOpenMergeTx(ctx, tx, req.TicketID, req.Subject.Repo, req.Subject.PR, req.Subject.HeadSHA, req.RequestedBy)
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) > 0 {
+			supersedes = &ids[0]
+		}
+	}
+	row := tx.QueryRow(ctx, `
 		INSERT INTO approvals (ticket_id, kind, subject, requested_by, requested_by_label,
 			request_note, evidence, within_direction, supersedes_id, legacy, source_comment_id)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		RETURNING `+cols,
 		req.TicketID, string(req.Kind), subj, req.RequestedBy, req.RequestedByLabel,
-		req.RequestNote, evid, req.WithinDirection, req.SupersedesID, req.Legacy, req.SourceCommentID)
+		req.RequestNote, evid, req.WithinDirection, supersedes, req.Legacy, req.SourceCommentID)
 	a, err := scan(row)
 	if err != nil {
 		return nil, fmt.Errorf("create approval: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
 	}
 	return a, nil
 }
@@ -216,13 +251,26 @@ func (s *pgStore) SupersedeOpenMerge(ctx context.Context, ticketID uuid.UUID, re
 		return nil, err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
-	// FOR UPDATE serialises concurrent requests for the same PR (spec: head_sha race).
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM tickets WHERE id=$1 FOR UPDATE`, ticketID); err != nil {
+		return nil, fmt.Errorf("lock ticket: %w", err)
+	}
+	ids, err := supersedeOpenMergeTx(ctx, tx, ticketID, repo, pr, newHeadSHA, actor)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+func supersedeOpenMergeTx(ctx context.Context, tx pgx.Tx, ticketID uuid.UUID, repo string, pr int, newHeadSHA, actor string) ([]uuid.UUID, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT id, status FROM approvals
 		WHERE ticket_id=$1 AND kind='merge' AND subject->>'repo'=$2
 		  AND (subject->>'pr')::int=$3 AND subject->>'head_sha' <> $4
 		  AND status IN ('pending','approved')
-		FOR UPDATE`, ticketID, repo, pr, newHeadSHA)
+		ORDER BY created_at, id`, ticketID, repo, pr, newHeadSHA)
 	if err != nil {
 		return nil, fmt.Errorf("find open merge approvals: %w", err)
 	}
@@ -249,9 +297,6 @@ func (s *pgStore) SupersedeOpenMerge(ctx context.Context, ticketID uuid.UUID, re
 			return nil, err
 		}
 		ids = append(ids, r.id)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
 	}
 	return ids, nil
 }

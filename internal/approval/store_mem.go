@@ -27,6 +27,21 @@ func (m *MemStore) Create(_ context.Context, req NewReq) (*Approval, error) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, id := range m.order {
+		o := m.rows[id]
+		if o.Status == StatusPending && o.TicketID == req.TicketID && o.Kind == req.Kind && o.Subject == req.Subject {
+			return nil, ErrDuplicatePending
+		}
+	}
+	if req.Kind == KindMerge && req.SupersedesID == nil {
+		ids, err := m.supersedeOpenMerge(req.TicketID, req.Subject.Repo, req.Subject.PR, req.Subject.HeadSHA, req.RequestedBy)
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) > 0 {
+			req.SupersedesID = &ids[0]
+		}
+	}
 	now := time.Now().UTC()
 	a := &Approval{
 		ID: uuid.New(), TicketID: req.TicketID, Kind: req.Kind, Subject: req.Subject,
@@ -112,6 +127,10 @@ func (m *MemStore) transition(id uuid.UUID, from, to Status, actor, note string,
 func (m *MemStore) SupersedeOpenMerge(_ context.Context, ticketID uuid.UUID, repo string, pr int, newHeadSHA, actor string) ([]uuid.UUID, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.supersedeOpenMerge(ticketID, repo, pr, newHeadSHA, actor)
+}
+
+func (m *MemStore) supersedeOpenMerge(ticketID uuid.UUID, repo string, pr int, newHeadSHA, actor string) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	for _, id := range m.order {
 		a := m.rows[id]
