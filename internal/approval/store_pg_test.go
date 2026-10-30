@@ -106,6 +106,11 @@ func TestPG_DelegationRuleCeiling(t *testing.T) {
 		_, err := pool.Exec(ctx, ins, wid, kinds)
 		wantPGCode(t, fmt.Sprintf("kinds %v", kinds), err, "23514")
 	}
+	// a rule may not name a person (migration 028)
+	for _, principal := range []string{"lyckabc@gmail.com", " ", ""} {
+		_, err := pool.Exec(ctx, `INSERT INTO delegation_rules (workspace_id, principal, kinds, created_by) VALUES ($1,$2,'{merge}','u')`, wid, principal)
+		wantPGCode(t, fmt.Sprintf("principal %q", principal), err, "23514")
+	}
 	for _, kinds := range [][]string{{"merge"}, {"deviation"}, {"merge", "deviation"}} {
 		if _, err := pool.Exec(ctx, ins, wid, kinds); err != nil {
 			t.Errorf("kinds %v must be allowed: %v", kinds, err)

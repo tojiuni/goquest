@@ -209,6 +209,12 @@ func (s *Service) delegationRule(ctx context.Context, a *Approval, ws uuid.UUID,
 	if !Delegable(a.Kind, a.WithinDirection) {
 		return nil, &DeniedError{Reason: ReasonKindNotDelegable}
 	}
+	// Defense in depth: a session account id is never an email. A person's id
+	// here means a person's token reached the session path; refuse it even if a
+	// rule somehow names it.
+	if ValidatePrincipal(actor.ID) != nil {
+		return nil, &DeniedError{Reason: ReasonPrincipalCannotDecide}
+	}
 	if a.RequestedBy == actor.ID {
 		return nil, &DeniedError{Reason: ReasonSelfApproval}
 	}

@@ -59,7 +59,8 @@ func TestMiddlewareThenClassify_RealJWT(t *testing.T) {
 		wantID   string
 	}{
 		{"ui login", sign([]string{"goquest-ui"}, "u@x.io", true), PrincipalHuman, "u@x.io"},
-		{"device-code token with same email", sign([]string{"lymphhub-cli"}, "u@x.io", true), PrincipalSession, "u@x.io"},
+		{"device-code token with same email", sign([]string{"lymphhub-cli"}, "u@x.io", true), PrincipalOther, "u@x.io"},
+		{"other app person token", sign([]string{"grafana"}, "u@x.io", true), PrincipalOther, "u@x.io"},
 		{"machine token", sign([]string{"tokenhub-refresher"}, "", false), PrincipalSession, "11111111-2222-3333-4444-555555555555"},
 	} {
 		gotKind, gotID = "", ""

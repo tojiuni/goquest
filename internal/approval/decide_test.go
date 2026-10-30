@@ -97,10 +97,10 @@ func TestDecide_DelegatedHappyPath(t *testing.T) {
 
 func TestDecide_DelegationCeiling(t *testing.T) {
 	e := newDecideEnv()
-	// even a rule that (impossibly, via DB CHECK) lists every kind cannot lift the ceiling
-	e.rule(t, func(r *DelegationRule) {
-		r.Kinds = []Kind{KindMerge, KindDeviation, KindInfra, KindDesign, KindOps, KindTicket}
-	})
+	// A rule listing every kind can only exist by bypassing Validate and the DB
+	// CHECK; the ceiling in Decide must hold even then.
+	e.rules.rules = append(e.rules.rules, &DelegationRule{ID: uuid.New(), WorkspaceID: e.ws, Principal: "desk",
+		Kinds: []Kind{KindMerge, KindDeviation, KindInfra, KindDesign, KindOps, KindTicket}, UserRef: "x", CreatedBy: "u"})
 	yes, no := true, false
 	denied := []*Approval{
 		e.request(t, NewReq{Kind: KindInfra, Subject: Subject{Target: "t"}}),
@@ -237,4 +237,39 @@ func TestDecide_NoRuleStoreMeansSessionsNeverDecide(t *testing.T) {
 	a, _ := st.Create(context.Background(), NewReq{TicketID: tid, Kind: KindMerge, RequestedBy: "r", Subject: Subject{Repo: "o/r", PR: 1, HeadSHA: "a"}})
 	_, err := svc.Decide(context.Background(), DecideInput{TicketID: tid, WorkspaceID: uuid.New(), ApprovalID: a.ID, Decision: StatusApproved, UserRef: "x"}, Actor{ID: "desk", Kind: ActorSession})
 	wantDenied(t, err, ReasonNoMatchingRule)
+}
+
+func TestDecide_PersonIDNeverActsOnARule(t *testing.T) {
+	e := newDecideEnv()
+	// a stale/forged rule naming a person (impossible through Create) still must not work
+	e.rules.rules = append(e.rules.rules, &DelegationRule{ID: uuid.New(), WorkspaceID: e.ws, Principal: "lyckabc@gmail.com",
+		Kinds: []Kind{KindMerge}, UserRef: "x", CreatedBy: "u"})
+	_, err := e.decide(e.merge(t), Actor{ID: "lyckabc@gmail.com", Kind: ActorSession}, "ref")
+	wantDenied(t, err, ReasonPrincipalCannotDecide)
+}
+
+func TestDelegationRuleValidate(t *testing.T) {
+	base := func() *DelegationRule {
+		return &DelegationRule{WorkspaceID: uuid.New(), Principal: "tokenhub-geneso", Kinds: []Kind{KindMerge}, CreatedBy: "u"}
+	}
+	if err := base().Validate(); err != nil {
+		t.Fatalf("valid rule: %v", err)
+	}
+	for name, mut := range map[string]func(*DelegationRule){
+		"email principal":  func(r *DelegationRule) { r.Principal = "lyckabc@gmail.com" },
+		"blank principal":  func(r *DelegationRule) { r.Principal = "  " },
+		"spaced principal": func(r *DelegationRule) { r.Principal = "a b" },
+		"no kinds":         func(r *DelegationRule) { r.Kinds = nil },
+		"infra kind":       func(r *DelegationRule) { r.Kinds = []Kind{KindMerge, KindInfra} },
+		"ticket kind":      func(r *DelegationRule) { r.Kinds = []Kind{KindTicket} },
+	} {
+		r := base()
+		mut(r)
+		if err := r.Validate(); !errors.Is(err, ErrInvalidRule) {
+			t.Errorf("%s: want ErrInvalidRule, got %v", name, err)
+		}
+		if err := NewMemRuleStore().Create(context.Background(), r); !errors.Is(err, ErrInvalidRule) {
+			t.Errorf("%s: store.Create must validate, got %v", name, err)
+		}
+	}
 }

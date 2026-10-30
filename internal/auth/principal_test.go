@@ -34,14 +34,18 @@ func TestClassifyPrincipal(t *testing.T) {
 		want    PrincipalKind
 	}{
 		{"ui login", ui, jwtAs([]string{"goquest-ui"}, "u@x.io", true), PrincipalHuman},
-		{"ui client but unverified email", ui, jwtAs([]string{"goquest-ui"}, "u@x.io", false), PrincipalSession},
-		{"ui client but no email", ui, jwtAs([]string{"goquest-ui"}, "", true), PrincipalSession},
-		{"device-code cli token", ui, jwtAs([]string{"lymphhub-cli"}, "u@x.io", true), PrincipalSession},
-		{"toji-cli device token", ui, jwtAs([]string{"toji-cli"}, "u@x.io", true), PrincipalSession},
+		{"ui client but unverified email", ui, jwtAs([]string{"goquest-ui"}, "u@x.io", false), PrincipalOther},
+		{"ui client but no email claim, marked verified", ui, jwtAs([]string{"goquest-ui"}, "", true), PrincipalOther},
+		{"device-code cli token (verified email)", ui, jwtAs([]string{"lymphhub-cli"}, "u@x.io", true), PrincipalOther},
+		{"toji-cli device token", ui, jwtAs([]string{"toji-cli"}, "u@x.io", true), PrincipalOther},
+		{"another app's person token: grafana", ui, jwtAs([]string{"grafana"}, "u@x.io", true), PrincipalOther},
+		{"another app's person token: argocd", ui, jwtAs([]string{"argocd"}, "u@x.io", true), PrincipalOther},
+		{"another app's person token: vault, unverified", ui, jwtAs([]string{"vault"}, "u@x.io", false), PrincipalOther},
 		{"machine token", ui, jwtAs([]string{"tokenhub-refresher"}, "", false), PrincipalSession},
-		{"aud array containing ui client", ui, jwtAs([]string{"goquest-ui", "other"}, "u@x.io", true), PrincipalSession},
-		{"no aud", ui, jwtAs(nil, "u@x.io", true), PrincipalSession},
-		{"empty allow list: nobody human", nil, jwtAs([]string{"goquest-ui"}, "u@x.io", true), PrincipalSession},
+		{"aud array containing ui client", ui, jwtAs([]string{"goquest-ui", "other"}, "u@x.io", true), PrincipalOther},
+		{"no aud", ui, jwtAs(nil, "u@x.io", true), PrincipalOther},
+		{"empty allow list: nobody human", nil, jwtAs([]string{"goquest-ui"}, "u@x.io", true), PrincipalOther},
+		{"empty allow list: machine token still session", nil, jwtAs([]string{"tokenhub-refresher"}, "", false), PrincipalSession},
 		{"api key even with ui-looking identity", ui, func(ctx context.Context) context.Context {
 			ctx = jwtAs([]string{"goquest-ui"}, "u@x.io", true)(ctx)
 			return context.WithValue(ctx, apiKeyMetaCtxKey, &APIKeyMeta{})

@@ -3,7 +3,9 @@ package approval
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
@@ -27,7 +29,38 @@ type DelegationRule struct {
 	RevokedAt   *time.Time     `json:"revoked_at,omitempty"`
 }
 
-var ErrRuleNotFound = errors.New("delegation rule not found")
+var (
+	ErrRuleNotFound = errors.New("delegation rule not found")
+	ErrInvalidRule  = errors.New("invalid delegation rule")
+)
+
+// ValidatePrincipal rejects principals that name a person. A rule may only
+// name a session account, whose machine-token identity is a bare actor id
+// (never an email); naming a person would let a session holding that person's
+// token act on the rule.
+func ValidatePrincipal(p string) error {
+	if strings.TrimSpace(p) == "" || strings.ContainsAny(p, "@ \t\n") {
+		return fmt.Errorf("%w: principal must be a session account id, not an email or blank", ErrInvalidRule)
+	}
+	return nil
+}
+
+// Validate checks a rule before it is stored: the principal, and that every
+// kind is under the fixed delegation ceiling.
+func (r *DelegationRule) Validate() error {
+	if err := ValidatePrincipal(r.Principal); err != nil {
+		return err
+	}
+	if len(r.Kinds) == 0 {
+		return fmt.Errorf("%w: at least one kind is required", ErrInvalidRule)
+	}
+	for _, k := range r.Kinds {
+		if k != KindMerge && k != KindDeviation {
+			return fmt.Errorf("%w: kind %q is never delegable", ErrInvalidRule, k)
+		}
+	}
+	return nil
+}
 
 // RuleStore reads (and, for P4, writes) delegation rules.
 type RuleStore interface {
@@ -126,6 +159,9 @@ type MemRuleStore struct {
 func NewMemRuleStore() *MemRuleStore { return &MemRuleStore{} }
 
 func (m *MemRuleStore) Create(_ context.Context, r *DelegationRule) error {
+	if err := r.Validate(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if r.ID == uuid.Nil {

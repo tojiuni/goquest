@@ -14,6 +14,9 @@ type pgRuleStore struct{ db *pgxpool.Pool }
 func NewPGRuleStore(db *pgxpool.Pool) RuleStore { return &pgRuleStore{db: db} }
 
 func (s *pgRuleStore) Create(ctx context.Context, r *DelegationRule) error {
+	if err := r.Validate(); err != nil {
+		return err
+	}
 	kinds := make([]string, len(r.Kinds))
 	for i, k := range r.Kinds {
 		kinds[i] = string(k)

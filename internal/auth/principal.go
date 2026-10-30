@@ -18,9 +18,10 @@ const (
 	// PrincipalHuman: an interactive login to a trusted UI client (see
 	// ClassifyPrincipal).
 	PrincipalHuman PrincipalKind = "human"
-	// PrincipalSession: a JWT that is not an interactive UI login — a session
-	// account's client_credentials token, or a user token minted by another
-	// client such as a device-code CLI.
+	// PrincipalSession: a machine token — a session account's client_credentials
+	// JWT, which carries no email claim at all. Only this kind may act on a
+	// delegation rule. A person's token (device-code CLI, grafana, argocd, ...)
+	// is never a session, even though it is not an interactive goquest-ui login.
 	PrincipalSession PrincipalKind = "session"
 	// PrincipalCustomer: a magic-link customer token.
 	PrincipalCustomer PrincipalKind = "customer"
@@ -63,7 +64,8 @@ func PrincipalKindFrom(r *http.Request) PrincipalKind {
 //
 // A request is human only if it was authenticated by a bearer JWT whose email
 // is verified and whose audience is exactly one value, and that value is in
-// humanAudiences (the OIDC client ids of the interactive UI, e.g.
+// humanAudiences. A JWT with no email claim at all is a machine (session)
+// token; every other JWT that names a person is PrincipalOther (the OIDC client ids of the interactive UI, e.g.
 // "goquest-ui"). lymphhub sets aud to the client's own id unless the client
 // has an audience override, so a token obtained through the UI client has
 // aud=<ui client>, while device-code and client_credentials tokens carry their
@@ -96,10 +98,16 @@ func classify(r *http.Request, allowed map[string]struct{}) PrincipalKind {
 	if id == nil || RequesterID(r) == "" {
 		return PrincipalOther // lymphhub ls_ session, skip-auth, or unauthenticated
 	}
+	if id.Email == "" && !id.EmailVerified {
+		return PrincipalSession // machine token: no email identity at all
+	}
 	if id.EmailVerified && id.Email != "" && len(id.Audience) == 1 {
 		if _, ok := allowed[id.Audience[0]]; ok {
 			return PrincipalHuman
 		}
 	}
-	return PrincipalSession
+	// A token that names a person (email present) but is not an interactive
+	// goquest-ui login: another app's token or a device-code token held by a
+	// session. It must not be able to decide anything.
+	return PrincipalOther
 }
