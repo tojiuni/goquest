@@ -14,7 +14,7 @@ import (
 )
 
 func approvalRouter(principal string, customer bool) http.Handler {
-	h := NewApprovalHandler(approval.NewService(approvalStore))
+	h := NewApprovalHandler(approval.NewService(approvalStore), nil)
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

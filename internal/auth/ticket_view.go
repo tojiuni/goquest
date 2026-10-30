@@ -105,3 +105,9 @@ func RequireTicketView(getter ticketGetter, checker spicedb.PermissionChecker) f
 		})
 	}
 }
+
+// WithTicket returns a copy of ctx carrying t as RequireTicketView would stash
+// it. For tests that mount handlers without the view middleware.
+func WithTicket(ctx context.Context, t *ticket.Ticket) context.Context {
+	return context.WithValue(ctx, ticketCtxKey, t)
+}

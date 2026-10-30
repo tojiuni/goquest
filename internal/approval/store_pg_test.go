@@ -155,3 +155,51 @@ func TestPG_CreateSupersedesAndRejectsDuplicates(t *testing.T) {
 		t.Errorf("idempotent supersede: %v %v", ids, err)
 	}
 }
+
+func TestPG_DelegatedDecisionEndToEnd(t *testing.T) {
+	ctx := context.Background()
+	pool, st, tid := setup(t)
+	var wid uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO workspaces (name, slug, owner_id)
+		VALUES ('approval pg test', $1, 'test') RETURNING id`, "approval-pg-"+uuid.NewString()).Scan(&wid); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `DELETE FROM delegation_rules WHERE workspace_id=$1`, wid)
+		pool.Exec(ctx, `DELETE FROM workspaces WHERE id=$1`, wid)
+	})
+	rs := approval.NewPGRuleStore(pool)
+	rule := &approval.DelegationRule{WorkspaceID: wid, Principal: "desk", Kinds: []approval.Kind{approval.KindMerge},
+		Repos: []string{"o/*"}, Conditions: map[string]any{"require_evidence_types": []any{"ci_run"}}, UserRef: "ticket#1", CreatedBy: "user"}
+	if err := rs.Create(ctx, rule); err != nil || rule.ID == uuid.Nil {
+		t.Fatalf("create rule: %v", err)
+	}
+	svc := approval.NewService(st).WithRules(rs)
+	a, err := st.Create(ctx, approval.NewReq{TicketID: tid, Kind: approval.KindMerge, RequestedBy: "requester",
+		Subject:  approval.Subject{Repo: "o/r", PR: 5, HeadSHA: "a"},
+		Evidence: []approval.EvidenceItem{{Type: "ci_run", Ref: "https://ci/1"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.Decide(ctx, approval.DecideInput{TicketID: tid, WorkspaceID: wid, ApprovalID: a.ID,
+		Decision: approval.StatusApproved, Note: "ok", UserRef: "chat"}, approval.Actor{ID: "desk", Kind: approval.ActorSession})
+	if err != nil {
+		t.Fatalf("decide: %v", err)
+	}
+	if got.Basis == nil || *got.Basis != approval.BasisDeskDelegate || got.DelegationRuleID == nil || *got.DelegationRuleID != rule.ID {
+		t.Fatalf("delegation not recorded: %+v", got)
+	}
+	// revoked rules stop applying
+	if err := rs.Revoke(ctx, wid, rule.ID); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := st.Create(ctx, approval.NewReq{TicketID: tid, Kind: approval.KindMerge, RequestedBy: "requester",
+		Subject:  approval.Subject{Repo: "o/r", PR: 6, HeadSHA: "a"},
+		Evidence: []approval.EvidenceItem{{Type: "ci_run", Ref: "https://ci/2"}}})
+	_, err = svc.Decide(ctx, approval.DecideInput{TicketID: tid, WorkspaceID: wid, ApprovalID: b.ID,
+		Decision: approval.StatusApproved, UserRef: "chat"}, approval.Actor{ID: "desk", Kind: approval.ActorSession})
+	var de *approval.DeniedError
+	if !errors.As(err, &de) || de.Reason != approval.ReasonNoMatchingRule {
+		t.Errorf("revoked rule: want no_matching_rule, got %v", err)
+	}
+}
