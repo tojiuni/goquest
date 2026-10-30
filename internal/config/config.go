@@ -50,6 +50,12 @@ type Config struct {
 	// Lymphhub CLI SSO session verification — empty means disabled.
 	LymphhubSessionAddr string
 
+	// OIDC client ids (token aud) of the interactive UI whose logins count as a
+	// person for approval decisions (APPROVAL_HUMAN_CLIENT_IDS, comma-separated,
+	// e.g. "goquest-ui"). Empty means nobody is human: user_direct approvals
+	// are impossible until it is set.
+	ApprovalHumanClientIDs []string
+
 	// Lymphhub actor-lookup service client (goq-user-lookup-proxy) — resolves
 	// requester/assignee ids to display names. Empty LymphhubOIDCURL disables
 	// the /users/lookup proxy (it always returns an empty array).
@@ -149,6 +155,8 @@ func Load() *Config {
 
 		LymphhubSessionAddr: os.Getenv("LYMPHHUB_SESSION_ADDR"),
 
+		ApprovalHumanClientIDs: splitCSV(os.Getenv("APPROVAL_HUMAN_CLIENT_IDS")),
+
 		LymphhubOIDCURL:             os.Getenv("LYMPHHUB_OIDC_URL"),
 		LymphhubOIDCHost:            envOrDefault("LYMPHHUB_OIDC_HOST", "toji.idp.toji.homes"),
 		LymphhubServiceClientID:     os.Getenv("LYMPHHUB_SERVICE_CLIENT_ID"),
@@ -223,4 +231,15 @@ func parseBool(s string, def bool) bool {
 		return def
 	}
 	return v
+}
+
+// splitCSV splits a comma-separated list, trimming blanks and dropping empties.
+func splitCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

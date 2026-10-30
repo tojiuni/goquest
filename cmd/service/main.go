@@ -149,7 +149,18 @@ func main() {
 		log.Printf("tojihub calendar sync enabled: %s", cfg.TojihubConnectURL)
 	}
 
-	approvalH := handler.NewApprovalHandler(approval.NewService(approval.NewPGStore(pool)))
+	approvalH := handler.NewApprovalHandler(
+		approval.NewService(approval.NewPGStore(pool)).WithRules(approval.NewPGRuleStore(pool)),
+		func(ctx context.Context, t *ticket.Ticket) (uuid.UUID, error) {
+			if t == nil || t.ProjectID == nil {
+				return uuid.Nil, nil
+			}
+			p, err := pjStore.Get(ctx, *t.ProjectID)
+			if err != nil {
+				return uuid.Nil, err
+			}
+			return p.WorkspaceID, nil
+		})
 	tagStore := tag.NewPGStore(pool)
 	tagSvc := tag.NewService(tagStore)
 
@@ -376,6 +387,9 @@ func main() {
 				r.Use(auth.LymphhubSessionMiddleware(authz.NewSessionClient(cfg.LymphhubSessionAddr)))
 			}
 			r.Use(authMiddleware)
+			// Records whether the caller is a person (trusted UI client login) or an
+			// agent; approval decisions depend on it. Must run after authMiddleware.
+			r.Use(auth.ClassifyPrincipal(cfg.ApprovalHumanClientIDs))
 			r.Use(auth.EnforceKeyOrigin())
 			r.Use(auth.EnforceKeyRateLimit(rdb))
 
@@ -439,6 +453,7 @@ func main() {
 				r.Get("/approvals", approvalH.List)
 				r.Get("/approvals/{aid}", approvalH.Get)
 				r.Post("/approvals/{aid}/withdraw", approvalH.Withdraw)
+				r.With(requireTicketManage).Post("/approvals/{aid}/decision", approvalH.Decide)
 				r.Get("/subtasks", ticketH.ListSubtasks)
 				r.Post("/attempts", ticketH.SubmitAttempt)
 				r.Get("/attempts", ticketH.ListAttempts)

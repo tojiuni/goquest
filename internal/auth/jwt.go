@@ -66,6 +66,11 @@ func Middleware(jwksURL string, skip bool) func(http.Handler) http.Handler {
 			}
 
 			ctx := context.WithValue(r.Context(), requesterKey, requesterFromClaims(claims))
+			ctx = context.WithValue(ctx, jwtIdentityKey, &JWTIdentity{
+				Audience:      append([]string(nil), claims.Audience...),
+				Email:         claims.Email,
+				EmailVerified: claims.EmailVerified,
+			})
 			if o := orgFromClaims(claims); o != nil {
 				ctx = context.WithValue(ctx, orgCtxKey, o)
 			}
