@@ -208,3 +208,38 @@ func TestPG_DelegatedDecisionEndToEnd(t *testing.T) {
 		t.Errorf("revoked rule: want no_matching_rule, got %v", err)
 	}
 }
+
+func TestPG_RuleListAndRevoke(t *testing.T) {
+	ctx := context.Background()
+	pool, _, _ := setup(t)
+	var wid uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO workspaces (name, slug, owner_id)
+		VALUES ('approval pg test', $1, 'test') RETURNING id`, "approval-pg-"+uuid.NewString()).Scan(&wid); err != nil {
+		t.Fatalf("create workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		pool.Exec(ctx, `DELETE FROM delegation_rules WHERE workspace_id=$1`, wid)
+		pool.Exec(ctx, `DELETE FROM workspaces WHERE id=$1`, wid)
+	})
+	rs := approval.NewPGRuleStore(pool)
+	r := &approval.DelegationRule{WorkspaceID: wid, Principal: "tokenhub-x", Kinds: []approval.Kind{approval.KindMerge}, UserRef: "u", CreatedBy: "owner"}
+	if err := rs.Create(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	if err := rs.Create(ctx, &approval.DelegationRule{WorkspaceID: wid, Principal: "lyckabc@gmail.com", Kinds: []approval.Kind{approval.KindMerge}, CreatedBy: "o"}); !errors.Is(err, approval.ErrInvalidRule) {
+		t.Errorf("email principal must be rejected before the DB: %v", err)
+	}
+	all, err := rs.ListByWorkspace(ctx, wid)
+	if err != nil || len(all) != 1 || all[0].ID != r.ID {
+		t.Fatalf("list: %v %+v", err, all)
+	}
+	if err := rs.Revoke(ctx, uuid.New(), r.ID); !errors.Is(err, approval.ErrRuleNotFound) {
+		t.Errorf("revoke in another workspace: %v", err)
+	}
+	if err := rs.Revoke(ctx, wid, r.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := rs.Revoke(ctx, wid, r.ID); !errors.Is(err, approval.ErrRuleNotFound) {
+		t.Errorf("second revoke: %v", err)
+	}
+}

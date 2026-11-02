@@ -149,8 +149,10 @@ func main() {
 		log.Printf("tojihub calendar sync enabled: %s", cfg.TojihubConnectURL)
 	}
 
+	approvalSvc := approval.NewService(approval.NewPGStore(pool)).WithRules(approval.NewPGRuleStore(pool))
+	delegationRuleH := handler.NewDelegationRuleHandler(approvalSvc)
 	approvalH := handler.NewApprovalHandler(
-		approval.NewService(approval.NewPGStore(pool)).WithRules(approval.NewPGRuleStore(pool)),
+		approvalSvc,
 		func(ctx context.Context, t *ticket.Ticket) (uuid.UUID, error) {
 			if t == nil || t.ProjectID == nil {
 				return uuid.Nil, nil
@@ -506,6 +508,12 @@ func main() {
 				r.With(requireWsViewer).Get("/xp/me", xpH.GetMyXP)
 				r.With(requireWsViewer).Get("/xp/leaderboard", xpH.Leaderboard)
 				r.With(requireWsViewer).Get("/xp/history", xpH.GetXPHistory)
+
+				// Delegation rules for approval decisions (goq-approvals-p4-rules).
+				// Owner + a logged-in person; the service re-checks the person.
+				r.With(requireWsAdmin).Get("/delegation-rules", delegationRuleH.List)
+				r.With(requireWsOwner).Post("/delegation-rules", delegationRuleH.Create)
+				r.With(requireWsOwner).Delete("/delegation-rules/{rid}", delegationRuleH.Revoke)
 
 				r.With(requireWsViewer).Get("/members", wsH.ListMembers)
 				r.With(requireWsOwner).Post("/members", wsH.AddMember)

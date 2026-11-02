@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -42,13 +43,9 @@ func (s *pgRuleStore) Create(ctx context.Context, r *DelegationRule) error {
 	return nil
 }
 
-func (s *pgRuleStore) ListByPrincipal(ctx context.Context, ws uuid.UUID, principal string) ([]*DelegationRule, error) {
-	rows, err := s.db.Query(ctx, `
-		SELECT id, workspace_id, principal, kinds, repos, conditions, user_ref, created_by, created_at, expires_at, revoked_at
-		FROM delegation_rules WHERE workspace_id=$1 AND principal=$2 ORDER BY created_at, id`, ws, principal)
-	if err != nil {
-		return nil, fmt.Errorf("list delegation rules: %w", err)
-	}
+const ruleCols = `id, workspace_id, principal, kinds, repos, conditions, user_ref, created_by, created_at, expires_at, revoked_at`
+
+func scanRules(rows pgx.Rows) ([]*DelegationRule, error) {
 	defer rows.Close()
 	var out []*DelegationRule
 	for rows.Next() {
@@ -68,6 +65,22 @@ func (s *pgRuleStore) ListByPrincipal(ctx context.Context, ws uuid.UUID, princip
 		out = append(out, &r)
 	}
 	return out, rows.Err()
+}
+
+func (s *pgRuleStore) ListByPrincipal(ctx context.Context, ws uuid.UUID, principal string) ([]*DelegationRule, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+ruleCols+` FROM delegation_rules WHERE workspace_id=$1 AND principal=$2 ORDER BY created_at, id`, ws, principal)
+	if err != nil {
+		return nil, fmt.Errorf("list delegation rules: %w", err)
+	}
+	return scanRules(rows)
+}
+
+func (s *pgRuleStore) ListByWorkspace(ctx context.Context, ws uuid.UUID) ([]*DelegationRule, error) {
+	rows, err := s.db.Query(ctx, `SELECT `+ruleCols+` FROM delegation_rules WHERE workspace_id=$1 ORDER BY created_at DESC, id`, ws)
+	if err != nil {
+		return nil, fmt.Errorf("list delegation rules: %w", err)
+	}
+	return scanRules(rows)
 }
 
 func (s *pgRuleStore) Revoke(ctx context.Context, ws, id uuid.UUID) error {
