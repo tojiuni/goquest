@@ -196,6 +196,10 @@ func main() {
 		}
 	}
 
+	// the inbox feed filters rows by what the caller may view, so it needs the
+	// same checker (permissive in shadow mode, enforcing otherwise) as ticket lists
+	approvalH.WithVisibility(sdbChecker)
+
 	wsSvc := workspace.NewService(wsStore, sdbWriter)
 	pjSvc := project.NewService(pjStore, sdbWriter)
 
@@ -524,6 +528,10 @@ func main() {
 				r.With(requireWsAdmin).Get("/delegation-rules", delegationRuleH.List)
 				r.With(requireWsOwner).Post("/delegation-rules", delegationRuleH.Create)
 				r.With(requireWsOwner).Delete("/delegation-rules/{rid}", delegationRuleH.Revoke)
+
+				// Approval inbox feed (goq-approvals-p9-inbox-api): viewer gate here,
+				// per-ticket visibility filtered in the handler.
+				r.With(requireWsViewer).Get("/approvals", approvalH.ListWorkspace)
 
 				r.With(requireWsViewer).Get("/members", wsH.ListMembers)
 				r.With(requireWsOwner).Post("/members", wsH.AddMember)

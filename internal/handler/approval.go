@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/tojiuni/goquest/internal/approval"
 	"github.com/tojiuni/goquest/internal/auth"
+	"github.com/tojiuni/goquest/internal/spicedb"
 	"github.com/tojiuni/goquest/internal/ticket"
 )
 
@@ -21,6 +22,7 @@ type ApprovalSvc interface {
 	GetForTicket(ctx context.Context, ticketID, id uuid.UUID) (*approval.Approval, error)
 	Withdraw(ctx context.Context, ticketID, id uuid.UUID, principal, note string) (*approval.Approval, error)
 	Decide(ctx context.Context, in approval.DecideInput, actor approval.Actor) (*approval.Approval, error)
+	ListForWorkspace(ctx context.Context, ws uuid.UUID, f approval.ListFilter) ([]*approval.Listed, error)
 }
 
 // WorkspaceOfTicket resolves the workspace a ticket belongs to (via its
@@ -39,6 +41,14 @@ type ApprovalHandler struct {
 	svc         ApprovalSvc
 	workspaceOf WorkspaceOfTicket
 	events      ApprovalEvents
+	checker     spicedb.PermissionChecker
+}
+
+// WithVisibility sets the checker the workspace inbox uses to hide approvals
+// on tickets the caller cannot view. Without it the inbox refuses to list.
+func (h *ApprovalHandler) WithVisibility(c spicedb.PermissionChecker) *ApprovalHandler {
+	h.checker = c
+	return h
 }
 
 // WithEvents enables notifications; optional.
@@ -263,4 +273,75 @@ func (h *ApprovalHandler) writeErr(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, http.StatusInternalServerError, err.Error())
 	}
+}
+
+// ListWorkspace serves GET /workspaces/{wid}/approvals, the inbox feed.
+// Mount behind the workspace-viewer gate. Every row is additionally filtered
+// by the caller's visibility of its ticket (same project / restricted rule as
+// ticket lists), so an approval on a ticket the caller cannot open never
+// appears. Paging is over the stored rows before that filter, so a page can be
+// shorter than limit; use next_offset / has_more to continue.
+func (h *ApprovalHandler) ListWorkspace(w http.ResponseWriter, r *http.Request) {
+	if h.denyCustomer(w, r) {
+		return
+	}
+	ws, err := parseUUID(chi.URLParam(r, "wid"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid workspace id")
+		return
+	}
+	if h.checker == nil {
+		writeError(w, http.StatusInternalServerError, "visibility checker not configured")
+		return
+	}
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	f := approval.ListFilter{
+		Status: approval.Status(q.Get("status")), Kind: approval.Kind(q.Get("kind")),
+		Repo: q.Get("repo"), Limit: limit, Offset: offset,
+	}
+	uid := auth.RequesterID(r)
+	if q.Get("mine") == "true" {
+		f.RequestedBy = uid
+	}
+	rows, err := h.svc.ListForWorkspace(r.Context(), ws, f)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	projIDs, unrP, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_project", uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+		return
+	}
+	restrIDs, unrR, err := h.checker.VisibleResourceIDs(r.Context(), spicedb.TypeTicket, "can_view_restricted", uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "visibility lookup: "+err.Error())
+		return
+	}
+	visible := make([]*approval.Listed, 0, len(rows))
+	if unrP && unrR {
+		visible = append(visible, rows...)
+	} else {
+		projSet := uuidSet(parseTicketUUIDs(projIDs))
+		restrSet := uuidSet(parseTicketUUIDs(restrIDs))
+		for _, row := range rows {
+			if visibleSubtask(row.Ticket.ID, ticket.Visibility(row.Ticket.Visibility), projSet, restrSet) {
+				visible = append(visible, row)
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"approvals":   visible,
+		"next_offset": offset + len(rows),
+		"has_more":    len(rows) == limit,
+	})
 }
