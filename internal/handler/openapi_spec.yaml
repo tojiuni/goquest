@@ -94,6 +94,62 @@ components:
         other_ticket_status: { type: string }
         created_at: { type: string, format: date-time }
         created_by: { type: string }
+    ApprovalSubject:
+      type: object
+      description: >
+        What is being approved. merge: repo + pr + head_sha. design: doc.
+        infra/ops: repo+pr, doc or target. deviation: doc.
+      properties:
+        repo: { type: string, description: 'owner/name' }
+        pr: { type: integer }
+        head_sha: { type: string }
+        doc: { type: string, description: geneso path }
+        doc_sha: { type: string }
+        target: { type: string }
+    ApprovalEvidence:
+      type: object
+      required: [type, ref]
+      properties:
+        type: { type: string, description: 'pr, ci_run, test, doc, comment, ...' }
+        ref: { type: string }
+        note: { type: string }
+    Approval:
+      type: object
+      description: >
+        One append-only approval record. requested_by / decided_by / basis are
+        derived by the server from the authenticated principal; request bodies
+        cannot set them.
+      properties:
+        id: { type: string, format: uuid }
+        ticket_id: { type: string, format: uuid }
+        kind: { type: string, enum: [design, merge, infra, ops, deviation, ticket] }
+        subject: { $ref: '#/components/schemas/ApprovalSubject' }
+        status: { type: string, enum: [pending, approved, rejected, revision_requested, withdrawn, superseded] }
+        requested_by: { type: string }
+        requested_by_label: { type: string }
+        requested_at: { type: string, format: date-time }
+        request_note: { type: string }
+        evidence: { type: array, items: { $ref: '#/components/schemas/ApprovalEvidence' } }
+        within_direction: { type: boolean, description: 'deviation only: true if it stays inside the approved design direction' }
+        decided_by: { type: string }
+        decided_at: { type: string, format: date-time }
+        decision_note: { type: string }
+        basis: { type: string, enum: [user_direct, desk_delegated] }
+        delegation_rule_id: { type: string, format: uuid }
+        user_ref: { type: string }
+        supersedes_id: { type: string, format: uuid }
+        legacy: { type: boolean }
+        events:
+          type: array
+          description: status transitions (single-approval GET only)
+          items:
+            type: object
+            properties:
+              from: { type: string }
+              to: { type: string }
+              actor: { type: string }
+              note: { type: string }
+              created_at: { type: string, format: date-time }
 security:
   - ApiKeyAuth: []
 paths:
@@ -502,3 +558,128 @@ paths:
                   limit: { type: integer }
                   offset: { type: integer }
         '403': { description: caller did not authenticate via X-API-Key }
+  /tickets/{id}/approvals:
+    post:
+      summary: Request an approval on a ticket
+      description: >
+        Creates a pending approval record. The requester is the authenticated
+        principal; kind=ticket is reserved. For kind=merge, any older head_sha
+        approval (pending or approved) for the same repo+pr is superseded in
+        the same call. An identical pending request returns 409.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, subject]
+              properties:
+                kind: { type: string, enum: [design, merge, infra, ops, deviation] }
+                subject: { $ref: '#/components/schemas/ApprovalSubject' }
+                request_note: { type: string }
+                evidence: { type: array, items: { $ref: '#/components/schemas/ApprovalEvidence' } }
+                within_direction: { type: boolean, description: 'required for kind=deviation' }
+      responses:
+        '201':
+          description: created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Approval' }
+        '403': { description: not allowed (no identity, or customer token) }
+        '409': { description: an identical request is already pending }
+        '422': { description: invalid kind/subject/evidence }
+    get:
+      summary: List a ticket's approvals, newest first
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: status, in: query, required: false, schema: { type: string, enum: [pending, approved, rejected, revision_requested, withdrawn, superseded] } }
+        - { name: limit, in: query, required: false, schema: { type: integer } }
+        - { name: offset, in: query, required: false, schema: { type: integer } }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  approvals:
+                    type: array
+                    items: { $ref: '#/components/schemas/Approval' }
+  /tickets/{id}/approvals/{aid}:
+    get:
+      summary: Get one approval with its status transitions
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: aid, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Approval' }
+        '404': { description: no such approval on this ticket }
+  /tickets/{id}/approvals/{aid}/withdraw:
+    post:
+      summary: Withdraw your own pending approval request
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: aid, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note: { type: string }
+      responses:
+        '200':
+          description: withdrawn
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Approval' }
+        '403': { description: only the requester can withdraw }
+        '404': { description: no such approval on this ticket }
+        '409': { description: not pending any more }
+  /tickets/{id}/approvals/{aid}/decision:
+    post:
+      summary: Decide a pending approval
+      description: >
+        Who decided and on what basis are derived by the server, never taken
+        from the body. A person logged in to the goquest UI decides as
+        basis=user_direct. A session account decides as basis=desk_delegated
+        only when an active delegation rule covers the kind/repo, the kind is
+        delegable (merge, or a deviation with within_direction=true), and the
+        session is not the requester; user_ref (where the user granted it) is
+        then required. design, infra, ops and a direction-changing deviation
+        are user_direct only. API keys and other callers get 403.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: aid, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision: { type: string, enum: [approved, rejected, revision_requested] }
+                note: { type: string, description: required for rejected and revision_requested }
+                user_ref: { type: string, description: required when deciding as a delegated session }
+      responses:
+        '200':
+          description: decided
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Approval' }
+        '403':
+          description: >
+            not allowed; body has reason: principal_cannot_decide,
+            kind_not_delegable, no_matching_rule or self_approval
+        '404': { description: no such approval on this ticket }
+        '409': { description: not pending any more }
+        '422': { description: invalid decision, missing note or user_ref }
