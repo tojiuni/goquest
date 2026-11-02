@@ -11,10 +11,54 @@ import (
 
 // MemStore is an in-memory Store used by service and handler tests.
 type MemStore struct {
-	mu     sync.Mutex
-	rows   map[uuid.UUID]*Approval
-	events map[uuid.UUID][]Event
-	order  []uuid.UUID
+	tickets map[uuid.UUID]memTicket
+	mu      sync.Mutex
+	rows    map[uuid.UUID]*Approval
+	events  map[uuid.UUID][]Event
+	order   []uuid.UUID
+}
+
+type memTicket struct {
+	ws  uuid.UUID
+	sum TicketSummary
+}
+
+// AddTicket registers a ticket (and its workspace) for ListByWorkspace in tests.
+func (m *MemStore) AddTicket(ws uuid.UUID, s TicketSummary) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.tickets == nil {
+		m.tickets = map[uuid.UUID]memTicket{}
+	}
+	m.tickets[s.ID] = memTicket{ws: ws, sum: s}
+}
+
+func (m *MemStore) ListByWorkspace(ctx context.Context, ws uuid.UUID, f ListFilter) ([]*Listed, error) {
+	f.TicketID = nil // the workspace scope replaces any ticket filter
+	all, err := m.List(ctx, ListFilter{Status: f.Status, Kind: f.Kind, Repo: f.Repo, RequestedBy: f.RequestedBy})
+	if err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*Listed
+	for _, a := range all {
+		if tk, ok := m.tickets[a.TicketID]; ok && tk.ws == ws {
+			out = append(out, &Listed{Approval: a, Ticket: tk.sum})
+		}
+	}
+	return pageListed(out, f.Offset, f.Limit), nil
+}
+
+func pageListed(in []*Listed, offset, limit int) []*Listed {
+	if offset > len(in) {
+		return nil
+	}
+	in = in[offset:]
+	if limit > 0 && limit < len(in) {
+		in = in[:limit]
+	}
+	return in
 }
 
 func NewMemStore() *MemStore {

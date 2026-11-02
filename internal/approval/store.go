@@ -17,6 +17,20 @@ type ListFilter struct {
 	Offset      int
 }
 
+// TicketSummary is the slice of a ticket an inbox row needs.
+type TicketSummary struct {
+	ID         uuid.UUID `json:"id"`
+	TitleName  string    `json:"title_name,omitempty"`
+	Title      string    `json:"title"`
+	Visibility string    `json:"visibility"` // "project" | "restricted"
+}
+
+// Listed is an approval with its ticket, as returned by the workspace inbox.
+type Listed struct {
+	*Approval
+	Ticket TicketSummary `json:"ticket"`
+}
+
 // Store persists approvals. Records are never deleted; Transition is the only
 // mutation after Create and is a compare-and-set on the current status.
 type Store interface {
@@ -28,6 +42,10 @@ type Store interface {
 	// Get returns the approval with its transition events.
 	Get(ctx context.Context, id uuid.UUID) (*Approval, error)
 	List(ctx context.Context, f ListFilter) ([]*Approval, error)
+	// ListByWorkspace returns approvals on tickets whose project belongs to the
+	// workspace, newest first, with a ticket summary. It does NOT apply
+	// per-ticket visibility: the caller must filter by what the user may view.
+	ListByWorkspace(ctx context.Context, workspaceID uuid.UUID, f ListFilter) ([]*Listed, error)
 	// Transition moves id from -> to and appends an Event. d is non-nil only
 	// for decisions (approved/rejected/revision_requested). It returns
 	// ErrInvalidTransition if the graph forbids it and ErrStale if the stored

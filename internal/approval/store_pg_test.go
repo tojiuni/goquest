@@ -305,3 +305,45 @@ func TestPG_SupersedeStaleMergeAcrossTickets(t *testing.T) {
 		t.Errorf("idempotent: %v %v", ids, err)
 	}
 }
+
+func TestPG_ListByWorkspace(t *testing.T) {
+	ctx := context.Background()
+	pool, st, _ := setup(t)
+	mkWS := func(name string) (wid, pid, tid uuid.UUID) {
+		if err := pool.QueryRow(ctx, `INSERT INTO workspaces (name, slug, owner_id) VALUES ($1,$2,'test') RETURNING id`,
+			name, "approval-pg-"+uuid.NewString()).Scan(&wid); err != nil {
+			t.Fatalf("workspace: %v", err)
+		}
+		if err := pool.QueryRow(ctx, `INSERT INTO projects (workspace_id, name, created_by) VALUES ($1,'p','test') RETURNING id`, wid).Scan(&pid); err != nil {
+			t.Skipf("project insert (schema drift?): %v", err)
+		}
+		if err := pool.QueryRow(ctx, `INSERT INTO tickets (title, type, status, priority, requester_id, project_id)
+			VALUES ('inbox pg test','task','pending','normal','test',$1) RETURNING id`, pid).Scan(&tid); err != nil {
+			t.Skipf("ticket insert: %v", err)
+		}
+		t.Cleanup(func() { pool.Exec(ctx, `DELETE FROM workspaces WHERE id=$1`, wid) })
+		return
+	}
+	wsA, _, tA := mkWS("approval inbox A")
+	_, _, tB := mkWS("approval inbox B")
+	a, err := st.Create(ctx, approval.NewReq{TicketID: tA, Kind: approval.KindDesign, RequestedBy: "r", Subject: approval.Subject{Doc: "a.md"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Create(ctx, approval.NewReq{TicketID: tB, Kind: approval.KindDesign, RequestedBy: "r", Subject: approval.Subject{Doc: "b.md"}}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ListByWorkspace(ctx, wsA, approval.ListFilter{})
+	if err != nil || len(got) != 1 || got[0].ID != a.ID {
+		t.Fatalf("workspace scope: %v %+v", err, got)
+	}
+	if got[0].Ticket.ID != tA || got[0].Ticket.Title != "inbox pg test" || got[0].Ticket.Visibility != "project" {
+		t.Errorf("ticket summary: %+v", got[0].Ticket)
+	}
+	if got, _ := st.ListByWorkspace(ctx, wsA, approval.ListFilter{Kind: approval.KindMerge}); len(got) != 0 {
+		t.Errorf("kind filter: %+v", got)
+	}
+	if got, _ := st.ListByWorkspace(ctx, wsA, approval.ListFilter{Status: approval.StatusPending, RequestedBy: "r", Limit: 1}); len(got) != 1 {
+		t.Errorf("status/requested_by/limit: %+v", got)
+	}
+}
