@@ -58,7 +58,8 @@ type Config struct {
 
 	// Zulip bot used to message people about approvals (all three required;
 	// any missing disables the notifier) and the goquest-ui base URL used for
-	// the inbox link in those messages.
+	// the inbox link in those messages (the full inbox page URL; the approval
+	// id is appended as ?approval=<id>).
 	ZulipURL, ZulipBotEmail, ZulipBotAPIKey string
 	ApprovalInboxURL                         string
 	ApprovalNotifyUserOnDelegable            bool
@@ -167,7 +168,7 @@ func Load() *Config {
 		ZulipURL:                      os.Getenv("ZULIP_URL"),
 		ZulipBotEmail:                 os.Getenv("ZULIP_BOT_EMAIL"),
 		ZulipBotAPIKey:                os.Getenv("ZULIP_BOT_API_KEY"),
-		ApprovalInboxURL:              os.Getenv("APPROVAL_INBOX_URL"),
+		ApprovalInboxURL:              envOrDefault("APPROVAL_INBOX_URL", "https://goquest.toji.homes/approvals"),
 		ApprovalNotifyUserOnDelegable: parseBool(os.Getenv("APPROVAL_NOTIFY_USER_ON_DELEGABLE"), false),
 
 		LymphhubOIDCURL:             os.Getenv("LYMPHHUB_OIDC_URL"),

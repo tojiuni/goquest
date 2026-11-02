@@ -161,7 +161,7 @@ func (d *Dispatcher) render(title string, a *Approval, t TicketRef, line string)
 		fmt.Fprintf(&b, "- 메모: `%s`\n", safeInline(*a.DecisionNote, 140))
 	}
 	if d.inboxURL != "" {
-		fmt.Fprintf(&b, "\n%s/approvals?approval=%s\n", d.inboxURL, a.ID)
+		fmt.Fprintf(&b, "\n%s?approval=%s\n", d.inboxURL, a.ID)
 	}
 	b.WriteString("\n_이 메시지로는 승인할 수 없습니다. goquest 화면에서 결정하세요._")
 	return b.String()

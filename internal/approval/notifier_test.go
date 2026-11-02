@@ -38,7 +38,7 @@ func newDispatcher(m *fakeMessenger, owner string) (*Dispatcher, uuid.UUID) {
 			return "", errors.New("unknown workspace")
 		}
 		return owner, nil
-	}, "https://goquest.example/")
+	}, "https://goquest.example/approvals/")
 	d.Sync, d.Backoff = true, 0
 	return d, ws
 }
