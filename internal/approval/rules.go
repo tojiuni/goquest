@@ -68,6 +68,9 @@ type RuleStore interface {
 	// ListByPrincipal returns every rule for the principal in the workspace,
 	// including expired and revoked ones; callers filter with Active.
 	ListByPrincipal(ctx context.Context, workspaceID uuid.UUID, principal string) ([]*DelegationRule, error)
+	// ListByWorkspace returns every rule in the workspace, newest first,
+	// including expired and revoked ones.
+	ListByWorkspace(ctx context.Context, workspaceID uuid.UUID) ([]*DelegationRule, error)
 	Revoke(ctx context.Context, workspaceID, id uuid.UUID) error
 }
 
@@ -188,11 +191,24 @@ func (m *MemRuleStore) ListByPrincipal(_ context.Context, ws uuid.UUID, principa
 	return out, nil
 }
 
+func (m *MemRuleStore) ListByWorkspace(_ context.Context, ws uuid.UUID) ([]*DelegationRule, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []*DelegationRule
+	for i := len(m.rules) - 1; i >= 0; i-- {
+		if r := m.rules[i]; r.WorkspaceID == ws {
+			c := *r
+			out = append(out, &c)
+		}
+	}
+	return out, nil
+}
+
 func (m *MemRuleStore) Revoke(_ context.Context, ws, id uuid.UUID) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, r := range m.rules {
-		if r.ID == id && r.WorkspaceID == ws {
+		if r.ID == id && r.WorkspaceID == ws && r.RevokedAt == nil {
 			now := time.Now().UTC()
 			r.RevokedAt = &now
 			return nil

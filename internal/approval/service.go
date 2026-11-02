@@ -151,6 +151,70 @@ type DecideInput struct {
 	UserRef     string // required for desk_delegated: where the user's go-ahead is recorded
 }
 
+// CreateRuleInput is a request to delegate. Only a person may create one.
+type CreateRuleInput struct {
+	Principal  string
+	Kinds      []Kind
+	Repos      []string
+	Conditions map[string]any
+	UserRef    string
+	ExpiresAt  *time.Time
+}
+
+// knownConditions are the only condition keys the matcher understands; the
+// API refuses others so a stored rule never means more than it says.
+var knownConditions = map[string]bool{"require_evidence_types": true}
+
+// CreateRule stores a delegation rule for the workspace. creator must be a
+// person (ActorHuman); every other caller is refused.
+func (s *Service) CreateRule(ctx context.Context, ws uuid.UUID, in CreateRuleInput, creator Actor) (*DelegationRule, error) {
+	if s.rules == nil {
+		return nil, errors.New("delegation rules are not configured")
+	}
+	if creator.Kind != ActorHuman || strings.TrimSpace(creator.ID) == "" {
+		return nil, &DeniedError{Reason: ReasonPrincipalCannotDecide}
+	}
+	if strings.TrimSpace(in.UserRef) == "" || len(in.UserRef) > maxEvidenceLen {
+		return nil, fmt.Errorf("%w: user_ref (where the user granted this) is required", ErrInvalidRule)
+	}
+	if in.ExpiresAt != nil && !in.ExpiresAt.After(time.Now()) {
+		return nil, fmt.Errorf("%w: expires_at must be in the future", ErrInvalidRule)
+	}
+	for k := range in.Conditions {
+		if !knownConditions[k] {
+			return nil, fmt.Errorf("%w: unknown condition %q", ErrInvalidRule, k)
+		}
+	}
+	r := &DelegationRule{WorkspaceID: ws, Principal: strings.TrimSpace(in.Principal), Kinds: in.Kinds,
+		Repos: in.Repos, Conditions: in.Conditions, UserRef: in.UserRef, CreatedBy: creator.ID, ExpiresAt: in.ExpiresAt}
+	if err := r.Validate(); err != nil {
+		return nil, err
+	}
+	if err := s.rules.Create(ctx, r); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+// ListRules returns every rule in the workspace.
+func (s *Service) ListRules(ctx context.Context, ws uuid.UUID) ([]*DelegationRule, error) {
+	if s.rules == nil {
+		return nil, nil
+	}
+	return s.rules.ListByWorkspace(ctx, ws)
+}
+
+// RevokeRule ends a rule immediately. Only a person may revoke.
+func (s *Service) RevokeRule(ctx context.Context, ws, id uuid.UUID, by Actor) error {
+	if s.rules == nil {
+		return ErrRuleNotFound
+	}
+	if by.Kind != ActorHuman || strings.TrimSpace(by.ID) == "" {
+		return &DeniedError{Reason: ReasonPrincipalCannotDecide}
+	}
+	return s.rules.Revoke(ctx, ws, id)
+}
+
 // WithRules attaches the delegation rule store. Without one, no session can
 // ever decide (only humans).
 func (s *Service) WithRules(rs RuleStore) *Service { s.rules = rs; return s }
