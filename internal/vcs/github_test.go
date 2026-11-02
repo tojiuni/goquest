@@ -73,3 +73,14 @@ func TestGitHubParseCreateDeleteBranch(t *testing.T) {
 		t.Fatalf("bad delete: %+v", evs)
 	}
 }
+
+func TestGitHubParsePullRequestSynchronizeCarriesHeadSHA(t *testing.T) {
+	body := `{"action":"synchronize","pull_request":{"number":7,"title":"t","state":"open","merged":false,"html_url":"https://gh/pr/7","head":{"ref":"feature/x","sha":"abc123"},"base":{"ref":"main"}},"repository":{"full_name":"tojiuni/goquest"},"sender":{"login":"alice"}}`
+	evs, err := NewGitHub().Parse("pull_request", []byte(body))
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("%v %+v", err, evs)
+	}
+	if evs[0].Kind != PRUpdated || evs[0].PRHeadSHA != "abc123" || evs[0].PRNumber != 7 {
+		t.Fatalf("bad event: %+v", evs[0])
+	}
+}

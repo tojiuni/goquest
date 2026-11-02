@@ -48,6 +48,7 @@ type VcsEvent struct {
 	PRState   string
 	PRMerged  bool
 	PRBaseRef string // PR base/target branch (head/source ref is carried in Branch)
+	PRHeadSHA string // PR head commit at the time of the event
 	URL       string
 	Actor     string
 }

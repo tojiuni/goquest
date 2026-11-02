@@ -36,5 +36,8 @@ type Store interface {
 	// SupersedeOpenMerge moves every pending/approved merge approval on the
 	// same ticket, repo and pr whose head_sha differs from newHeadSHA to
 	// superseded, in the caller's transaction scope, and returns their ids.
+	// SupersedeStaleMerge does the same across every ticket for a PR, used when
+	// a webhook reports a new head commit. It returns the superseded ids.
+	SupersedeStaleMerge(ctx context.Context, repo string, pr int, headSHA, actor string) ([]uuid.UUID, error)
 	SupersedeOpenMerge(ctx context.Context, ticketID uuid.UUID, repo string, pr int, newHeadSHA, actor string) ([]uuid.UUID, error)
 }

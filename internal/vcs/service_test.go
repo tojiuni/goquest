@@ -613,3 +613,54 @@ func TestProcessBranchCreated_HyphenPrefixedBranch_ResolvesViaProjectScopedPhase
 		t.Fatalf("expected assigned then in_progress via the project-scoped phase, got %v", tickets.trans)
 	}
 }
+
+type fakeHeads struct{ calls []string }
+
+func (f *fakeHeads) ObservePRHead(_ context.Context, repo string, pr int, sha string) error {
+	f.calls = append(f.calls, repo+"#"+itoa(pr)+"@"+sha)
+	return nil
+}
+
+func itoa(n int) string { return prNumberString(n) }
+
+func TestProcessReportsPRHeadToObserver(t *testing.T) {
+	st := newFakeStore() // note: no repo registered — approvals do not depend on it
+	h := &fakeHeads{}
+	svc := NewService(st, &fakeTickets{byName: map[string]*ticket.Ticket{}}, &fakeComments{}).WithPRHeadObserver(h)
+	ctx := context.Background()
+	ev := func(k EventKind, sha string) VcsEvent {
+		return VcsEvent{Kind: k, Repo: "tojiuni/goquest", PRNumber: 7, PRHeadSHA: sha}
+	}
+	for _, e := range []VcsEvent{
+		ev(PRUpdated, "aaa"),
+		ev(PROpened, "bbb"),
+		ev(PRMerged, "ccc"), // history: never retired by a merge/close
+		ev(PRClosed, "ddd"),
+		ev(PRUpdated, ""), // no sha, nothing to compare
+		{Kind: PRUpdated, Repo: "tojiuni/goquest", PRHeadSHA: "eee"}, // not a PR
+		{Kind: CommitPushed, Repo: "tojiuni/goquest", PRNumber: 7, PRHeadSHA: "fff"},
+	} {
+		if err := svc.Process(ctx, "github", e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want := []string{"tojiuni/goquest#7@aaa", "tojiuni/goquest#7@bbb"}
+	if !reflect.DeepEqual(h.calls, want) {
+		t.Errorf("observer calls = %v, want %v", h.calls, want)
+	}
+}
+
+type failingHeads struct{}
+
+func (failingHeads) ObservePRHead(context.Context, string, int, string) error {
+	return context.DeadlineExceeded
+}
+
+func TestProcessPRHeadFailureDoesNotBlockLinking(t *testing.T) {
+	st := newFakeStore()
+	st.repos["github|tojiuni/goquest"] = repoFixture(false)
+	svc := NewService(st, &fakeTickets{byName: map[string]*ticket.Ticket{}}, &fakeComments{}).WithPRHeadObserver(failingHeads{})
+	if err := svc.Process(context.Background(), "github", VcsEvent{Kind: PRUpdated, Repo: "tojiuni/goquest", PRNumber: 1, PRHeadSHA: "x"}); err != nil {
+		t.Fatalf("observer failure must not fail the webhook: %v", err)
+	}
+}
