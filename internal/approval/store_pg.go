@@ -22,34 +22,51 @@ const cols = `id, ticket_id, kind, subject, status, requested_by, requested_by_l
 	source_comment_id, created_at`
 
 func scan(row pgx.Row) (*Approval, error) {
+	a, _, err := scanWith(row, false)
+	return a, err
+}
+
+func scanListed(row pgx.Row) (*Approval, TicketSummary, error) { return scanWith(row, true) }
+
+func scanWith(row pgx.Row, withTicket bool) (*Approval, TicketSummary, error) {
 	var (
 		a            Approval
+		sum          TicketSummary
 		subj, evid   []byte
 		kind, status string
 		basis        *string
+		titleName    *string
 	)
-	err := row.Scan(&a.ID, &a.TicketID, &kind, &subj, &status, &a.RequestedBy, &a.RequestedByLabel,
+	dest := []any{&a.ID, &a.TicketID, &kind, &subj, &status, &a.RequestedBy, &a.RequestedByLabel,
 		&a.RequestedAt, &a.RequestNote, &evid, &a.WithinDirection, &a.DecidedBy, &a.DecidedAt,
 		&a.DecisionNote, &basis, &a.DelegationRuleID, &a.UserRef, &a.SupersedesID, &a.Legacy,
-		&a.SourceCommentID, &a.CreatedAt)
+		&a.SourceCommentID, &a.CreatedAt}
+	if withTicket {
+		dest = append(dest, &titleName, &sum.Title, &sum.Visibility)
+	}
+	err := row.Scan(dest...)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, ErrNotFound
+		return nil, sum, ErrNotFound
 	}
 	if err != nil {
-		return nil, err
+		return nil, sum, err
 	}
 	a.Kind, a.Status = Kind(kind), Status(status)
 	if basis != nil {
 		b := Basis(*basis)
 		a.Basis = &b
 	}
+	if titleName != nil {
+		sum.TitleName = *titleName
+	}
+	sum.ID = a.TicketID
 	if err := json.Unmarshal(subj, &a.Subject); err != nil {
-		return nil, fmt.Errorf("decode subject: %w", err)
+		return nil, sum, fmt.Errorf("decode subject: %w", err)
 	}
 	if err := json.Unmarshal(evid, &a.Evidence); err != nil {
-		return nil, fmt.Errorf("decode evidence: %w", err)
+		return nil, sum, fmt.Errorf("decode evidence: %w", err)
 	}
-	return &a, nil
+	return &a, sum, nil
 }
 
 func (s *pgStore) Create(ctx context.Context, req NewReq) (*Approval, error) {
@@ -350,4 +367,58 @@ func (s *pgStore) SupersedeStaleMerge(ctx context.Context, repo string, pr int, 
 		return nil, err
 	}
 	return ids, nil
+}
+
+func (s *pgStore) ListByWorkspace(ctx context.Context, ws uuid.UUID, f ListFilter) ([]*Listed, error) {
+	args := []any{ws}
+	where := []string{"p.workspace_id=$1"}
+	add := func(cond string, v any) {
+		args = append(args, v)
+		where = append(where, fmt.Sprintf(cond, len(args)))
+	}
+	if f.Status != "" {
+		add("a.status=$%d", string(f.Status))
+	}
+	if f.Kind != "" {
+		add("a.kind=$%d", string(f.Kind))
+	}
+	if f.Repo != "" {
+		add("a.subject->>'repo'=$%d", f.Repo)
+	}
+	if f.RequestedBy != "" {
+		add("a.requested_by=$%d", f.RequestedBy)
+	}
+	limit := f.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	args = append(args, limit, f.Offset)
+	q := `SELECT ` + aliasedCols("a") + `, t.title_name, t.title, t.visibility::text
+		FROM approvals a
+		JOIN tickets t ON t.id = a.ticket_id
+		JOIN projects p ON p.id = t.project_id
+		WHERE ` + strings.Join(where, " AND ") + fmt.Sprintf(` ORDER BY a.created_at DESC, a.id LIMIT $%d OFFSET $%d`, len(args)-1, len(args))
+	rows, err := s.db.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list workspace approvals: %w", err)
+	}
+	defer rows.Close()
+	var out []*Listed
+	for rows.Next() {
+		a, sum, err := scanListed(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, &Listed{Approval: a, Ticket: sum})
+	}
+	return out, rows.Err()
+}
+
+// aliasedCols is cols with every column qualified by the table alias.
+func aliasedCols(alias string) string {
+	parts := strings.Split(cols, ",")
+	for i, p := range parts {
+		parts[i] = alias + "." + strings.TrimSpace(p)
+	}
+	return strings.Join(parts, ", ")
 }

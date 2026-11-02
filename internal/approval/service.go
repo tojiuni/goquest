@@ -362,3 +362,10 @@ func (s *Service) ObservePRHead(ctx context.Context, repo string, pr int, headSH
 	_, err := s.store.SupersedeStaleMerge(ctx, repo, pr, headSHA, "vcs-webhook")
 	return err
 }
+
+// ListForWorkspace returns approvals on tickets in the workspace, newest first.
+// Per-ticket visibility is NOT applied here; the HTTP layer filters by what
+// the caller may view.
+func (s *Service) ListForWorkspace(ctx context.Context, ws uuid.UUID, f ListFilter) ([]*Listed, error) {
+	return s.store.ListByWorkspace(ctx, ws, f)
+}
