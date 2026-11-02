@@ -304,3 +304,50 @@ func supersedeOpenMergeTx(ctx context.Context, tx pgx.Tx, ticketID uuid.UUID, re
 	}
 	return ids, nil
 }
+
+func (s *pgStore) SupersedeStaleMerge(ctx context.Context, repo string, pr int, headSHA, actor string) ([]uuid.UUID, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck
+	// FOR UPDATE re-checks the WHERE after any wait, so a row a concurrent
+	// Create already superseded drops out instead of being transitioned twice.
+	rows, err := tx.Query(ctx, `
+		SELECT id, status FROM approvals
+		WHERE kind='merge' AND subject->>'repo'=$1 AND (subject->>'pr')::int=$2
+		  AND subject->>'head_sha' <> $3 AND status IN ('pending','approved')
+		ORDER BY created_at, id
+		FOR UPDATE`, repo, pr, headSHA)
+	if err != nil {
+		return nil, fmt.Errorf("find stale merge approvals: %w", err)
+	}
+	type row struct {
+		id     uuid.UUID
+		status string
+	}
+	var found []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.status); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		found = append(found, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	ids := make([]uuid.UUID, 0, len(found))
+	for _, r := range found {
+		if err := transitionTx(ctx, tx, r.id, Status(r.status), StatusSuperseded, actor, "head_sha changed", nil); err != nil {
+			return nil, err
+		}
+		ids = append(ids, r.id)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}

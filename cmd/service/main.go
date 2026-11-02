@@ -213,7 +213,7 @@ func main() {
 	// vcsSvc must be constructed before ticketH, which takes it as the
 	// ticket-GET links provider (embeds vcs_links without ticket->vcs import).
 	vcsStore := vcs.NewPGStore(pool)
-	vcsSvc := vcs.NewService(vcsStore, svc, commentSvc)
+	vcsSvc := vcs.NewService(vcsStore, svc, commentSvc).WithPRHeadObserver(approvalSvc)
 	vcsH := handler.NewVCSHandler(vcsSvc, vcs.NewGitHub(), projectResolver, cfg.VCSGitHubWebhookSecret)
 
 	// auditLogger must be constructed before ticketH so ref add/remove handlers

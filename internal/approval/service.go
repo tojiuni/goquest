@@ -352,3 +352,13 @@ func truncate(s string, n int) string {
 	}
 	return s
 }
+
+// ObservePRHead retires merge approvals (pending or approved) given for an
+// older head of repo#pr, on every ticket. It satisfies vcs.PRHeadObserver.
+func (s *Service) ObservePRHead(ctx context.Context, repo string, pr int, headSHA string) error {
+	if repo == "" || pr <= 0 || headSHA == "" {
+		return nil
+	}
+	_, err := s.store.SupersedeStaleMerge(ctx, repo, pr, headSHA, "vcs-webhook")
+	return err
+}

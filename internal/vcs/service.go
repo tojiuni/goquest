@@ -28,10 +28,24 @@ type CommentService interface {
 	Create(ctx context.Context, ticketID uuid.UUID, authorID string, kind comment.AuthorKind, req comment.CreateReq) (*comment.Comment, error)
 }
 
+// PRHeadObserver is told the head commit of an open PR whenever a webhook
+// reports one. The approval records use it to retire approvals given for an
+// older head (a new push invalidates a merge approval).
+type PRHeadObserver interface {
+	ObservePRHead(ctx context.Context, repo string, pr int, headSHA string) error
+}
+
 type Service struct {
 	store    Store
 	tickets  TicketService
 	comments CommentService
+	heads    PRHeadObserver
+}
+
+// WithPRHeadObserver enables PR head tracking; optional.
+func (s *Service) WithPRHeadObserver(o PRHeadObserver) *Service {
+	s.heads = o
+	return s
 }
 
 func NewService(store Store, tickets TicketService, comments CommentService) *Service {
@@ -49,6 +63,15 @@ func (s *Service) LinksForTicket(ctx context.Context, id uuid.UUID) ([]VcsLink, 
 // Process links one normalized event to the ticket(s) it references and applies
 // auto-transitions. Unregistered repos and unresolved refs are no-ops.
 func (s *Service) Process(ctx context.Context, provider string, ev VcsEvent) error {
+	// Approvals are independent of ticket linking and of whether the repo is
+	// registered, so a pushed head is reported first. A failure is logged and
+	// does not stop linking: the merge check compares the approved head_sha
+	// itself, so a missed retirement cannot approve a different commit.
+	if s.heads != nil && ev.PRNumber > 0 && ev.PRHeadSHA != "" && (ev.Kind == PRUpdated || ev.Kind == PROpened) {
+		if err := s.heads.ObservePRHead(ctx, ev.Repo, ev.PRNumber, ev.PRHeadSHA); err != nil {
+			log.Printf("vcs: observe pr head %s#%d: %v", ev.Repo, ev.PRNumber, err)
+		}
+	}
 	repo, err := s.store.GetRepo(ctx, provider, ev.Repo)
 	if errors.Is(err, ErrNotFound) {
 		return nil // unregistered repo -> ignore

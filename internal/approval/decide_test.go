@@ -311,3 +311,55 @@ func TestRecordTicketApproval(t *testing.T) {
 		t.Errorf("blank actor: %v", err)
 	}
 }
+
+func TestSupersedeStaleMerge_AcrossTickets(t *testing.T) {
+	ctx := context.Background()
+	st := NewMemStore()
+	svc := NewService(st)
+	t1, t2 := uuid.New(), uuid.New()
+	mk := func(tid uuid.UUID, pr int, sha string) *Approval {
+		a, err := st.Create(ctx, NewReq{TicketID: tid, Kind: KindMerge, RequestedBy: "r", Subject: Subject{Repo: "o/r", PR: pr, HeadSHA: sha}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	oldA, oldB := mk(t1, 5, "old"), mk(t2, 5, "old")
+	st.Transition(ctx, oldB.ID, StatusPending, StatusApproved, "u", "", &Decision{DecidedBy: "u", Basis: BasisUserDirect})
+	current := mk(t1, 5, "new")
+	otherPR := mk(t1, 6, "old")
+	rejected := mk(t2, 7, "old")
+	st.Transition(ctx, rejected.ID, StatusPending, StatusRejected, "u", "", &Decision{DecidedBy: "u", Basis: BasisUserDirect})
+
+	// mk(t1,5,"new") already retired oldA through Create; the webhook then catches the other ticket
+	if err := svc.ObservePRHead(ctx, "o/r", 5, "new"); err != nil {
+		t.Fatal(err)
+	}
+	for id, want := range map[uuid.UUID]Status{
+		oldA.ID: StatusSuperseded, oldB.ID: StatusSuperseded, current.ID: StatusPending,
+		otherPR.ID: StatusPending, rejected.ID: StatusRejected,
+	} {
+		if a, _ := st.Get(ctx, id); a.Status != want {
+			t.Errorf("%s: %s want %s", id, a.Status, want)
+		}
+	}
+	if a, _ := st.Get(ctx, oldB.ID); a.DecidedBy == nil || a.Events[len(a.Events)-1].Actor != "vcs-webhook" {
+		t.Errorf("approved decision must survive and the retirement be attributed to the webhook: %+v", a)
+	}
+	// idempotent, and ignores empty input
+	if err := svc.ObservePRHead(ctx, "o/r", 5, "new"); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []struct {
+		repo string
+		pr   int
+		sha  string
+	}{{"", 5, "x"}, {"o/r", 0, "x"}, {"o/r", 5, ""}} {
+		if err := svc.ObservePRHead(ctx, bad.repo, bad.pr, bad.sha); err != nil {
+			t.Errorf("%+v: %v", bad, err)
+		}
+	}
+	if a, _ := st.Get(ctx, otherPR.ID); a.Status != StatusPending {
+		t.Error("empty input must not retire anything")
+	}
+}
