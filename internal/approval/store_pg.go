@@ -205,15 +205,19 @@ func (s *pgStore) Transition(ctx context.Context, id uuid.UUID, from, to Status,
 func transitionTx(ctx context.Context, tx pgx.Tx, id uuid.UUID, from, to Status, actor, note string, d *Decision) error {
 	var tag int64
 	if d != nil {
-		var user *string
+		var user, basis *string
 		if d.UserRef != "" {
 			user = &d.UserRef
+		}
+		if d.Basis != "" {
+			b := string(d.Basis)
+			basis = &b
 		}
 		ct, err := tx.Exec(ctx, `
 			UPDATE approvals SET status=$3, decided_by=$4, decided_at=NOW(), decision_note=$5,
 				basis=$6, delegation_rule_id=$7, user_ref=$8
 			WHERE id=$1 AND status=$2`,
-			id, string(from), string(to), d.DecidedBy, d.Note, string(d.Basis), d.DelegationRuleID, user)
+			id, string(from), string(to), d.DecidedBy, d.Note, basis, d.DelegationRuleID, user)
 		if err != nil {
 			return fmt.Errorf("transition approval: %w", err)
 		}

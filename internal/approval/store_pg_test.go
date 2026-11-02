@@ -244,6 +244,28 @@ func TestPG_RuleListAndRevoke(t *testing.T) {
 	}
 }
 
+func TestPG_RecordTicketApproval(t *testing.T) {
+	ctx := context.Background()
+	_, st, tid := setup(t)
+	svc := approval.NewService(st)
+	// an unattested caller is stored with a NULL basis (not an empty string, which the CHECK rejects)
+	a, err := svc.RecordTicketApproval(ctx, tid, "rejected", "nope", approval.Actor{ID: "bot", Kind: approval.ActorOther}, "boss@x.io")
+	if err != nil || a.Basis != nil || !a.Legacy || a.Status != approval.StatusRejected {
+		t.Fatalf("unattested: %v %+v", err, a)
+	}
+	b, err := svc.RecordTicketApproval(ctx, tid, "approved", "", approval.Actor{ID: "u@x.io", Kind: approval.ActorHuman}, "")
+	if err != nil || b.Basis == nil || *b.Basis != approval.BasisUserDirect || b.Legacy {
+		t.Fatalf("person: %v %+v", err, b)
+	}
+	// a pending record left behind is reused instead of tripping the duplicate check
+	if _, err := st.Create(ctx, approval.NewReq{TicketID: tid, Kind: approval.KindTicket, RequestedBy: "u@x.io", Subject: approval.Subject{Ticket: tid.String()}}); err != nil {
+		t.Fatal(err)
+	}
+	if c, err := svc.RecordTicketApproval(ctx, tid, "revision", "x", approval.Actor{ID: "u@x.io", Kind: approval.ActorHuman}, ""); err != nil || c.Status != approval.StatusRevisionRequested {
+		t.Fatalf("reuse pending: %v %+v", err, c)
+	}
+}
+
 func TestPG_SupersedeStaleMergeAcrossTickets(t *testing.T) {
 	ctx := context.Background()
 	pool, st, t1 := setup(t)

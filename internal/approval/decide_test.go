@@ -274,6 +274,44 @@ func TestDelegationRuleValidate(t *testing.T) {
 	}
 }
 
+func TestRecordTicketApproval(t *testing.T) {
+	ctx := context.Background()
+	tid := uuid.New()
+	st := NewMemStore()
+	svc := NewService(st)
+
+	a, err := svc.RecordTicketApproval(ctx, tid, "approved", "", Actor{ID: "u@x.io", Kind: ActorHuman}, "")
+	if err != nil || a.Kind != KindTicket || a.Status != StatusApproved || a.Legacy || *a.Basis != BasisUserDirect || *a.DecidedBy != "u@x.io" {
+		t.Fatalf("person: %v %+v", err, a)
+	}
+	// an unattested caller: decided_by is recorded, basis is not claimed
+	b, err := svc.RecordTicketApproval(ctx, tid, "rejected", "nope", Actor{ID: "bot", Kind: ActorOther}, "boss@x.io")
+	if err != nil || b.Basis != nil || !b.Legacy || *b.DecidedBy != "bot" || b.Status != StatusRejected {
+		t.Fatalf("agent: %v %+v", err, b)
+	}
+	if got := *b.DecisionNote; got != "claimed operator_id=boss@x.io; nope" {
+		t.Errorf("claimed operator must be noted, not trusted: %q", got)
+	}
+	// a stale pending record from an earlier failed attempt is reused, not duplicated
+	st.Create(ctx, NewReq{TicketID: tid, Kind: KindTicket, RequestedBy: "u@x.io", Subject: Subject{Ticket: tid.String()}})
+	c, err := svc.RecordTicketApproval(ctx, tid, "revision", "x", Actor{ID: "u@x.io", Kind: ActorHuman}, "")
+	if err != nil || c.Status != StatusRevisionRequested {
+		t.Fatalf("reuse pending: %v %+v", err, c)
+	}
+	all, _ := st.List(ctx, ListFilter{TicketID: &tid})
+	if len(all) != 3 {
+		t.Errorf("want 3 records, got %d", len(all))
+	}
+	for _, bad := range []string{"", "weird"} {
+		if _, err := svc.RecordTicketApproval(ctx, tid, bad, "", Actor{ID: "u", Kind: ActorHuman}, ""); !errors.Is(err, ErrInvalidInput) {
+			t.Errorf("decision %q: %v", bad, err)
+		}
+	}
+	if _, err := svc.RecordTicketApproval(ctx, tid, "approved", "", Actor{}, ""); !errors.Is(err, ErrForbidden) {
+		t.Errorf("blank actor: %v", err)
+	}
+}
+
 func TestSupersedeStaleMerge_AcrossTickets(t *testing.T) {
 	ctx := context.Background()
 	st := NewMemStore()

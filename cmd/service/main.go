@@ -236,7 +236,7 @@ func main() {
 		}
 	}
 
-	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter, projectResolver, tagResolver, auditLogger, vcsSvc, cogitoClient)
+	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter, projectResolver, tagResolver, auditLogger, vcsSvc, cogitoClient).WithApprovalRecorder(approvalSvc)
 	requireTicketView := auth.RequireTicketView(svc, sdbChecker)
 	requireTicketManage := auth.RequireTicketManage(svc, sdbChecker)
 	idempotent := idempotency.Middleware(idempotency.NewRedisStore(rdb))
