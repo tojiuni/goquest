@@ -151,6 +151,16 @@ func main() {
 
 	approvalSvc := approval.NewService(approval.NewPGStore(pool)).WithRules(approval.NewPGRuleStore(pool))
 	delegationRuleH := handler.NewDelegationRuleHandler(approvalSvc)
+	zulip := notify.NewZulip(notify.ZulipConfig{URL: cfg.ZulipURL, BotEmail: cfg.ZulipBotEmail, APIKey: cfg.ZulipBotAPIKey})
+	zulip.LogIfDisabled()
+	approvalNotifier := approval.NewDispatcher(zulip, func(ctx context.Context, ws uuid.UUID) (string, error) {
+		w, err := wsStore.Get(ctx, ws)
+		if err != nil {
+			return "", err
+		}
+		return w.OwnerID, nil
+	}, cfg.ApprovalInboxURL)
+	approvalNotifier.NotifyUserOnDelegable = cfg.ApprovalNotifyUserOnDelegable
 	approvalH := handler.NewApprovalHandler(
 		approvalSvc,
 		func(ctx context.Context, t *ticket.Ticket) (uuid.UUID, error) {
@@ -162,7 +172,7 @@ func main() {
 				return uuid.Nil, err
 			}
 			return p.WorkspaceID, nil
-		})
+		}).WithEvents(approvalNotifier)
 	tagStore := tag.NewPGStore(pool)
 	tagSvc := tag.NewService(tagStore)
 

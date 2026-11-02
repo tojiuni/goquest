@@ -56,6 +56,13 @@ type Config struct {
 	// are impossible until it is set.
 	ApprovalHumanClientIDs []string
 
+	// Zulip bot used to message people about approvals (all three required;
+	// any missing disables the notifier) and the goquest-ui base URL used for
+	// the inbox link in those messages.
+	ZulipURL, ZulipBotEmail, ZulipBotAPIKey string
+	ApprovalInboxURL                         string
+	ApprovalNotifyUserOnDelegable            bool
+
 	// Lymphhub actor-lookup service client (goq-user-lookup-proxy) — resolves
 	// requester/assignee ids to display names. Empty LymphhubOIDCURL disables
 	// the /users/lookup proxy (it always returns an empty array).
@@ -156,6 +163,12 @@ func Load() *Config {
 		LymphhubSessionAddr: os.Getenv("LYMPHHUB_SESSION_ADDR"),
 
 		ApprovalHumanClientIDs: splitCSV(os.Getenv("APPROVAL_HUMAN_CLIENT_IDS")),
+
+		ZulipURL:                      os.Getenv("ZULIP_URL"),
+		ZulipBotEmail:                 os.Getenv("ZULIP_BOT_EMAIL"),
+		ZulipBotAPIKey:                os.Getenv("ZULIP_BOT_API_KEY"),
+		ApprovalInboxURL:              os.Getenv("APPROVAL_INBOX_URL"),
+		ApprovalNotifyUserOnDelegable: parseBool(os.Getenv("APPROVAL_NOTIFY_USER_ON_DELEGABLE"), false),
 
 		LymphhubOIDCURL:             os.Getenv("LYMPHHUB_OIDC_URL"),
 		LymphhubOIDCHost:            envOrDefault("LYMPHHUB_OIDC_HOST", "toji.idp.toji.homes"),

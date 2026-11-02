@@ -27,9 +27,40 @@ type ApprovalSvc interface {
 // project); uuid.Nil with no error for a ticket without a project.
 type WorkspaceOfTicket func(ctx context.Context, t *ticket.Ticket) (uuid.UUID, error)
 
+// ApprovalEvents is told about committed approval events so people can be
+// informed. It must not block or fail the request.
+type ApprovalEvents interface {
+	Requested(ctx context.Context, a *approval.Approval, t approval.TicketRef)
+	Decided(ctx context.Context, a *approval.Approval, t approval.TicketRef)
+	Withdrawn(ctx context.Context, a *approval.Approval, t approval.TicketRef)
+}
+
 type ApprovalHandler struct {
 	svc         ApprovalSvc
 	workspaceOf WorkspaceOfTicket
+	events      ApprovalEvents
+}
+
+// WithEvents enables notifications; optional.
+func (h *ApprovalHandler) WithEvents(e ApprovalEvents) *ApprovalHandler {
+	h.events = e
+	return h
+}
+
+// ticketRef builds the ticket context for a message from what the view
+// middleware already loaded. Best effort: a failure only drops the workspace.
+func (h *ApprovalHandler) ticketRef(r *http.Request) approval.TicketRef {
+	t := auth.TicketFrom(r)
+	if t == nil {
+		return approval.TicketRef{}
+	}
+	ref := approval.TicketRef{TitleName: t.TitleName}
+	if t.ProjectID != nil && h.workspaceOf != nil {
+		if ws, err := h.workspaceOf(r.Context(), t); err == nil {
+			ref.WorkspaceID = ws
+		}
+	}
+	return ref
 }
 
 func NewApprovalHandler(svc ApprovalSvc, workspaceOf WorkspaceOfTicket) *ApprovalHandler {
@@ -80,6 +111,9 @@ func (h *ApprovalHandler) Request(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.writeErr(w, err)
 		return
+	}
+	if h.events != nil {
+		h.events.Requested(r.Context(), a, h.ticketRef(r))
 	}
 	writeJSON(w, http.StatusCreated, a)
 }
@@ -139,6 +173,9 @@ func (h *ApprovalHandler) Withdraw(w http.ResponseWriter, r *http.Request) {
 		h.writeErr(w, err)
 		return
 	}
+	if h.events != nil {
+		h.events.Withdrawn(r.Context(), a, h.ticketRef(r))
+	}
 	writeJSON(w, http.StatusOK, a)
 }
 
@@ -177,6 +214,9 @@ func (h *ApprovalHandler) Decide(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.writeErr(w, err)
 		return
+	}
+	if h.events != nil {
+		h.events.Decided(r.Context(), a, h.ticketRef(r))
 	}
 	writeJSON(w, http.StatusOK, a)
 }
