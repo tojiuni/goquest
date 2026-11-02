@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -146,5 +147,71 @@ func TestApprovalHandler_TicketScopeAndWithdraw(t *testing.T) {
 	rec = doApproval(t, approvalRouter("req", false), "GET", "/tickets/"+tidB+"/approvals", "")
 	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte(`"approvals":[]`)) {
 		t.Errorf("empty list must be [] not null: %d %s", rec.Code, rec.Body)
+	}
+}
+
+type recordedEvents struct{ requested, decided, withdrawn []*approval.Approval }
+
+func (r *recordedEvents) Requested(_ context.Context, a *approval.Approval, _ approval.TicketRef) {
+	r.requested = append(r.requested, a)
+}
+func (r *recordedEvents) Decided(_ context.Context, a *approval.Approval, _ approval.TicketRef) {
+	r.decided = append(r.decided, a)
+}
+func (r *recordedEvents) Withdrawn(_ context.Context, a *approval.Approval, _ approval.TicketRef) {
+	r.withdrawn = append(r.withdrawn, a)
+}
+
+func TestApprovalHandler_EmitsEventsOnlyOnSuccess(t *testing.T) {
+	ev := &recordedEvents{}
+	st := approval.NewMemStore()
+	svc := approval.NewService(st).WithRules(approval.NewMemRuleStore())
+	h := NewApprovalHandler(svc, nil).WithEvents(ev)
+	r := chi.NewRouter()
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			ctx := auth.WithPrincipalKind(auth.WithRequesterID(req.Context(), "owner@x.io"), auth.PrincipalHuman)
+			next.ServeHTTP(w, req.WithContext(ctx))
+		})
+	})
+	r.Route("/tickets/{id}", func(r chi.Router) {
+		r.Post("/approvals", h.Request)
+		r.Post("/approvals/{aid}/decision", h.Decide)
+		r.Post("/approvals/{aid}/withdraw", h.Withdraw)
+	})
+	tid := uuid.New().String()
+
+	if rec := doApproval(t, r, "POST", "/tickets/"+tid+"/approvals", `{"kind":"merge"}`); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid request: %d", rec.Code)
+	}
+	if len(ev.requested) != 0 {
+		t.Fatal("a failed request must not emit an event")
+	}
+	rec := doApproval(t, r, "POST", "/tickets/"+tid+"/approvals", `{"kind":"design","subject":{"doc":"d.md"}}`)
+	var a approval.Approval
+	json.Unmarshal(rec.Body.Bytes(), &a)
+	if len(ev.requested) != 1 || ev.requested[0].ID != a.ID {
+		t.Fatalf("requested events: %+v", ev.requested)
+	}
+	if rec := doApproval(t, r, "POST", "/tickets/"+tid+"/approvals/"+a.ID.String()+"/decision", `{"decision":"rejected"}`); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("missing note: %d", rec.Code)
+	}
+	if len(ev.decided) != 0 {
+		t.Fatal("a refused decision must not emit an event")
+	}
+	if rec := doApproval(t, r, "POST", "/tickets/"+tid+"/approvals/"+a.ID.String()+"/decision", `{"decision":"approved"}`); rec.Code != http.StatusOK {
+		t.Fatalf("decide: %d %s", rec.Code, rec.Body)
+	}
+	if len(ev.decided) != 1 || ev.decided[0].Status != approval.StatusApproved {
+		t.Fatalf("decided events: %+v", ev.decided)
+	}
+	b := doApproval(t, r, "POST", "/tickets/"+tid+"/approvals", `{"kind":"infra","subject":{"target":"vault:x"}}`)
+	var ab approval.Approval
+	json.Unmarshal(b.Body.Bytes(), &ab)
+	if rec := doApproval(t, r, "POST", "/tickets/"+tid+"/approvals/"+ab.ID.String()+"/withdraw", ``); rec.Code != http.StatusOK {
+		t.Fatalf("withdraw: %d", rec.Code)
+	}
+	if len(ev.withdrawn) != 1 || ev.withdrawn[0].ID != ab.ID {
+		t.Fatalf("withdrawn events: %+v", ev.withdrawn)
 	}
 }
