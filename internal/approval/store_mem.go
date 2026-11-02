@@ -111,8 +111,12 @@ func (m *MemStore) transition(id uuid.UUID, from, to Status, actor, note string,
 	}
 	now := time.Now().UTC()
 	if d != nil {
-		by, basis, n := d.DecidedBy, d.Basis, d.Note
-		a.DecidedBy, a.Basis, a.DecisionNote, a.DecidedAt = &by, &basis, &n, &now
+		by, n := d.DecidedBy, d.Note
+		a.DecidedBy, a.DecisionNote, a.DecidedAt = &by, &n, &now
+		if d.Basis != "" {
+			basis := d.Basis
+			a.Basis = &basis
+		}
 		a.DelegationRuleID = d.DelegationRuleID
 		if d.UserRef != "" {
 			u := d.UserRef

@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/tojiuni/goquest/internal/approval"
 	"github.com/tojiuni/goquest/internal/audit"
 	"github.com/tojiuni/goquest/internal/auth"
 	"github.com/tojiuni/goquest/internal/project"
@@ -57,6 +58,19 @@ type TicketHandler struct {
 	audit    audit.Logger
 	links    LinksProvider
 	cogito   CogitoSplitter
+	// approvals mirrors POST /approve sign-offs as approval records; optional.
+	approvals ApproveRecorder
+}
+
+// ApproveRecorder records a legacy /approve sign-off as an approval record.
+type ApproveRecorder interface {
+	RecordTicketApproval(ctx context.Context, ticketID uuid.UUID, decision, note string, actor approval.Actor, claimedOperator string) (*approval.Approval, error)
+}
+
+// WithApprovalRecorder enables mirroring /approve into approval records.
+func (h *TicketHandler) WithApprovalRecorder(r ApproveRecorder) *TicketHandler {
+	h.approvals = r
+	return h
 }
 
 // NewTicketHandler wires the ticket HTTP handlers. The audit, links, and
@@ -678,9 +692,11 @@ func (h *TicketHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
-	if req.OperatorID == "" {
-		req.OperatorID = auth.RequesterID(r)
-	}
+	// The operator is the authenticated principal, never a value from the body:
+	// a body operator_id would let any caller with manage access sign as someone
+	// else (approval records, goq-approvals-p5-approve-bridge).
+	claimedOperator := req.OperatorID
+	req.OperatorID = auth.RequesterID(r)
 	if req.OperatorID == "" {
 		writeError(w, http.StatusUnauthorized, "operator identity required")
 		return
@@ -703,6 +719,15 @@ func (h *TicketHandler) Approve(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+
+	// Mirror the sign-off as an approval record. Best effort: the ticket
+	// transition above already succeeded and must not be undone or failed by it.
+	if h.approvals != nil {
+		actor := approval.Actor{ID: req.OperatorID, Kind: actorKind(auth.PrincipalKindFrom(r))}
+		if _, err := h.approvals.RecordTicketApproval(r.Context(), id, string(req.Decision), req.RevisionNote, actor, claimedOperator); err != nil {
+			log.Printf("approve: record approval for ticket %s: %v", id, err)
+		}
 	}
 
 	writeJSON(w, http.StatusOK, t)

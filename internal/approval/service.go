@@ -297,3 +297,58 @@ func (s *Service) delegationRule(ctx context.Context, a *Approval, ws uuid.UUID,
 	}
 	return nil, &DeniedError{Reason: ReasonNoMatchingRule}
 }
+
+// RecordTicketApproval mirrors a legacy POST /tickets/{id}/approve sign-off as
+// an approval record (kind=ticket). decision is the legacy value: "approved",
+// "rejected" or "revision". claimedOperator is the operator_id the caller put
+// in the request body; it is never used as the decider, only noted.
+//
+// Only a person attested by the UI client gets basis=user_direct. Anyone else
+// (agent, API key, device-code token) is recorded with no basis and
+// legacy=true, because the legacy endpoint never proved who was behind them.
+func (s *Service) RecordTicketApproval(ctx context.Context, ticketID uuid.UUID, decision, note string, actor Actor, claimedOperator string) (*Approval, error) {
+	var to Status
+	switch decision {
+	case "approved":
+		to = StatusApproved
+	case "rejected":
+		to = StatusRejected
+	case "revision":
+		to = StatusRevisionRequested
+	default:
+		return nil, fmt.Errorf("%w: unknown legacy decision %q", ErrInvalidInput, decision)
+	}
+	if strings.TrimSpace(actor.ID) == "" {
+		return nil, fmt.Errorf("%w: requester identity required", ErrForbidden)
+	}
+	legacy := actor.Kind != ActorHuman || (claimedOperator != "" && claimedOperator != actor.ID)
+	req := NewReq{TicketID: ticketID, Kind: KindTicket, Subject: Subject{Ticket: ticketID.String()},
+		RequestedBy: actor.ID, RequestNote: "legacy /approve", Legacy: legacy}
+	a, err := s.store.Create(ctx, req)
+	if errors.Is(err, ErrDuplicatePending) {
+		// an earlier attempt left a pending record; decide that one
+		open, lerr := s.store.List(ctx, ListFilter{TicketID: &ticketID, Kind: KindTicket, Status: StatusPending, Limit: 1})
+		if lerr != nil || len(open) == 0 {
+			return nil, err
+		}
+		a, err = open[0], nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	d := &Decision{Status: to, DecidedBy: actor.ID, Note: truncate(note, maxNoteLen)}
+	if actor.Kind == ActorHuman {
+		d.Basis = BasisUserDirect
+	}
+	if claimedOperator != "" && claimedOperator != actor.ID {
+		d.Note = truncate("claimed operator_id="+claimedOperator+"; "+d.Note, maxNoteLen)
+	}
+	return s.store.Transition(ctx, a.ID, StatusPending, to, actor.ID, d.Note, d)
+}
+
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
