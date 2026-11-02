@@ -243,3 +243,43 @@ func TestPG_RuleListAndRevoke(t *testing.T) {
 		t.Errorf("second revoke: %v", err)
 	}
 }
+
+func TestPG_SupersedeStaleMergeAcrossTickets(t *testing.T) {
+	ctx := context.Background()
+	pool, st, t1 := setup(t)
+	var t2 uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO tickets (title, type, status, priority, requester_id)
+		VALUES ('approval pg test 2','task','pending','normal','test') RETURNING id`).Scan(&t2); err != nil {
+		t.Skipf("insert ticket: %v", err)
+	}
+	mk := func(tid uuid.UUID, pr int, sha string) *approval.Approval {
+		a, err := st.Create(ctx, approval.NewReq{TicketID: tid, Kind: approval.KindMerge, RequestedBy: "r",
+			Subject: approval.Subject{Repo: "o/stale", PR: pr, HeadSHA: sha}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return a
+	}
+	a1, a2 := mk(t1, 1, "old"), mk(t2, 1, "old")
+	if _, err := st.Transition(ctx, a2.ID, approval.StatusPending, approval.StatusApproved, "u", "",
+		&approval.Decision{DecidedBy: "u", Basis: approval.BasisUserDirect}); err != nil {
+		t.Fatal(err)
+	}
+	keep := mk(t1, 2, "old")  // other PR
+	fresh := mk(t1, 1, "new") // Create already retired a1 on this ticket
+	ids, err := st.SupersedeStaleMerge(ctx, "o/stale", 1, "new", "vcs-webhook")
+	if err != nil || len(ids) != 1 || ids[0] != a2.ID {
+		t.Fatalf("only the other ticket's approval should remain to retire: %v %v", ids, err)
+	}
+	for id, want := range map[uuid.UUID]approval.Status{
+		a1.ID: approval.StatusSuperseded, a2.ID: approval.StatusSuperseded,
+		keep.ID: approval.StatusPending, fresh.ID: approval.StatusPending,
+	} {
+		if a, _ := st.Get(ctx, id); a.Status != want {
+			t.Errorf("%s: %s want %s", id, a.Status, want)
+		}
+	}
+	if ids, err := st.SupersedeStaleMerge(ctx, "o/stale", 1, "new", "vcs-webhook"); err != nil || len(ids) != 0 {
+		t.Errorf("idempotent: %v %v", ids, err)
+	}
+}

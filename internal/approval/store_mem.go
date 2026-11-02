@@ -130,6 +130,24 @@ func (m *MemStore) SupersedeOpenMerge(_ context.Context, ticketID uuid.UUID, rep
 	return m.supersedeOpenMerge(ticketID, repo, pr, newHeadSHA, actor)
 }
 
+func (m *MemStore) SupersedeStaleMerge(_ context.Context, repo string, pr int, headSHA, actor string) ([]uuid.UUID, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var ids []uuid.UUID
+	for _, id := range m.order {
+		a := m.rows[id]
+		if a.Kind != KindMerge || a.Subject.Repo != repo || a.Subject.PR != pr || a.Subject.HeadSHA == headSHA ||
+			(a.Status != StatusPending && a.Status != StatusApproved) {
+			continue
+		}
+		if _, err := m.transition(id, a.Status, StatusSuperseded, actor, "head_sha changed", nil); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
 func (m *MemStore) supersedeOpenMerge(ticketID uuid.UUID, repo string, pr int, newHeadSHA, actor string) ([]uuid.UUID, error) {
 	var ids []uuid.UUID
 	for _, id := range m.order {
