@@ -219,7 +219,40 @@ func main() {
 	commentSvc := comment.NewService(commentStore)
 
 	mentionStore := mention.NewPGStore(pool)
-	mentionSvc := mention.NewService(mentionStore, projectMemberLister{pjSvc})
+	// Who can be @mentioned: explicit project members plus the project's
+	// workspace members (access is workspace-level; restricted tickets narrow it
+	// to project members, see mention.WithProjectMembersOnly).
+	mentionSvc := mention.NewService(mentionStore, mention.EligibleLister{
+		Project: func(ctx context.Context, projectID uuid.UUID) ([]string, error) {
+			ms, err := pjSvc.ListMembers(ctx, projectID)
+			if err != nil {
+				return nil, err
+			}
+			out := make([]string, len(ms))
+			for i, m := range ms {
+				out[i] = m.UserID
+			}
+			return out, nil
+		},
+		WorkspaceOf: func(ctx context.Context, projectID uuid.UUID) (uuid.UUID, error) {
+			p, err := pjStore.Get(ctx, projectID)
+			if err != nil {
+				return uuid.Nil, err
+			}
+			return p.WorkspaceID, nil
+		},
+		Workspace: func(ctx context.Context, workspaceID uuid.UUID) ([]string, error) {
+			ms, err := wsStore.ListMembers(ctx, workspaceID)
+			if err != nil {
+				return nil, err
+			}
+			out := make([]string, len(ms))
+			for i, m := range ms {
+				out[i] = m.UserID
+			}
+			return out, nil
+		},
+	})
 
 	commentH := handler.NewCommentHandler(commentSvc, func(r *http.Request) bool {
 		return canSeeInternal(r, wsSvc)
@@ -746,20 +779,6 @@ func (r projectNameResolver) ProjectName(ctx context.Context, id uuid.UUID) (wor
 		return "", p.Name, nil
 	}
 	return ws.Name, p.Name, nil
-}
-
-type projectMemberLister struct{ svc *project.Service }
-
-func (a projectMemberLister) ListMembers(ctx context.Context, projectID uuid.UUID) ([]*mention.ProjectMember, error) {
-	members, err := a.svc.ListMembers(ctx, projectID)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]*mention.ProjectMember, len(members))
-	for i, m := range members {
-		out[i] = &mention.ProjectMember{UserID: m.UserID}
-	}
-	return out, nil
 }
 
 // noopBrainLookuper is the /tickets/{id}/docs fallback when brain isn't
