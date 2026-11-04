@@ -94,3 +94,27 @@ func TestOpenAPI_ApprovalPathsAreAgentFacing(t *testing.T) {
 		}
 	}
 }
+
+func TestOpenAPI_MentionInboxPaths(t *testing.T) {
+	h, err := handler.NewOpenAPIHandler()
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	h.JSON(rec, httptest.NewRequest(http.MethodGet, "/api/v1/openapi.json", nil))
+	var doc struct {
+		Paths      map[string]map[string]any `json:"paths"`
+		Components struct {
+			Schemas map[string]any `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Paths["/users/mentions"]["get"] == nil || doc.Paths["/mentions/{id}/seen"]["post"] == nil {
+		t.Errorf("mention inbox paths missing: %v", doc.Paths)
+	}
+	if doc.Components.Schemas["Mention"] == nil {
+		t.Error("Mention schema missing")
+	}
+}

@@ -46,12 +46,26 @@ type MentionEmitter interface {
 	EmitMentioned(ctx context.Context, t *ticket.Ticket, mentionedActorID string) error
 }
 
+// MentionNotifier tells the mentioned people / session accounts after the
+// mentions are stored (Zulip DM or signed webhook; no comment text is sent).
+// It must not block or fail the request.
+type MentionNotifier interface {
+	Notify(ctx context.Context, t *ticket.Ticket, commentID uuid.UUID, authorID string, created []*mention.Mention)
+}
+
 type CommentHandler struct {
 	svc            CommentSvc
 	canSeeInternal CanSeeInternal
 	tickets        TicketGetter
 	mentions       MentionSvc
 	mentionEmitter MentionEmitter
+	notifier       MentionNotifier
+}
+
+// WithMentionNotifier enables mention notifications; optional.
+func (h *CommentHandler) WithMentionNotifier(n MentionNotifier) *CommentHandler {
+	h.notifier = n
+	return h
 }
 
 func NewCommentHandler(svc CommentSvc, canSeeInternal CanSeeInternal) *CommentHandler {
@@ -111,11 +125,17 @@ func (h *CommentHandler) extractMentions(ctx context.Context, ticketID, commentI
 		return
 	}
 	created, err := h.mentions.CreateFromBody(ctx, ticketID, *t.ProjectID, &commentID, mention.SourceComment, authorID, body)
-	if err != nil || h.mentionEmitter == nil {
+	if err != nil {
 		return
 	}
-	for _, m := range created {
-		_ = h.mentionEmitter.EmitMentioned(ctx, t, m.MentionedActorID)
+	if h.mentionEmitter != nil {
+		for _, m := range created {
+			_ = h.mentionEmitter.EmitMentioned(ctx, t, m.MentionedActorID)
+		}
+	}
+	// only after the mention rows are stored; the notifier sends in the background
+	if h.notifier != nil && len(created) > 0 {
+		h.notifier.Notify(ctx, t, commentID, authorID, created)
 	}
 }
 

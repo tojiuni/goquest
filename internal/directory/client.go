@@ -17,6 +17,11 @@ type Actor struct {
 	ID          string `json:"id"`
 	DisplayName string `json:"display_name"`
 	Email       string `json:"email"`
+	// Kind and Username are returned by newer lymphhub builds (kind is e.g.
+	// "human" or "workspace_session"; username is the session account name
+	// "ws-…"). Empty from older builds — callers must treat that as unknown.
+	Kind     string `json:"kind,omitempty"`
+	Username string `json:"username,omitempty"`
 }
 
 // Lookuper resolves a batch of requester/assignee ids to Actors. Implemented

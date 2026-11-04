@@ -64,6 +64,12 @@ type Config struct {
 	ApprovalInboxURL                         string
 	ApprovalNotifyUserOnDelegable            bool
 
+	// Mention notifications (goq-mention-notify). The webhook path to session
+	// accounts needs both URL and secret; the DM path reuses the Zulip bot above.
+	// GoquestUIURL is the public UI base used for ticket links in messages.
+	MentionWebhookURL, MentionWebhookSecret string
+	GoquestUIURL                            string
+
 	// Lymphhub actor-lookup service client (goq-user-lookup-proxy) — resolves
 	// requester/assignee ids to display names. Empty LymphhubOIDCURL disables
 	// the /users/lookup proxy (it always returns an empty array).
@@ -170,6 +176,10 @@ func Load() *Config {
 		ZulipBotAPIKey:                os.Getenv("ZULIP_BOT_API_KEY"),
 		ApprovalInboxURL:              envOrDefault("APPROVAL_INBOX_URL", "https://goquest.toji.homes/approvals"),
 		ApprovalNotifyUserOnDelegable: parseBool(os.Getenv("APPROVAL_NOTIFY_USER_ON_DELEGABLE"), false),
+
+		MentionWebhookURL:    os.Getenv("MENTION_WEBHOOK_URL"),
+		MentionWebhookSecret: os.Getenv("MENTION_WEBHOOK_SECRET"),
+		GoquestUIURL:         envOrDefault("GOQUEST_UI_URL", "https://goquest.toji.homes"),
 
 		LymphhubOIDCURL:             os.Getenv("LYMPHHUB_OIDC_URL"),
 		LymphhubOIDCHost:            envOrDefault("LYMPHHUB_OIDC_HOST", "toji.idp.toji.homes"),
