@@ -246,6 +246,9 @@ type BulkCreateResp struct {
 }
 
 type UpdateTicketReq struct {
+	// viaApproval lets Approve complete a ticket straight from pending_approval;
+	// it is unexported so only this package can set it (never from a request body).
+	viaApproval   bool
 	TitleName     *string       `json:"title_name,omitempty"`
 	Title         *string       `json:"title,omitempty"`
 	Description   *string       `json:"description,omitempty"`
@@ -392,10 +395,22 @@ const (
 	ApproveDecisionRevision ApproveDecision = "revision"
 )
 
+// MetaPendingApprovalFrom is the metadata key the server sets to the status a
+// ticket was in when it entered pending_approval. It tells apart the two things
+// pending_approval is used for: "the work is done, awaiting sign-off" (from
+// in_progress) and "approve this before work starts" (from pending/assigned).
+// Clients cannot set or clear it through metadata.
+const MetaPendingApprovalFrom = "pending_approval_from"
+
 type ApproveTicketReq struct {
 	Decision     ApproveDecision `json:"decision"`
 	RevisionNote string          `json:"revision_note,omitempty"`
 	OperatorID   string          `json:"operator_id"`
+	// Complete, when set, decides what approving does: true completes the ticket,
+	// false sends it to assigned (start work). When omitted the server decides
+	// from where the ticket came into pending_approval (see MetaPendingApprovalFrom):
+	// from in_progress it completes, otherwise it assigns.
+	Complete *bool `json:"complete,omitempty"`
 }
 
 type TicketRef struct {

@@ -86,6 +86,7 @@ type Service struct {
 	magic    MagicTokener
 	cal      CalendarClient
 	projects ProjectNameResolver
+	signoff  SignoffRequester
 
 	// nuclexExcludeProjectIDs are projects whose tickets never emit nuclex
 	// events (see SetNuclexExcludeProjectIDs) — nil/empty means no exclusion.
@@ -500,6 +501,18 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq,
 		}
 	}
 
+	// Only an actual transition into pending_approval (a repeat is rejected by
+	// the state machine) opens a sign-off request for the inbox.
+	if s.signoff != nil && req.Status != nil && *req.Status == StatusPendingApproval && t.Status == StatusPendingApproval {
+		note := "착수 승인 대기"
+		if from, _ := t.Metadata[MetaPendingApprovalFrom].(string); from == string(StatusInProgress) {
+			note = "작업 완료 서명 대기"
+		}
+		if err := s.signoff.RequestTicketSignoff(ctx, t.ID, actor, note); err != nil {
+			log.Printf("warn: request sign-off for ticket %s: %v", t.ID, err)
+		}
+	}
+
 	return t, nil
 }
 
@@ -546,6 +559,42 @@ func (s *Service) Reopen(ctx context.Context, id uuid.UUID, actor, reason string
 	return reopened, nil
 }
 
+// SignoffRequester opens an approval request (kind=ticket) when a ticket enters
+// pending_approval, so the sign-off shows up in the approvals inbox. Optional.
+type SignoffRequester interface {
+	RequestTicketSignoff(ctx context.Context, ticketID uuid.UUID, requestedBy, note string) error
+}
+
+// SetSignoffRequester enables the automatic sign-off request.
+func (s *Service) SetSignoffRequester(r SignoffRequester) { s.signoff = r }
+
+// completesOnApproval reports whether approving this ticket completes it: an
+// explicit Complete wins, otherwise a ticket that entered pending_approval from
+// in_progress (finished work awaiting sign-off) completes, anything else starts work.
+func (s *Service) completesOnApproval(t *Ticket, req ApproveTicketReq) bool {
+	if req.Complete != nil {
+		return *req.Complete
+	}
+	from, _ := t.Metadata[MetaPendingApprovalFrom].(string)
+	return from == string(StatusInProgress)
+}
+
+// approveAndComplete completes a pending_approval ticket through Update, so the
+// usual completion side effects (events, XP, callbacks, calendar) all run.
+func (s *Service) approveAndComplete(ctx context.Context, t *Ticket, req ApproveTicketReq) (*Ticket, error) {
+	meta := make(map[string]any, len(t.Metadata)+3)
+	for k, v := range t.Metadata {
+		meta[k] = v
+	}
+	meta["approval_decision"] = string(req.Decision)
+	meta["approval_operator_id"] = req.OperatorID
+	if req.RevisionNote != "" {
+		meta["approval_revision_note"] = req.RevisionNote
+	}
+	completed := StatusCompleted
+	return s.Update(ctx, t.ID, UpdateTicketReq{Status: &completed, Metadata: meta, viaApproval: true}, req.OperatorID)
+}
+
 func (s *Service) Approve(ctx context.Context, id uuid.UUID, req ApproveTicketReq) (*Ticket, error) {
 	t, err := s.store.Get(ctx, id)
 	if err != nil {
@@ -563,6 +612,9 @@ func (s *Service) Approve(ctx context.Context, id uuid.UUID, req ApproveTicketRe
 	var newStatus Status
 	switch req.Decision {
 	case ApproveDecisionApproved:
+		if s.completesOnApproval(t, req) {
+			return s.approveAndComplete(ctx, t, req)
+		}
 		newStatus = StatusAssigned
 	case ApproveDecisionRejected:
 		newStatus = StatusCancelled

@@ -363,3 +363,84 @@ func TestSupersedeStaleMerge_AcrossTickets(t *testing.T) {
 		t.Error("empty input must not retire anything")
 	}
 }
+
+func TestRequestTicketSignoff(t *testing.T) {
+	ctx := context.Background()
+	st := NewMemStore()
+	svc := NewService(st)
+	tid := uuid.New()
+	if err := svc.RequestTicketSignoff(ctx, tid, "agent-1", "작업 완료 서명 대기"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := st.List(ctx, ListFilter{TicketID: &tid})
+	if len(got) != 1 || got[0].Kind != KindTicket || got[0].Status != StatusPending || got[0].RequestedBy != "agent-1" || got[0].Legacy {
+		t.Fatalf("%+v", got)
+	}
+	// moving the ticket again while one is pending is not an error and does not duplicate
+	if err := svc.RequestTicketSignoff(ctx, tid, "agent-2", "x"); err != nil {
+		t.Errorf("duplicate pending must be tolerated: %v", err)
+	}
+	if got, _ := st.List(ctx, ListFilter{TicketID: &tid}); len(got) != 1 {
+		t.Errorf("want 1, got %d", len(got))
+	}
+	// blank requester falls back to a name rather than failing
+	if err := svc.RequestTicketSignoff(ctx, uuid.New(), " ", "n"); err != nil {
+		t.Errorf("blank requester: %v", err)
+	}
+}
+
+func TestDecideTicketApprovalAlsoMovesTheTicket(t *testing.T) {
+	ctx := context.Background()
+	for decision, wantNote := range map[Status]string{StatusApproved: "", StatusRejected: "no good", StatusRevisionRequested: "redo"} {
+		st := NewMemStore()
+		var gotDecision Status
+		var gotNote, gotOp string
+		var calls int
+		svc := NewService(st).WithTicketDecider(func(_ context.Context, _ uuid.UUID, d Status, note, op string) error {
+			calls++
+			gotDecision, gotNote, gotOp = d, note, op
+			return nil
+		})
+		tid := uuid.New()
+		svc.RequestTicketSignoff(ctx, tid, "agent", "n")
+		list, _ := st.List(ctx, ListFilter{TicketID: &tid})
+		note := wantNote
+		_, err := svc.Decide(ctx, DecideInput{TicketID: tid, ApprovalID: list[0].ID, Decision: decision, Note: note}, Actor{ID: "owner@x.io", Kind: ActorHuman})
+		if err != nil {
+			t.Fatalf("%s: %v", decision, err)
+		}
+		if calls != 1 || gotDecision != decision || gotNote != wantNote || gotOp != "owner@x.io" {
+			t.Errorf("%s: decider calls=%d %v %q %q", decision, calls, gotDecision, gotNote, gotOp)
+		}
+	}
+}
+
+func TestDecideOtherKindsNeverTouchTickets(t *testing.T) {
+	ctx := context.Background()
+	st := NewMemStore()
+	called := false
+	svc := NewService(st).WithTicketDecider(func(context.Context, uuid.UUID, Status, string, string) error { called = true; return nil })
+	tid := uuid.New()
+	a, _ := st.Create(ctx, NewReq{TicketID: tid, Kind: KindDesign, RequestedBy: "r", Subject: Subject{Doc: "d.md"}})
+	if _, err := svc.Decide(ctx, DecideInput{TicketID: tid, ApprovalID: a.ID, Decision: StatusApproved}, Actor{ID: "u@x.io", Kind: ActorHuman}); err != nil {
+		t.Fatal(err)
+	}
+	if called {
+		t.Error("only kind=ticket approvals move the ticket")
+	}
+}
+
+func TestDecideTicketApprovalSurvivesATicketSideFailure(t *testing.T) {
+	ctx := context.Background()
+	st := NewMemStore()
+	svc := NewService(st).WithTicketDecider(func(context.Context, uuid.UUID, Status, string, string) error {
+		return errors.New("ticket is no longer pending_approval")
+	})
+	tid := uuid.New()
+	svc.RequestTicketSignoff(ctx, tid, "agent", "n")
+	list, _ := st.List(ctx, ListFilter{TicketID: &tid})
+	got, err := svc.Decide(ctx, DecideInput{TicketID: tid, ApprovalID: list[0].ID, Decision: StatusApproved}, Actor{ID: "u@x.io", Kind: ActorHuman})
+	if err != nil || got.Status != StatusApproved {
+		t.Errorf("the decision stands even if the ticket was already handled: %v %+v", err, got)
+	}
+}

@@ -1303,3 +1303,118 @@ func TestService_Create_BothGiven_NeitherOverridden(t *testing.T) {
 		t.Errorf("expected DueAt untouched at %v, got %v", givenDue, created.DueAt)
 	}
 }
+
+// --- pending_approval sign-off (goq-pending-approval-no-path-to-completed) ---
+
+func approveTicket(from string, status ticket.Status) *ticket.Ticket {
+	meta := map[string]any{}
+	if from != "" {
+		meta[ticket.MetaPendingApprovalFrom] = from
+	}
+	return &ticket.Ticket{ID: uuid.New(), Status: status, Domain: ticket.DomainKnowledge, Metadata: meta}
+}
+
+func TestApprove_CompletesWhenWorkWasAlreadyDone(t *testing.T) {
+	tk := approveTicket("in_progress", ticket.StatusPendingApproval)
+	store, pub := &mockStore{getTicket: tk}, &mockPublisher{}
+	svc := ticket.NewService(store, pub, &mockNuclex{}, nil, nil, nil)
+	got, err := svc.Approve(context.Background(), tk.ID, ticket.ApproveTicketReq{Decision: ticket.ApproveDecisionApproved, OperatorID: "u@x.io"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != ticket.StatusCompleted {
+		t.Errorf("finished work awaiting sign-off must complete, got %s", got.Status)
+	}
+	if pub.finished != 1 {
+		t.Errorf("the usual completion side effects must run, PublishCompleted=%d", pub.finished)
+	}
+	if pub.assigned != 0 {
+		t.Error("a completed ticket must not be announced as assigned")
+	}
+	if store.updated == nil || store.updated.Metadata["approval_operator_id"] != "u@x.io" || store.updated.Metadata["approval_decision"] != "approved" {
+		t.Errorf("the decision must be recorded in metadata: %+v", store.updated)
+	}
+}
+
+func TestApprove_StillAssignsWhenApprovalWasBeforeWork(t *testing.T) {
+	for _, from := range []string{"pending", "assigned", ""} { // "" = tickets that were locked before this change
+		tk := approveTicket(from, ticket.StatusPendingApproval)
+		pub := &mockPublisher{}
+		svc := ticket.NewService(&mockStore{getTicket: tk}, pub, &mockNuclex{}, nil, nil, nil)
+		got, err := svc.Approve(context.Background(), tk.ID, ticket.ApproveTicketReq{Decision: ticket.ApproveDecisionApproved, OperatorID: "u"})
+		if err != nil || got.Status != ticket.StatusAssigned || pub.assigned != 1 {
+			t.Errorf("from %q: got %v %v assigned=%d", from, got, err, pub.assigned)
+		}
+	}
+}
+
+func TestApprove_ExplicitCompleteOverridesTheDefault(t *testing.T) {
+	yes, no := true, false
+	// a ticket locked before the origin was recorded can be completed explicitly
+	old := approveTicket("", ticket.StatusPendingApproval)
+	got, err := ticket.NewService(&mockStore{getTicket: old}, &mockPublisher{}, &mockNuclex{}, nil, nil, nil).
+		Approve(context.Background(), old.ID, ticket.ApproveTicketReq{Decision: ticket.ApproveDecisionApproved, OperatorID: "u", Complete: &yes})
+	if err != nil || got.Status != ticket.StatusCompleted {
+		t.Errorf("complete=true: %v %v", got, err)
+	}
+	// and finished work can be sent back to start work again
+	done := approveTicket("in_progress", ticket.StatusPendingApproval)
+	got, err = ticket.NewService(&mockStore{getTicket: done}, &mockPublisher{}, &mockNuclex{}, nil, nil, nil).
+		Approve(context.Background(), done.ID, ticket.ApproveTicketReq{Decision: ticket.ApproveDecisionApproved, OperatorID: "u", Complete: &no})
+	if err != nil || got.Status != ticket.StatusAssigned {
+		t.Errorf("complete=false: %v %v", got, err)
+	}
+	// complete only affects approval; reject and revision are unchanged
+	rej := approveTicket("in_progress", ticket.StatusPendingApproval)
+	got, _ = ticket.NewService(&mockStore{getTicket: rej}, &mockPublisher{}, &mockNuclex{}, nil, nil, nil).
+		Approve(context.Background(), rej.ID, ticket.ApproveTicketReq{Decision: ticket.ApproveDecisionRejected, OperatorID: "u", Complete: &yes})
+	if got.Status != ticket.StatusCancelled {
+		t.Errorf("reject with complete=true must still cancel, got %s", got.Status)
+	}
+}
+
+type recordingSignoff struct {
+	calls []string
+	err   error
+}
+
+func (r *recordingSignoff) RequestTicketSignoff(_ context.Context, id uuid.UUID, by, note string) error {
+	r.calls = append(r.calls, by+"|"+note)
+	return r.err
+}
+
+func TestUpdate_OpensASignoffRequestOnlyWhenEnteringPendingApproval(t *testing.T) {
+	pa, ip := ticket.StatusPendingApproval, ticket.StatusInProgress
+	tk := &ticket.Ticket{ID: uuid.New(), Status: ticket.StatusInProgress, Domain: ticket.DomainKnowledge,
+		Metadata: map[string]any{ticket.MetaPendingApprovalFrom: "in_progress"}}
+	rec := &recordingSignoff{}
+	svc := ticket.NewService(&mockStore{getTicket: tk}, &mockPublisher{}, &mockNuclex{}, nil, nil, nil)
+	svc.SetSignoffRequester(rec)
+
+	if _, err := svc.Update(context.Background(), tk.ID, ticket.UpdateTicketReq{Status: &pa}, "agent-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.calls) != 1 || rec.calls[0] != "agent-1|작업 완료 서명 대기" {
+		t.Errorf("entering pending_approval from in_progress must open one sign-off: %v", rec.calls)
+	}
+	title := "t"
+	if _, err := svc.Update(context.Background(), tk.ID, ticket.UpdateTicketReq{Title: &title}, "agent-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Update(context.Background(), tk.ID, ticket.UpdateTicketReq{Status: &ip}, "agent-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.calls) != 1 {
+		t.Errorf("updates that do not enter pending_approval must not open one: %v", rec.calls)
+	}
+	// a failing requester never fails the update
+	rec.err = errors.New("db down")
+	if _, err := svc.Update(context.Background(), tk.ID, ticket.UpdateTicketReq{Status: &pa}, "agent-1"); err != nil {
+		t.Errorf("sign-off request failure must not fail the update: %v", err)
+	}
+	// and without a requester nothing happens
+	if _, err := ticket.NewService(&mockStore{getTicket: tk}, &mockPublisher{}, &mockNuclex{}, nil, nil, nil).
+		Update(context.Background(), tk.ID, ticket.UpdateTicketReq{Status: &pa}, "a"); err != nil {
+		t.Fatal(err)
+	}
+}

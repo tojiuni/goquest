@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -25,8 +26,9 @@ var (
 )
 
 type Service struct {
-	store Store
-	rules RuleStore
+	store         Store
+	rules         RuleStore
+	ticketDecider TicketDecider
 }
 
 func NewService(store Store) *Service { return &Service{store: store} }
@@ -266,7 +268,18 @@ func (s *Service) Decide(ctx context.Context, in DecideInput, actor Actor) (*App
 	default:
 		return nil, &DeniedError{Reason: ReasonPrincipalCannotDecide}
 	}
-	return s.store.Transition(ctx, a.ID, StatusPending, in.Decision, actor.ID, in.Note, d)
+	decided, err := s.store.Transition(ctx, a.ID, StatusPending, in.Decision, actor.ID, in.Note, d)
+	if err != nil {
+		return nil, err
+	}
+	if a.Kind == KindTicket && s.ticketDecider != nil {
+		// The approval record is already decided and stays so; a ticket that is
+		// no longer awaiting approval (decided through /approve meanwhile) is not an error.
+		if terr := s.ticketDecider(ctx, a.TicketID, in.Decision, in.Note, actor.ID); terr != nil {
+			log.Printf("approval: apply ticket decision for %s: %v", a.TicketID, terr)
+		}
+	}
+	return decided, nil
 }
 
 func (s *Service) delegationRule(ctx context.Context, a *Approval, ws uuid.UUID, actor Actor) (*DelegationRule, error) {
@@ -369,3 +382,28 @@ func (s *Service) ObservePRHead(ctx context.Context, repo string, pr int, headSH
 func (s *Service) ListForWorkspace(ctx context.Context, ws uuid.UUID, f ListFilter) ([]*Listed, error) {
 	return s.store.ListByWorkspace(ctx, ws, f)
 }
+
+// RequestTicketSignoff opens a kind=ticket approval for a ticket that just
+// entered pending_approval, so it appears in the inbox. requestedBy is whoever
+// moved the ticket. An identical pending request is not an error. It satisfies
+// ticket.SignoffRequester.
+func (s *Service) RequestTicketSignoff(ctx context.Context, ticketID uuid.UUID, requestedBy, note string) error {
+	if strings.TrimSpace(requestedBy) == "" {
+		requestedBy = "system"
+	}
+	_, err := s.store.Create(ctx, NewReq{TicketID: ticketID, Kind: KindTicket, Subject: Subject{Ticket: ticketID.String()},
+		RequestedBy: requestedBy, RequestNote: truncate(note, maxNoteLen)})
+	if errors.Is(err, ErrDuplicatePending) {
+		return nil
+	}
+	return err
+}
+
+// TicketDecider applies the ticket-side effect of a decided kind=ticket
+// approval (approve completes or assigns, reject cancels, revision asks for
+// changes). It returns an error if the ticket is no longer awaiting approval.
+type TicketDecider func(ctx context.Context, ticketID uuid.UUID, decision Status, note, operator string) error
+
+// WithTicketDecider makes a decision on a kind=ticket approval also move the
+// ticket, so deciding in the inbox and calling /approve do the same thing.
+func (s *Service) WithTicketDecider(d TicketDecider) *Service { s.ticketDecider = d; return s }

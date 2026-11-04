@@ -151,6 +151,19 @@ func main() {
 	}
 
 	approvalSvc := approval.NewService(approval.NewPGStore(pool)).WithRules(approval.NewPGRuleStore(pool))
+	// A ticket entering pending_approval opens a kind=ticket approval for the
+	// inbox, and deciding that approval applies the same ticket decision as
+	// POST /tickets/{id}/approve.
+	svc.SetSignoffRequester(approvalSvc)
+	approvalSvc.WithTicketDecider(func(ctx context.Context, tid uuid.UUID, d approval.Status, note, operator string) error {
+		decision := map[approval.Status]ticket.ApproveDecision{
+			approval.StatusApproved:          ticket.ApproveDecisionApproved,
+			approval.StatusRejected:          ticket.ApproveDecisionRejected,
+			approval.StatusRevisionRequested: ticket.ApproveDecisionRevision,
+		}[d]
+		_, err := svc.Approve(ctx, tid, ticket.ApproveTicketReq{Decision: decision, RevisionNote: note, OperatorID: operator})
+		return err
+	})
 	delegationRuleH := handler.NewDelegationRuleHandler(approvalSvc)
 	zulip := notify.NewZulip(notify.ZulipConfig{URL: cfg.ZulipURL, BotEmail: cfg.ZulipBotEmail, APIKey: cfg.ZulipBotAPIKey})
 	zulip.LogIfDisabled()
