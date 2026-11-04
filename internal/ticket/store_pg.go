@@ -260,8 +260,12 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	}
 
 	if req.Status != nil {
-		if err := validateTransition(current.Status, *req.Status); err != nil {
-			return nil, err
+		// pending_approval -> completed exists only as the result of an approval
+		signoff := req.viaApproval && current.Status == StatusPendingApproval && *req.Status == StatusCompleted
+		if !signoff {
+			if err := validateTransition(current.Status, *req.Status); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -307,6 +311,7 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	if req.Metadata != nil {
 		newMetadata = req.Metadata
 	}
+	newMetadata = serverOwnedMetadata(current, req.Metadata != nil, newMetadata, newStatus)
 
 	newVisibility := current.Visibility
 	if req.Visibility != nil {
@@ -1373,4 +1378,35 @@ func (s *pgStore) ListAllRelations(ctx context.Context, limit, offset int) ([]Ti
 		out = append(out, r)
 	}
 	return out, total, rows.Err()
+}
+
+// serverOwnedMetadata keeps MetaPendingApprovalFrom under the server's control.
+// Entering pending_approval records where the ticket came from (a revision loop
+// keeps the original value); leaving it for anything but pending_revision drops
+// the key; and a metadata replacement from a client can neither set nor clear it.
+func serverOwnedMetadata(current *Ticket, replaced bool, m map[string]any, newStatus Status) map[string]any {
+	kept, had := current.Metadata[MetaPendingApprovalFrom]
+	enter := newStatus == StatusPendingApproval && current.Status != StatusPendingApproval
+	leave := current.Status == StatusPendingApproval && newStatus != StatusPendingApproval && newStatus != StatusPendingRevision
+	if !replaced && !enter && !leave {
+		return m
+	}
+	out := make(map[string]any, len(m)+1)
+	for k, v := range m {
+		if k != MetaPendingApprovalFrom {
+			out[k] = v
+		}
+	}
+	switch {
+	case enter && current.Status == StatusPendingRevision && had:
+		out[MetaPendingApprovalFrom] = kept
+	case enter:
+		out[MetaPendingApprovalFrom] = string(current.Status)
+	case !leave && had:
+		out[MetaPendingApprovalFrom] = kept
+	}
+	if len(out) == 0 && current.Metadata == nil {
+		return nil
+	}
+	return out
 }

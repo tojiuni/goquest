@@ -323,3 +323,69 @@ func TestListReturnsChildCount(t *testing.T) {
 		t.Errorf("Get(root): want child_count=2, got %d", rootGot.ChildCount)
 	}
 }
+
+// Real-DB check of the pending_approval sign-off path: the origin is recorded
+// by the server, clients cannot forge it, completing straight from
+// pending_approval is possible only through Approve.
+func TestPG_PendingApprovalSignoff(t *testing.T) {
+	ctx := context.Background()
+	_, store := setupTestDB(t)
+	svc := ticket.NewService(store, &mockPublisher{}, nil, nil, nil, nil)
+	id := makeTicketForRefs(t, store)
+	step := func(s ticket.Status) {
+		t.Helper()
+		if _, err := svc.Update(ctx, id, ticket.UpdateTicketReq{Status: &s}, "agent"); err != nil {
+			t.Fatalf("-> %s: %v", s, err)
+		}
+	}
+	step(ticket.StatusAssigned)
+	step(ticket.StatusInProgress)
+	step(ticket.StatusPendingApproval)
+
+	got, _ := store.Get(ctx, id)
+	if got.Metadata[ticket.MetaPendingApprovalFrom] != "in_progress" {
+		t.Fatalf("origin not recorded: %v", got.Metadata)
+	}
+	// a client cannot rewrite it through metadata
+	if _, err := svc.Update(ctx, id, ticket.UpdateTicketReq{Metadata: map[string]any{ticket.MetaPendingApprovalFrom: "assigned", "x": 1}}, "agent"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = store.Get(ctx, id)
+	if got.Metadata[ticket.MetaPendingApprovalFrom] != "in_progress" || got.Metadata["x"] != float64(1) {
+		t.Fatalf("server-owned key must survive a metadata replace: %v", got.Metadata)
+	}
+	// no plain PATCH to completed
+	done := ticket.StatusCompleted
+	if _, err := svc.Update(ctx, id, ticket.UpdateTicketReq{Status: &done}, "agent"); !errors.Is(err, ticket.ErrInvalidTransition) {
+		t.Fatalf("a plain update must not complete a pending_approval ticket: %v", err)
+	}
+	// approve completes it, stamps completed_at and drops the key
+	out, err := svc.Approve(ctx, id, ticket.ApproveTicketReq{Decision: ticket.ApproveDecisionApproved, OperatorID: "owner@x.io"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != ticket.StatusCompleted || out.CompletedAt == nil {
+		t.Fatalf("not completed: %+v", out)
+	}
+	if _, still := out.Metadata[ticket.MetaPendingApprovalFrom]; still {
+		t.Errorf("the key must be dropped once the ticket leaves pending_approval: %v", out.Metadata)
+	}
+	if out.Metadata["approval_operator_id"] != "owner@x.io" {
+		t.Errorf("decision not recorded: %v", out.Metadata)
+	}
+}
+
+func TestPG_PendingApprovalBeforeWorkStillAssigns(t *testing.T) {
+	ctx := context.Background()
+	_, store := setupTestDB(t)
+	svc := ticket.NewService(store, &mockPublisher{}, nil, nil, nil, nil)
+	id := makeTicketForRefs(t, store)
+	pa := ticket.StatusPendingApproval
+	if _, err := svc.Update(ctx, id, ticket.UpdateTicketReq{Status: &pa}, "agent"); err != nil { // from pending
+		t.Fatal(err)
+	}
+	out, err := svc.Approve(ctx, id, ticket.ApproveTicketReq{Decision: ticket.ApproveDecisionApproved, OperatorID: "o"})
+	if err != nil || out.Status != ticket.StatusAssigned {
+		t.Fatalf("approval before work must assign: %v %+v", err, out)
+	}
+}
