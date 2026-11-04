@@ -38,6 +38,7 @@ import (
 	"github.com/tojiuni/goquest/internal/macro"
 	"github.com/tojiuni/goquest/internal/magic"
 	"github.com/tojiuni/goquest/internal/mention"
+	"github.com/tojiuni/goquest/internal/mentionnotify"
 	"github.com/tojiuni/goquest/internal/migrate"
 	"github.com/tojiuni/goquest/internal/notify"
 	"github.com/tojiuni/goquest/internal/observability"
@@ -299,6 +300,11 @@ func main() {
 	}
 	usersH := handler.NewUsersHandler(userLookup)
 	mentionH := handler.NewMentionHandler(mentionSvc, userLookup)
+	// Notify people (Zulip DM) and session accounts (signed webhook) about new
+	// @mentions. Both paths are inert without their settings; comment text is
+	// never sent. Contract: geneso goquest/plan/2026-11-04-goquest-mention-notifications-plan.md
+	commentH.WithMentionNotifier(mentionnotify.New(userLookup, zulip,
+		mentionnotify.WebhookConfig{URL: cfg.MentionWebhookURL, Secret: cfg.MentionWebhookSecret}, cfg.GoquestUIURL))
 
 	// brain-backed ticket reference docs + GitHub-backed content
 	// (goq-refdoc-goquest-brain-client). Both degrade to inert responses
