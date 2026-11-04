@@ -90,3 +90,13 @@ func (ch *Checker) check(ctx context.Context, resType, resID, permission, subTyp
 	}
 	return resp.Permissionship == v1.CheckPermissionResponse_PERMISSIONSHIP_HAS_PERMISSION, nil
 }
+
+// PermCanWork is the ticket permission for day-to-day work: project editors and
+// everyone who can manage. It is looked up through the generic Check so adding it
+// did not change the PermissionChecker interface.
+const PermCanWork = "can_work"
+
+// CanWorkTicket reports whether userID may work ticketID (see PermCanWork).
+func CanWorkTicket(ctx context.Context, c PermissionChecker, ticketID uuid.UUID, userID string) (bool, error) {
+	return c.Check(ctx, TypeTicket, ticketID.String(), PermCanWork, userID)
+}

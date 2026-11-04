@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -485,4 +486,67 @@ func UpdateFieldNames() map[string]bool {
 		}
 	}
 	return names
+}
+
+// editorAllowed are the update fields a project editor (can_work without
+// can_manage) may change. Everything else — title_name (the VCS link handle),
+// project_id, parent_id, visibility, completion settings, reward, callback,
+// tags, refs, domain, risk tier — stays with managers.
+var editorAllowed = map[string]bool{
+	"status": true, "title": true, "description": true,
+	"assignee_id": true, "assignee_type": true, "assignee_org_id": true,
+	"due_at": true, "start_at": true, "priority": true, "metadata": true,
+}
+
+// EditorFieldViolations returns the JSON names in req that a non-manager may not
+// set, sorted. It also reports "status" when the new status is cancelled (that is
+// the DELETE route by another name) and "metadata" when it carries keys the
+// server itself writes (approval_*, pending_approval_from). An empty result means
+// the whole request is within an editor's remit. Fields are detected from the
+// decoded request, so a key the type does not know is not seen here (those are
+// ignored by the update anyway and reported as ignored_fields).
+func EditorFieldViolations(req UpdateTicketReq) []string {
+	var bad []string
+	v := reflect.ValueOf(req)
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if !f.IsExported() {
+			continue
+		}
+		name := strings.Split(f.Tag.Get("json"), ",")[0]
+		if name == "" || name == "-" {
+			continue
+		}
+		fv := v.Field(i)
+		set := false
+		switch fv.Kind() {
+		case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Interface:
+			set = !fv.IsNil()
+		default:
+			set = !fv.IsZero()
+		}
+		if !set {
+			continue
+		}
+		if !editorAllowed[name] {
+			bad = append(bad, name)
+			continue
+		}
+		switch name {
+		case "status":
+			if req.Status != nil && *req.Status == StatusCancelled {
+				bad = append(bad, "status")
+			}
+		case "metadata":
+			for k := range req.Metadata {
+				if k == MetaPendingApprovalFrom || strings.HasPrefix(k, "approval_") {
+					bad = append(bad, "metadata")
+					break
+				}
+			}
+		}
+	}
+	sort.Strings(bad)
+	return bad
 }

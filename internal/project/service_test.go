@@ -163,6 +163,14 @@ func TestHasRole_Ordering(t *testing.T) {
 		{project.RoleMember, project.RoleViewer, true},
 		{project.RoleViewer, project.RoleMember, false},
 		{project.RoleViewer, project.RoleViewer, true},
+		// editor sits between member and admin: it can do member things, never admin things
+		{project.RoleEditor, project.RoleViewer, true},
+		{project.RoleEditor, project.RoleMember, true},
+		{project.RoleEditor, project.RoleEditor, true},
+		{project.RoleEditor, project.RoleAdmin, false},
+		{project.RoleAdmin, project.RoleEditor, true},
+		{project.RoleMember, project.RoleEditor, false},
+		{project.RoleViewer, project.RoleEditor, false},
 	}
 	for _, c := range cases {
 		got := project.HasRole(c.caller, c.required)
