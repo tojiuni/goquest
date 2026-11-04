@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -152,4 +154,53 @@ func keys(m map[string]bool) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+func TestPatch_LogsIgnoredFieldNamesButNeverValues(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	h, st := patchRouter(t)
+	req := httptest.NewRequest("PATCH", "/tickets/"+st.t.ID.String(),
+		bytes.NewBufferString(`{"priority":"high","type":"SECRET-VALUE-1","not_a_field":{"x":"SECRET-VALUE-2"}}`))
+	req.Header.Set("User-Agent", "task-iim/1.0")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	out := buf.String()
+	for _, want := range []string{"ticket update: ignored fields", `"not_a_field"`, `"type"`, `"u@x.io"`, `ua="task-iim/1.0"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log line missing %s: %q", want, out)
+		}
+	}
+	if strings.Contains(out, "SECRET-VALUE") || strings.Contains(out, "high") {
+		t.Errorf("values must never be logged: %q", out)
+	}
+	if strings.Count(out, "ticket update: ignored fields") != 1 {
+		t.Errorf("exactly one line per PATCH: %q", out)
+	}
+
+	// nothing ignored -> nothing logged
+	buf.Reset()
+	doPatch(h, st.t.ID, `{"priority":"low"}`)
+	if strings.Contains(buf.String(), "ignored fields") {
+		t.Errorf("a clean PATCH must not log: %q", buf.String())
+	}
+}
+
+func TestPatch_LogBoundsClientControlledText(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	h, st := patchRouter(t)
+	long := strings.Repeat("a", 500)
+	body := `{"` + long + `":1,"line\nbreak":2}`
+	req := httptest.NewRequest("PATCH", "/tickets/"+st.t.ID.String(), bytes.NewBufferString(body))
+	req.Header.Set("User-Agent", strings.Repeat("u", 500)+"\nINJECTED")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	out := strings.TrimSpace(buf.String())
+	if strings.Count(out, "\n") != 0 {
+		t.Errorf("client text must not be able to add log lines: %q", out)
+	}
+	if strings.Contains(out, long) || len(out) > 400 {
+		t.Errorf("names and user-agent must be bounded (len %d)", len(out))
+	}
 }

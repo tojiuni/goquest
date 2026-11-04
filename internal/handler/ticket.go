@@ -465,6 +465,7 @@ func (h *TicketHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if len(ignored) > 0 {
 		// still 200: what was recognised was applied. The names tell the caller what was not.
 		w.Header().Set("X-Goquest-Ignored-Fields", strings.Join(ignored, ","))
+		logIgnoredFields(ignored, actor, r.UserAgent())
 		writeJSON(w, http.StatusOK, ticketWithIgnored{Ticket: t, IgnoredFields: ignored})
 		return
 	}
@@ -1452,4 +1453,28 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// logIgnoredFields writes one info line per PATCH that carried fields the update
+// does not accept, so callers that still send them can be found before the
+// endpoint starts rejecting them. It records field NAMES, the requester and the
+// user-agent only — never values. Names and the user-agent come from the client,
+// so they are quoted and bounded.
+func logIgnoredFields(ignored []string, actor, userAgent string) {
+	const maxNames, maxLen = 20, 40
+	names := make([]string, 0, len(ignored))
+	for i, n := range ignored {
+		if i == maxNames {
+			names = append(names, "…")
+			break
+		}
+		if len(n) > maxLen {
+			n = n[:maxLen] + "…"
+		}
+		names = append(names, n)
+	}
+	if len(userAgent) > 120 {
+		userAgent = userAgent[:120] + "…"
+	}
+	log.Printf("ticket update: ignored fields %q by %q ua=%q", names, actor, userAgent)
 }
