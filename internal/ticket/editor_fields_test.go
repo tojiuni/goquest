@@ -27,7 +27,6 @@ func TestEditorFieldViolations(t *testing.T) {
 		{"pending_approval too", ticket.UpdateTicketReq{Status: st(ticket.StatusPendingApproval)}, nil},
 		{"title and description", ticket.UpdateTicketReq{Title: s("t"), Description: s("d")}, nil},
 		{"assignee, dates, priority", ticket.UpdateTicketReq{AssigneeID: s("a"), DueAt: &now, StartAt: &now, Priority: pr(ticket.PriorityHigh)}, nil},
-		{"plain metadata", ticket.UpdateTicketReq{Metadata: map[string]any{"note": 1}}, nil},
 
 		// cancelling is the DELETE route by another name
 		{"cancel", ticket.UpdateTicketReq{Status: st(ticket.StatusCancelled)}, []string{"status"}},
@@ -37,8 +36,9 @@ func TestEditorFieldViolations(t *testing.T) {
 		{"visibility, domain, risk", ticket.UpdateTicketReq{Visibility: vis("restricted"), Domain: dom("code"), RiskTier: risk("high")}, []string{"domain", "risk_tier", "visibility"}},
 		{"tags and refs", ticket.UpdateTicketReq{TagIDs: []uuid.UUID{id}, RefIDs: refs()}, []string{"ref_ids", "tag_ids"}},
 		{"an empty (clearing) tag list is still a write", ticket.UpdateTicketReq{TagIDs: []uuid.UUID{}}, []string{"tag_ids"}},
-		{"server-written metadata keys", ticket.UpdateTicketReq{Metadata: map[string]any{"approval_decision": "approved"}}, []string{"metadata"}},
-		{"the server-owned origin key", ticket.UpdateTicketReq{Metadata: map[string]any{ticket.MetaPendingApprovalFrom: "in_progress"}}, []string{"metadata"}},
+		// metadata is replaced wholesale and holds the approval record, so it is manager-only
+		{"any metadata", ticket.UpdateTicketReq{Metadata: map[string]any{"note": 1}}, []string{"metadata"}},
+		{"an empty metadata replace would still wipe the approval record", ticket.UpdateTicketReq{Metadata: map[string]any{}}, []string{"metadata"}},
 		{"mixed: one bad field rejects the lot, and all bad ones are listed",
 			ticket.UpdateTicketReq{Title: s("t"), TitleName: s("goq-a-b"), Status: st(ticket.StatusCancelled)}, []string{"status", "title_name"}},
 	}
@@ -57,13 +57,13 @@ func TestEditorFieldViolations_CoversEveryUpdateField(t *testing.T) {
 	allowed := map[string]bool{
 		"status": true, "title": true, "description": true, "assignee_id": true,
 		"assignee_type": true, "assignee_org_id": true, "due_at": true, "start_at": true,
-		"priority": true, "metadata": true,
+		"priority": true,
 	}
 	// the fields a manager-only caller must not set, as of the approved spec
 	managerOnly := []string{
 		"title_name", "risk_tier", "domain", "project_id", "parent_id", "agent_context",
 		"visibility", "completion_mode", "completion_spec", "reward_xp", "callback_url",
-		"tag_ids", "ref_ids", "cancellation_note",
+		"tag_ids", "ref_ids", "cancellation_note", "metadata",
 	}
 	known := ticket.UpdateFieldNames()
 	for name := range known {

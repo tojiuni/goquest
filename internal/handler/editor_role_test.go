@@ -73,12 +73,12 @@ func TestEditorPatch_ManagerOnlyFieldsRejectTheWholeRequest(t *testing.T) {
 		body   string
 		fields []string
 	}{
-		"title_name":    {`{"title":"x","title_name":"goq-new-name"}`, []string{"title_name"}},
-		"cancel":        {`{"status":"cancelled"}`, []string{"status"}},
-		"visibility":    {`{"visibility":"restricted","priority":"low"}`, []string{"visibility"}},
-		"tags":          {`{"tag_ids":[]}`, []string{"tag_ids"}},
-		"approval meta": {`{"metadata":{"approval_decision":"approved"}}`, []string{"metadata"}},
-		"several":       {`{"project_id":"` + uuid.NewString() + `","reward_xp":5}`, []string{"project_id", "reward_xp"}},
+		"title_name": {`{"title":"x","title_name":"goq-new-name"}`, []string{"title_name"}},
+		"cancel":     {`{"status":"cancelled"}`, []string{"status"}},
+		"visibility": {`{"visibility":"restricted","priority":"low"}`, []string{"visibility"}},
+		"tags":       {`{"tag_ids":[]}`, []string{"tag_ids"}},
+		"metadata":   {`{"metadata":{}}`, []string{"metadata"}},
+		"several":    {`{"project_id":"` + uuid.NewString() + `","reward_xp":5}`, []string{"project_id", "reward_xp"}},
 	} {
 		rec := w.patch(w.editorT.ID, tc.body)
 		if rec.Code != http.StatusForbidden {

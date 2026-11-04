@@ -495,13 +495,15 @@ func UpdateFieldNames() map[string]bool {
 var editorAllowed = map[string]bool{
 	"status": true, "title": true, "description": true,
 	"assignee_id": true, "assignee_type": true, "assignee_org_id": true,
-	"due_at": true, "start_at": true, "priority": true, "metadata": true,
+	"due_at": true, "start_at": true, "priority": true,
+	// metadata is deliberately NOT here: PATCH replaces it wholesale, and Approve
+	// records its decision in metadata (approval_decision, approval_operator_id), so
+	// an editor replacing metadata could erase that evidence.
 }
 
 // EditorFieldViolations returns the JSON names in req that a non-manager may not
 // set, sorted. It also reports "status" when the new status is cancelled (that is
-// the DELETE route by another name) and "metadata" when it carries keys the
-// server itself writes (approval_*, pending_approval_from). An empty result means
+// the DELETE route by another name). An empty result means
 // the whole request is within an editor's remit. Fields are detected from the
 // decoded request, so a key the type does not know is not seen here (those are
 // ignored by the update anyway and reported as ignored_fields).
@@ -537,13 +539,6 @@ func EditorFieldViolations(req UpdateTicketReq) []string {
 		case "status":
 			if req.Status != nil && *req.Status == StatusCancelled {
 				bad = append(bad, "status")
-			}
-		case "metadata":
-			for k := range req.Metadata {
-				if k == MetaPendingApprovalFrom || strings.HasPrefix(k, "approval_") {
-					bad = append(bad, "metadata")
-					break
-				}
 			}
 		}
 	}
