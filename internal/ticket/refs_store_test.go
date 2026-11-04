@@ -389,3 +389,31 @@ func TestPG_PendingApprovalBeforeWorkStillAssigns(t *testing.T) {
 		t.Fatalf("approval before work must assign: %v %+v", err, out)
 	}
 }
+
+func TestPG_UpdatePriority(t *testing.T) {
+	ctx := context.Background()
+	_, store := setupTestDB(t)
+	svc := ticket.NewService(store, &mockPublisher{}, nil, nil, nil, nil)
+	id := makeTicketForRefs(t, store)
+	high := ticket.PriorityHigh
+	out, err := svc.Update(ctx, id, ticket.UpdateTicketReq{Priority: &high}, "agent")
+	if err != nil || out.Priority != ticket.PriorityHigh {
+		t.Fatalf("priority not applied: %v %+v", err, out)
+	}
+	got, _ := store.Get(ctx, id)
+	if got.Priority != ticket.PriorityHigh {
+		t.Errorf("priority not persisted: %s", got.Priority)
+	}
+	// other updates leave it alone
+	title := "renamed"
+	if _, err := svc.Update(ctx, id, ticket.UpdateTicketReq{Title: &title}, "agent"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := store.Get(ctx, id); got.Priority != ticket.PriorityHigh {
+		t.Errorf("an unrelated update changed priority to %s", got.Priority)
+	}
+	bad := ticket.Priority("medium")
+	if _, err := svc.Update(ctx, id, ticket.UpdateTicketReq{Priority: &bad}, "agent"); !errors.Is(err, ticket.ErrValidation) {
+		t.Errorf("an unknown priority must be a validation error, got %v", err)
+	}
+}

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -380,11 +382,19 @@ func (h *TicketHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req ticket.UpdateTicketReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// Read the body once so fields the update does not recognise can be reported
+	// back instead of being dropped without a word (goq-ticket-update-ignores-priority).
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
 	}
+	var req ticket.UpdateTicketReq
+	if err := json.Unmarshal(raw, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	ignored := unknownUpdateFields(raw)
 
 	actor := auth.RequesterID(r)
 	t, err := h.svc.Update(r.Context(), id, req, actor)
@@ -452,7 +462,42 @@ func (h *TicketHandler) Update(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	if len(ignored) > 0 {
+		// still 200: what was recognised was applied. The names tell the caller what was not.
+		w.Header().Set("X-Goquest-Ignored-Fields", strings.Join(ignored, ","))
+		writeJSON(w, http.StatusOK, ticketWithIgnored{Ticket: t, IgnoredFields: ignored})
+		return
+	}
 	writeJSON(w, http.StatusOK, t)
+}
+
+// ticketWithIgnored is the PATCH response when the body carried fields the update
+// does not accept: the ticket plus the names that were not applied.
+type ticketWithIgnored struct {
+	*ticket.Ticket
+	IgnoredFields []string `json:"ignored_fields"`
+}
+
+// unknownUpdateFields returns the top-level body keys UpdateTicketReq does not
+// accept, sorted. Matching is case-insensitive because encoding/json matches
+// field names that way, so a key it would have applied is never reported.
+func unknownUpdateFields(raw []byte) []string {
+	var body map[string]json.RawMessage
+	if json.Unmarshal(raw, &body) != nil {
+		return nil
+	}
+	known := map[string]bool{}
+	for name := range ticket.UpdateFieldNames() {
+		known[strings.ToLower(name)] = true
+	}
+	var out []string
+	for k := range body {
+		if !known[strings.ToLower(k)] {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // maxBulkUpdateIDs bounds a single bulk-update request so one call cannot fan
