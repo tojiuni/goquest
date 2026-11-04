@@ -784,12 +784,11 @@ var validRiskTiers = map[RiskTier]struct{}{
 	RiskLow: {}, RiskMedium: {}, RiskHigh: {},
 }
 
-// validateRiskTier allows "" (defaulted by the caller) plus the three known
-// tiers; anything else is rejected.
 var validPriorities = map[Priority]struct{}{
 	PriorityUrgent: {}, PriorityHigh: {}, PriorityNormal: {}, PriorityLow: {},
 }
 
+// validatePriority rejects anything but the four known priorities.
 func validatePriority(p Priority) error {
 	if _, ok := validPriorities[p]; !ok {
 		return fmt.Errorf("%w: invalid priority: %q (want urgent, high, normal or low)", ErrValidation, p)
@@ -797,6 +796,8 @@ func validatePriority(p Priority) error {
 	return nil
 }
 
+// validateRiskTier allows "" (defaulted by the caller) plus the three known
+// tiers; anything else is rejected.
 func validateRiskTier(r RiskTier) error {
 	if r == "" {
 		return nil

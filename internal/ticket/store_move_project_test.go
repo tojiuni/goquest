@@ -20,7 +20,7 @@ func insertWorkspace(t *testing.T, ctx context.Context, pool *pgxpool.Pool) uuid
 	now := time.Now().UTC()
 	_, err := pool.Exec(ctx, `
 		INSERT INTO workspaces (id, name, slug, description, type, owner_id, created_at, updated_at)
-		VALUES ($1,$2,$3,'','general',$4,$5,$5)`,
+		VALUES ($1,$2,$3,'','shared',$4,$5,$5)`,
 		id, "ws-"+id.String()[:8], "ws-"+id.String()[:8], "test@example.com", now)
 	require.NoError(t, err)
 	return id
