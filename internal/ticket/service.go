@@ -418,6 +418,11 @@ func (s *Service) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq,
 			return nil, err
 		}
 	}
+	if req.Priority != nil {
+		if err := validatePriority(*req.Priority); err != nil {
+			return nil, err
+		}
+	}
 	t, err := s.store.Update(ctx, id, req)
 	if err != nil {
 		return nil, err
@@ -781,6 +786,17 @@ var validRiskTiers = map[RiskTier]struct{}{
 
 // validateRiskTier allows "" (defaulted by the caller) plus the three known
 // tiers; anything else is rejected.
+var validPriorities = map[Priority]struct{}{
+	PriorityUrgent: {}, PriorityHigh: {}, PriorityNormal: {}, PriorityLow: {},
+}
+
+func validatePriority(p Priority) error {
+	if _, ok := validPriorities[p]; !ok {
+		return fmt.Errorf("%w: invalid priority: %q (want urgent, high, normal or low)", ErrValidation, p)
+	}
+	return nil
+}
+
 func validateRiskTier(r RiskTier) error {
 	if r == "" {
 		return nil

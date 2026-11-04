@@ -285,6 +285,10 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 	if req.AssigneeOrgID != nil {
 		newAssigneeOrgID = req.AssigneeOrgID
 	}
+	newPriority := current.Priority
+	if req.Priority != nil {
+		newPriority = *req.Priority
+	}
 	newRiskTier := current.RiskTier
 	if req.RiskTier != nil {
 		newRiskTier = *req.RiskTier
@@ -483,7 +487,8 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 			reward_xp=$14, due_at=$15, start_at=$16, callback_url=$17,
 			updated_at=$18, completed_at=$19,
 			cancellation_note=$20, risk_tier=$21,
-			project_id=$22, assignee_org_id=$23, parent_id=$24
+			project_id=$22, assignee_org_id=$23, parent_id=$24,
+			priority=$25
 		WHERE id=$1`,
 		id,
 		titleNamePtr, newTitle, newDescription,
@@ -494,6 +499,7 @@ func (s *pgStore) Update(ctx context.Context, id uuid.UUID, req UpdateTicketReq)
 		now, completedAt,
 		cancellationNote, string(newRiskTier),
 		newProjectID, newAssigneeOrgID, newParentID,
+		string(newPriority),
 	)
 	if err != nil {
 		if isUniqueViolation(err, "tickets_project_title_name_key") {
