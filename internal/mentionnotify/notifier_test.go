@@ -1,12 +1,15 @@
 package mentionnotify
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -292,4 +295,22 @@ func TestLookupFailureAndRetriesNeverPanic(t *testing.T) {
 	nilN.Notify(context.Background(), tk(), uuid.New(), "a", []*mention.Mention{m})
 	n.Notify(context.Background(), nil, uuid.New(), "a", []*mention.Mention{m})
 	n.Notify(context.Background(), tk(), uuid.New(), "a", nil)
+}
+
+func TestWebhookSuccessIsLoggedWithoutSecrets(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	srv, _ := hookServer(t, 503, 202)
+	n := newNotifier(fakeDir{actors: []directory.Actor{session}}, &fakeDM{}, WebhookConfig{URL: srv.URL, Secret: vecSecret})
+	m := mn("01SESS")
+	n.Notify(context.Background(), tk(), *m.CommentID, "01AUTH", []*mention.Mention{m})
+	out := buf.String()
+	want := "webhook accepted mention " + m.ID.String() + " comment " + m.CommentID.String() + " (status 202, attempt 2)"
+	if !strings.Contains(out, want) {
+		t.Errorf("missing success log line %q in %q", want, out)
+	}
+	if strings.Contains(out, vecSecret) || strings.Contains(out, "sha256=") {
+		t.Error("the log must not contain the secret or a signature")
+	}
 }
