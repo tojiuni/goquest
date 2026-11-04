@@ -221,6 +221,9 @@ func (n *Notifier) webhook(ctx context.Context, t *ticket.Ticket, commentID uuid
 		status, err := n.post(ctx, body)
 		switch {
 		case err == nil && status/100 == 2:
+			// one line per delivered webhook so a mention can be traced end to end
+			// (the receiver may answer 202 "deferred"); ids and status only, no secrets
+			log.Printf("mention notify: webhook accepted mention %s comment %s (status %d, attempt %d)", p.MentionID, p.CommentID, status, i+1)
 			return
 		case err == nil && status/100 == 4:
 			// rejected (bad signature/clock/duplicate): retrying cannot help
