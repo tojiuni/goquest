@@ -22,10 +22,12 @@ type fakeCreateMentionSvc struct {
 	created []*mention.Mention
 	err     error
 	called  bool
+	narrow  bool // the ctx it received was narrowed to project members
 }
 
-func (s *fakeCreateMentionSvc) CreateFromBody(_ context.Context, ticketID, _ uuid.UUID, commentID *uuid.UUID, _ mention.Source, authorID, _ string) ([]*mention.Mention, error) {
+func (s *fakeCreateMentionSvc) CreateFromBody(ctx context.Context, ticketID, _ uuid.UUID, commentID *uuid.UUID, _ mention.Source, authorID, _ string) ([]*mention.Mention, error) {
 	s.called = true
+	s.narrow = mention.IsProjectMembersOnly(ctx)
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -109,5 +111,17 @@ func TestCommentCreate_WorksWithoutANotifier(t *testing.T) {
 	h := handler.NewCommentHandler(&stubCommentSvc{}, nil).WithMentions(mentionTicketGetter{&ticket.Ticket{ID: uuid.New(), ProjectID: &pid}}, ms, nil)
 	if rec := postComment(t, h, `{"body":"hi @a"}`); rec.Code != http.StatusCreated {
 		t.Fatalf("status %d", rec.Code)
+	}
+}
+
+func TestCommentCreate_RestrictedTicketNarrowsMentionEligibility(t *testing.T) {
+	pid := uuid.New()
+	for vis, wantNarrow := range map[ticket.Visibility]bool{ticket.VisibilityRestricted: true, ticket.VisibilityProject: false, "": false} {
+		ms := &fakeCreateMentionSvc{}
+		h := handler.NewCommentHandler(&stubCommentSvc{}, nil).WithMentions(mentionTicketGetter{&ticket.Ticket{ID: uuid.New(), ProjectID: &pid, Visibility: vis}}, ms, nil)
+		postComment(t, h, `{"body":"hi @a"}`)
+		if !ms.called || ms.narrow != wantNarrow {
+			t.Errorf("visibility %q: narrowed=%v, want %v", vis, ms.narrow, wantNarrow)
+		}
 	}
 }

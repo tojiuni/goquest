@@ -124,6 +124,11 @@ func (h *CommentHandler) extractMentions(ctx context.Context, ticketID, commentI
 	if err != nil || t.ProjectID == nil {
 		return
 	}
+	if t.Visibility == ticket.VisibilityRestricted {
+		// plain workspace members cannot open a restricted ticket, so they must
+		// not be notified about it either
+		ctx = mention.WithProjectMembersOnly(ctx)
+	}
 	created, err := h.mentions.CreateFromBody(ctx, ticketID, *t.ProjectID, &commentID, mention.SourceComment, authorID, body)
 	if err != nil {
 		return
