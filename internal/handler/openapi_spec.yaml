@@ -150,6 +150,24 @@ components:
               actor: { type: string }
               note: { type: string }
               created_at: { type: string, format: date-time }
+    Mention:
+      type: object
+      description: >
+        One @mention of the caller, with just enough context to open the ticket.
+        comment_snippet is an excerpt of the comment the mention appeared in and
+        only ever reaches the mentioned actor (this is the caller's own inbox).
+      properties:
+        id: { type: string, format: uuid }
+        ticket_id: { type: string, format: uuid }
+        ticket_title: { type: string }
+        comment_id: { type: string, format: uuid }
+        mentioned_actor_id: { type: string }
+        source: { type: string, enum: [comment, description] }
+        created_by: { type: string }
+        created_by_name: { type: string }
+        comment_snippet: { type: string }
+        created_at: { type: string, format: date-time }
+        seen_at: { type: string, format: date-time, nullable: true }
 security:
   - ApiKeyAuth: []
 paths:
@@ -683,3 +701,36 @@ paths:
         '404': { description: no such approval on this ticket }
         '409': { description: not pending any more }
         '422': { description: invalid decision, missing note or user_ref }
+  /users/mentions:
+    get:
+      summary: List the caller's own @mentions, newest first
+      description: >
+        The authenticated caller's mention inbox (the actor comes from the
+        credential, never from a parameter). unseen_count is the number of
+        mentions not yet marked seen, across all pages.
+      parameters:
+        - { name: limit, in: query, required: false, schema: { type: integer } }
+        - { name: offset, in: query, required: false, schema: { type: integer } }
+      responses:
+        '200':
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mentions:
+                    type: array
+                    items: { $ref: '#/components/schemas/Mention' }
+                  unseen_count: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+        '401': { description: missing requester }
+  /mentions/{id}/seen:
+    post:
+      summary: Mark one of your mentions as seen
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: marked seen }
+        '404': { description: no such mention for the caller }
