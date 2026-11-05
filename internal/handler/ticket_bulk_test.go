@@ -50,11 +50,24 @@ func (noopPublisher) PublishCompleted(context.Context, *ticket.Ticket) error { r
 // inherited from worldChecker (unused — the bulk route mounts no view gate).
 type manageChecker struct {
 	*worldChecker
-	allow map[uuid.UUID]bool
+	allow map[uuid.UUID]bool // can manage (and therefore can work)
+	work  map[uuid.UUID]bool // editors: can work but not manage
 }
 
 func (c *manageChecker) CanManageTicket(_ context.Context, id uuid.UUID, _ string) (bool, error) {
 	return c.allow[id], nil
+}
+
+// Check answers can_work the way the schema does: editors plus managers.
+func (c *manageChecker) Check(ctx context.Context, objType, objID, permission, userID string) (bool, error) {
+	if permission == spicedb.PermCanWork {
+		id, err := uuid.Parse(objID)
+		if err != nil {
+			return false, err
+		}
+		return c.allow[id] || c.work[id], nil
+	}
+	return c.worldChecker.Check(ctx, objType, objID, permission, userID)
 }
 
 // TestBulkUpdate_PerIDAuthzAndPartialFailure drives POST /tickets/bulk with a

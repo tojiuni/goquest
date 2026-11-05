@@ -129,7 +129,8 @@ func HasRole(callerRole, required Role) bool {
 	order := map[Role]int{
 		RoleViewer: 0,
 		RoleMember: 1,
-		RoleAdmin:  2,
+		RoleEditor: 2,
+		RoleAdmin:  3,
 	}
 	return order[callerRole] >= order[required]
 }

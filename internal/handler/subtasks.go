@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/tojiuni/goquest/internal/spicedb"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -68,7 +69,7 @@ func (h *TicketHandler) SubtasksFromText(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if parent.ProjectID != nil {
-		ok, err := h.checker.CanManageTicket(r.Context(), parentID, actor)
+		ok, err := spicedb.CanWorkTicket(r.Context(), h.checker, parentID, actor)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "permission check: "+err.Error())
 			return
@@ -179,7 +180,7 @@ func (h *TicketHandler) SubtasksFromChat(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if parent.ProjectID != nil {
-		ok, err := h.checker.CanManageTicket(r.Context(), parentID, actor)
+		ok, err := spicedb.CanWorkTicket(r.Context(), h.checker, parentID, actor)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "permission check: "+err.Error())
 			return

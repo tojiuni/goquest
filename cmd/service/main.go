@@ -300,6 +300,10 @@ func main() {
 	ticketH := handler.NewTicketHandler(svc, sdbChecker, sdbWriter, projectResolver, tagResolver, auditLogger, vcsSvc, cogitoClient).WithApprovalRecorder(approvalSvc)
 	requireTicketView := auth.RequireTicketView(svc, sdbChecker)
 	requireTicketManage := auth.RequireTicketManage(svc, sdbChecker)
+	// day-to-day writes (status, assignee, dates, priority, title/description,
+	// relations): project editors and managers. Which fields an editor may touch
+	// is enforced in the handlers (ticket.EditorFieldViolations).
+	requireTicketWork := auth.RequireTicketWork(svc, sdbChecker)
 	idempotent := idempotency.Middleware(idempotency.NewRedisStore(rdb))
 	healthH := handler.NewHealthHandler(pool, rdb)
 	openapiH, err := handler.NewOpenAPIHandler()
@@ -509,7 +513,7 @@ func main() {
 				// shadow mode (NoopChecker) and enforced when SPICEDB_ENFORCE is set.
 				r.Use(requireTicketView)
 				r.Get("/", ticketH.Get)
-				r.With(requireTicketManage).Patch("/", ticketH.Update)
+				r.With(requireTicketWork).Patch("/", ticketH.Update)
 				r.With(requireTicketManage).Delete("/", ticketH.Cancel)
 				r.With(requireTicketManage).Post("/approve", ticketH.Approve)
 				r.With(requireTicketManage).Post("/reopen", ticketH.Reopen)
@@ -534,8 +538,8 @@ func main() {
 
 				// ── Ticket relations (goq-ticket-relations) ───────
 				r.Get("/relations", ticketH.ListRelations)
-				r.With(requireTicketManage).Post("/relations", ticketH.AddRelation)
-				r.With(requireTicketManage).Delete("/relations/{relation_id}", ticketH.RemoveRelation)
+				r.With(requireTicketWork).Post("/relations", ticketH.AddRelation)
+				r.With(requireTicketWork).Delete("/relations/{relation_id}", ticketH.RemoveRelation)
 
 				// brain-backed ticket reference docs (goq-refdoc-goquest-brain-client)
 				r.Get("/docs", refDocsH.TicketDocs)

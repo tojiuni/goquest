@@ -47,7 +47,7 @@ func (w *Writer) WriteProjectMember(ctx context.Context, projectID uuid.UUID, us
 
 // DeleteProjectMember removes all direct role relations for a user in a project.
 func (w *Writer) DeleteProjectMember(ctx context.Context, projectID uuid.UUID, userID string) error {
-	for _, role := range []string{"admin", "member", "viewer"} {
+	for _, role := range []string{"admin", "editor", "member", "viewer"} {
 		if err := w.delete(ctx, TypeProject, projectID.String(), role, TypeUser, userID, ""); err != nil {
 			return err
 		}
