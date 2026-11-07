@@ -59,3 +59,8 @@ repos:
     project: whoami-ui
   - repo: Lyckabc/goquest-ui
     project: goquest
+  # 외부 멤버 작업 저장소 — goquest obarun 작업공간(slug obarun)의 obarun 프로젝트로 연결.
+  # 등록·웹훅은 2026-11-07 적용됨(주인 로그인, hook 708475227). obr-vmd-uni-scaffold
+  - repo: tojiuni/obarun
+    project: obarun
+    workspace: obarun
