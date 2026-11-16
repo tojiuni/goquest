@@ -202,7 +202,16 @@ func main() {
 		} else {
 			sdbWriter = sdbClient.Writer() // dual-write always active when connected
 			if cfg.SpiceDBEnforce {
-				sdbChecker = sdbClient.Checker()
+				chk := sdbClient.Checker()
+				// Deploy order: code can ship before the schema that defines can_work.
+				// Without it every work-gated route would error, so fall back to
+				// can_manage (editors lose work access, managers keep it).
+				ok, schemaErr := sdbClient.HasTicketPermission(context.Background(), spicedb.PermCanWork)
+				if schemaErr != nil || !ok {
+					log.Printf("warn: spicedb schema has no ticket.%s (err=%v) — work gate uses can_manage until the schema is applied and the service restarts", spicedb.PermCanWork, schemaErr)
+					chk.UseManageForWork()
+				}
+				sdbChecker = chk
 				log.Printf("spicedb connected + ENFORCING: %s", cfg.SpiceDBEndpoint)
 			} else {
 				log.Printf("spicedb connected (shadow, checks permissive): %s", cfg.SpiceDBEndpoint)

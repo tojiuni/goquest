@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/tojiuni/goquest/internal/spicedb"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -68,16 +67,18 @@ func (h *TicketHandler) SubtasksFromText(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "lookup parent ticket: "+err.Error())
 		return
 	}
-	if parent.ProjectID != nil {
-		ok, err := spicedb.CanWorkTicket(r.Context(), h.checker, parentID, actor)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "permission check: "+err.Error())
-			return
-		}
-		if !ok {
-			writeError(w, http.StatusForbidden, "access denied")
-			return
-		}
+	visible, workable, err := h.ticketAccess(r.Context(), parent, actor)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check: "+err.Error())
+		return
+	}
+	if !visible {
+		writeError(w, http.StatusNotFound, "parent ticket not found")
+		return
+	}
+	if !workable {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
 	}
 
 	if h.cogito == nil {
@@ -179,16 +180,18 @@ func (h *TicketHandler) SubtasksFromChat(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "lookup parent ticket: "+err.Error())
 		return
 	}
-	if parent.ProjectID != nil {
-		ok, err := spicedb.CanWorkTicket(r.Context(), h.checker, parentID, actor)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "permission check: "+err.Error())
-			return
-		}
-		if !ok {
-			writeError(w, http.StatusForbidden, "access denied")
-			return
-		}
+	visible, workable, err := h.ticketAccess(r.Context(), parent, actor)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check: "+err.Error())
+		return
+	}
+	if !visible {
+		writeError(w, http.StatusNotFound, "parent ticket not found")
+		return
+	}
+	if !workable {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
 	}
 
 	if h.cogito == nil {

@@ -58,6 +58,16 @@ func (c *manageChecker) CanManageTicket(_ context.Context, id uuid.UUID, _ strin
 	return c.allow[id], nil
 }
 
+// CanViewTicket: fixture default is that project members can view project
+// tickets (can_view_project), so the work/manage denial paths are what the tests
+// exercise. Restricted tickets fall back to the explicit grants in worldChecker.
+func (c *manageChecker) CanViewTicket(ctx context.Context, id uuid.UUID, userID string, vis spicedb.VisibilityMode) (bool, error) {
+	if vis != spicedb.VisibilityRestricted {
+		return true, nil
+	}
+	return c.worldChecker.CanViewTicket(ctx, id, userID, vis)
+}
+
 // Check answers can_work the way the schema does: editors plus managers.
 func (c *manageChecker) Check(ctx context.Context, objType, objID, permission, userID string) (bool, error) {
 	if permission == spicedb.PermCanWork {
