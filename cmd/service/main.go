@@ -204,12 +204,10 @@ func main() {
 			if cfg.SpiceDBEnforce {
 				chk := sdbClient.Checker()
 				// Deploy order: code can ship before the schema that defines can_work.
-				// Without it every work-gated route would error, so fall back to
-				// can_manage (editors lose work access, managers keep it).
-				ok, schemaErr := sdbClient.HasTicketPermission(context.Background(), spicedb.PermCanWork)
-				if schemaErr != nil || !ok {
+				// ConfigureWorkGate falls back to can_manage in that case (editors lose
+				// work access, managers keep it) and reports it here.
+				if found, schemaErr := sdbClient.ConfigureWorkGate(context.Background(), chk); !found {
 					log.Printf("warn: spicedb schema has no ticket.%s (err=%v) — work gate uses can_manage until the schema is applied and the service restarts", spicedb.PermCanWork, schemaErr)
-					chk.UseManageForWork()
 				}
 				sdbChecker = chk
 				log.Printf("spicedb connected + ENFORCING: %s", cfg.SpiceDBEndpoint)

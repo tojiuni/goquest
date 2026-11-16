@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	authzed "github.com/authzed/authzed-go/v1"
 	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
+	authzed "github.com/authzed/authzed-go/v1"
 	"github.com/authzed/grpcutil"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -53,11 +53,38 @@ func (c *Client) Writer() *Writer { return &Writer{c: c} }
 // perm on definition ticket. An error means the schema could not be read; callers
 // treat that as "not present" (fail closed).
 func (c *Client) HasTicketPermission(ctx context.Context, perm string) (bool, error) {
-	resp, err := c.inner.ReadSchema(ctx, &v1.ReadSchemaRequest{})
+	return hasTicketPermission(ctx, c.inner, perm)
+}
+
+// schemaReader is the one SpiceDB call the boot check needs (the authzed client
+// satisfies it; tests supply a fake).
+type schemaReader interface {
+	ReadSchema(ctx context.Context, in *v1.ReadSchemaRequest, opts ...grpc.CallOption) (*v1.ReadSchemaResponse, error)
+}
+
+func hasTicketPermission(ctx context.Context, sr schemaReader, perm string) (bool, error) {
+	resp, err := sr.ReadSchema(ctx, &v1.ReadSchemaRequest{})
 	if err != nil {
 		return false, err
 	}
 	return schemaDefinesPermission(resp.GetSchemaText(), "ticket", perm), nil
+}
+
+// ConfigureWorkGate runs the boot check for the work permission and, unless the
+// live schema defines ticket.can_work, switches ch to the can_manage fallback.
+// It returns whether can_work was found; an unreadable schema counts as not found
+// (fail closed for editors, managers keep access).
+func (c *Client) ConfigureWorkGate(ctx context.Context, ch *Checker) (bool, error) {
+	return configureWorkGate(ctx, c.inner, ch)
+}
+
+func configureWorkGate(ctx context.Context, sr schemaReader, ch *Checker) (bool, error) {
+	ok, err := hasTicketPermission(ctx, sr, PermCanWork)
+	if err != nil || !ok {
+		ch.UseManageForWork()
+		return false, err
+	}
+	return true, nil
 }
 
 // schemaDefinesPermission scans schemaText for `definition <def> { ... }` and

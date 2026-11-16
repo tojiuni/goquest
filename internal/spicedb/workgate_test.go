@@ -2,11 +2,14 @@ package spicedb
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
 
+	v1 "github.com/authzed/authzed-go/proto/authzed/api/v1"
 	"github.com/google/uuid"
+	"google.golang.org/grpc"
 )
 
 func TestSchemaDefinesPermission(t *testing.T) {
@@ -126,6 +129,48 @@ func TestProjectMemberRolesCoverEveryProjectRole(t *testing.T) {
 	for r, seen := range want {
 		if !seen {
 			t.Errorf("DeleteProjectMember would leave the %q relation behind", r)
+		}
+	}
+}
+
+// fakeSchema stands in for the SpiceDB schema service at boot.
+type fakeSchema struct {
+	text string
+	err  error
+}
+
+func (f *fakeSchema) ReadSchema(_ context.Context, _ *v1.ReadSchemaRequest, _ ...grpc.CallOption) (*v1.ReadSchemaResponse, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &v1.ReadSchemaResponse{SchemaText: f.text}, nil
+}
+
+// Boot wiring: the checker uses can_work only when the live schema defines it;
+// a missing or unreadable schema switches the work gate to can_manage.
+func TestConfigureWorkGate(t *testing.T) {
+	shipped, err := os.ReadFile("../migrate/schema/goquest.zed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]struct {
+		sr        schemaReader
+		wantFound bool
+		wantPerm  string
+		wantErr   bool
+	}{
+		"schema defines can_work": {&fakeSchema{text: string(shipped)}, true, PermCanWork, false},
+		"schema lacks can_work":   {&fakeSchema{text: "definition ticket {}"}, false, "can_manage", false},
+		"schema unreadable":       {&fakeSchema{err: errors.New("unavailable")}, false, "can_manage", true},
+	}
+	for name, tc := range cases {
+		ch := &Checker{}
+		found, err := configureWorkGate(context.Background(), tc.sr, ch)
+		if found != tc.wantFound || (err != nil) != tc.wantErr {
+			t.Errorf("%s: found=%v err=%v, want found=%v err-set=%v", name, found, err, tc.wantFound, tc.wantErr)
+		}
+		if got := ch.WorkPermission(); got != tc.wantPerm {
+			t.Errorf("%s: work permission = %q, want %q", name, got, tc.wantPerm)
 		}
 	}
 }
