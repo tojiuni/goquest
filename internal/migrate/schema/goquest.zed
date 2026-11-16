@@ -28,11 +28,15 @@ definition project {
   relation admin:  user
   relation member: user
   relation viewer: user
+  // editor: works tickets (status, assignee, dates, priority, title/description,
+  // sub-tickets, relations) without the management powers of admin.
+  relation editor: user
 
   // Inherited from workspace
-  permission can_view   = admin + member + viewer
+  permission can_view   = admin + editor + member + viewer
                         + workspace->can_view
   permission can_manage = admin + workspace->can_manage
+  permission can_edit   = editor + can_manage
   permission can_admin  = workspace->can_admin
 }
 
@@ -52,4 +56,8 @@ definition ticket {
 
   // Combined; the handler picks which to check based on ticket.visibility
   permission can_manage = project->can_manage + requester
+
+  // Day-to-day work on a ticket: project editors plus everyone who can manage.
+  // Deliberately NOT including assignee (spec Q2).
+  permission can_work = project->can_edit + can_manage
 }

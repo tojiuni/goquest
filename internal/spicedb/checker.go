@@ -21,6 +21,9 @@ const (
 // Checker runs CheckPermission calls against SpiceDB.
 type Checker struct {
 	c *Client
+	// workPerm replaces PermCanWork when the live schema predates can_work
+	// (see UseManageForWork). Empty means PermCanWork.
+	workPerm string
 }
 
 // CanViewTicket returns true if userID may view the ticket.
@@ -89,4 +92,36 @@ func (ch *Checker) check(ctx context.Context, resType, resID, permission, subTyp
 		return false, fmt.Errorf("spicedb check %s/%s %s: %w", resType, resID, permission, err)
 	}
 	return resp.Permissionship == v1.CheckPermissionResponse_PERMISSIONSHIP_HAS_PERMISSION, nil
+}
+
+// PermCanWork is the ticket permission for day-to-day work: project editors and
+// everyone who can manage. It is looked up through the generic Check so adding it
+// did not change the PermissionChecker interface.
+const PermCanWork = "can_work"
+
+// CanWorkTicket reports whether userID may work ticketID (see PermCanWork).
+func CanWorkTicket(ctx context.Context, c PermissionChecker, ticketID uuid.UUID, userID string) (bool, error) {
+	perm := PermCanWork
+	if wp, ok := c.(interface{ WorkPermission() string }); ok {
+		perm = wp.WorkPermission()
+	}
+	return c.Check(ctx, TypeTicket, ticketID.String(), perm, userID)
+}
+
+// fallbackWorkPerm is the work permission used when the live schema has no
+// can_work. can_manage is a strict subset of can_work, so the fallback only ever
+// removes editor access; it never grants anything an editor could not already do.
+const fallbackWorkPerm = "can_manage"
+
+// UseManageForWork makes this checker answer the work gate with can_manage.
+// Boot calls it when the SpiceDB schema has no can_work (deploy-order safety):
+// editors lose work access (fail closed) and managers keep it.
+func (ch *Checker) UseManageForWork() { ch.workPerm = fallbackWorkPerm }
+
+// WorkPermission is the permission the work gate checks on this checker.
+func (ch *Checker) WorkPermission() string {
+	if ch.workPerm == "" {
+		return PermCanWork
+	}
+	return ch.workPerm
 }

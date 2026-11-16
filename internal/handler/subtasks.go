@@ -67,16 +67,18 @@ func (h *TicketHandler) SubtasksFromText(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "lookup parent ticket: "+err.Error())
 		return
 	}
-	if parent.ProjectID != nil {
-		ok, err := h.checker.CanManageTicket(r.Context(), parentID, actor)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "permission check: "+err.Error())
-			return
-		}
-		if !ok {
-			writeError(w, http.StatusForbidden, "access denied")
-			return
-		}
+	visible, workable, err := h.ticketAccess(r.Context(), parent, actor)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check: "+err.Error())
+		return
+	}
+	if !visible {
+		writeError(w, http.StatusNotFound, "parent ticket not found")
+		return
+	}
+	if !workable {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
 	}
 
 	if h.cogito == nil {
@@ -178,16 +180,18 @@ func (h *TicketHandler) SubtasksFromChat(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "lookup parent ticket: "+err.Error())
 		return
 	}
-	if parent.ProjectID != nil {
-		ok, err := h.checker.CanManageTicket(r.Context(), parentID, actor)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "permission check: "+err.Error())
-			return
-		}
-		if !ok {
-			writeError(w, http.StatusForbidden, "access denied")
-			return
-		}
+	visible, workable, err := h.ticketAccess(r.Context(), parent, actor)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check: "+err.Error())
+		return
+	}
+	if !visible {
+		writeError(w, http.StatusNotFound, "parent ticket not found")
+		return
+	}
+	if !workable {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
 	}
 
 	if h.cogito == nil {

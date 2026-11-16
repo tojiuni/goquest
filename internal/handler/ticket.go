@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -397,6 +398,33 @@ func (h *TicketHandler) Update(w http.ResponseWriter, r *http.Request) {
 	ignored := unknownUpdateFields(raw)
 
 	actor := auth.RequesterID(r)
+	// RequireTicketWork let an editor in; what an editor may change is narrower
+	// than what a manager may. All-or-nothing: no part of a request that reaches
+	// outside the editor remit is applied.
+	cur := auth.TicketFrom(r)
+	if cur == nil {
+		if cur, err = h.svc.Get(r.Context(), id); err != nil {
+			if errors.Is(err, ticket.ErrNotFound) {
+				writeError(w, http.StatusNotFound, "ticket not found")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "lookup ticket")
+			return
+		}
+	}
+	bad, err := h.editorFieldViolations(r.Context(), cur, actor, req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check")
+		return
+	}
+	if len(bad) > 0 {
+		writeJSON(w, http.StatusForbidden, map[string]any{
+			"error":  "these fields need manage access: " + strings.Join(bad, ", "),
+			"reason": "field_requires_manage",
+			"fields": bad,
+		})
+		return
+	}
 	t, err := h.svc.Update(r.Context(), id, req, actor)
 	if err != nil {
 		if errors.Is(err, ticket.ErrNotFound) {
@@ -567,18 +595,33 @@ func (h *TicketHandler) BulkUpdate(w http.ResponseWriter, r *http.Request) {
 			results = append(results, res)
 			continue
 		}
-		if t.ProjectID != nil {
-			ok, err := h.checker.CanManageTicket(r.Context(), id, actor)
-			if err != nil {
-				res.Error = "permission check"
-				results = append(results, res)
-				continue
-			}
-			if !ok {
-				res.Error = "access denied"
-				results = append(results, res)
-				continue
-			}
+		visible, workable, err := h.ticketAccess(r.Context(), t, actor)
+		if err != nil {
+			res.Error = "permission check"
+			results = append(results, res)
+			continue
+		}
+		if !visible {
+			res.Error = "ticket not found" // as for a missing id: restricted tickets stay hidden
+			results = append(results, res)
+			continue
+		}
+		if !workable {
+			res.Error = "access denied"
+			results = append(results, res)
+			continue
+		}
+		// same all-or-nothing editor rule as PATCH, per ticket
+		bad, err := h.editorFieldViolations(r.Context(), t, actor, req.Patch)
+		if err != nil {
+			res.Error = "permission check"
+			results = append(results, res)
+			continue
+		}
+		if len(bad) > 0 {
+			res.Error = "field_requires_manage: " + strings.Join(bad, ", ")
+			results = append(results, res)
+			continue
 		}
 		ut, err := h.svc.Update(r.Context(), id, req.Patch, actor)
 		if err != nil {
@@ -673,16 +716,18 @@ func (h *TicketHandler) BulkCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "lookup parent ticket: "+err.Error())
 		return
 	}
-	if parent.ProjectID != nil {
-		ok, err := h.checker.CanManageTicket(r.Context(), req.ParentID, actor)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "permission check: "+err.Error())
-			return
-		}
-		if !ok {
-			writeError(w, http.StatusForbidden, "access denied")
-			return
-		}
+	visible, workable, err := h.ticketAccess(r.Context(), parent, actor)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check: "+err.Error())
+		return
+	}
+	if !visible {
+		writeError(w, http.StatusNotFound, "parent ticket not found")
+		return
+	}
+	if !workable {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
 	}
 
 	resp, err := h.svc.BulkCreate(r.Context(), req, actor)
@@ -1477,4 +1522,47 @@ func logIgnoredFields(ignored []string, actor, userAgent string) {
 		userAgent = userAgent[:120] + "…"
 	}
 	log.Printf("ticket update: ignored fields %q by %q ua=%q", names, actor, userAgent)
+}
+
+// editorFieldViolations returns the fields of req that actor may not set on t.
+// A manager, and any ticket without a project (no SpiceDB gate), may set anything.
+// Everyone else who got past RequireTicketWork is an editor and is held to
+// ticket.EditorFieldViolations.
+func (h *TicketHandler) editorFieldViolations(ctx context.Context, t *ticket.Ticket, actor string, req ticket.UpdateTicketReq) ([]string, error) {
+	if t == nil || t.ProjectID == nil {
+		return nil, nil
+	}
+	manager, err := h.checker.CanManageTicket(ctx, t.ID, actor)
+	if err != nil {
+		return nil, err
+	}
+	if manager {
+		return nil, nil
+	}
+	bad := ticket.EditorFieldViolations(req)
+	// Approval is a manager decision: while a ticket awaits approval, moving its
+	// status (approve, send back, or otherwise) is manage-only. Requesting approval
+	// from in_progress stays open to editors because t.Status is not pending then.
+	if t.Status == ticket.StatusPendingApproval && req.Status != nil && *req.Status != t.Status &&
+		!slices.Contains(bad, "status") {
+		bad = append(bad, "status")
+		sort.Strings(bad)
+	}
+	return bad, nil
+}
+
+// ticketAccess reports whether actor can see t and whether they can work it.
+// Legacy tickets (no project) are not SpiceDB-gated and count as both. Callers
+// report an invisible ticket exactly like a missing one, so restricted tickets do
+// not reveal their existence.
+func (h *TicketHandler) ticketAccess(ctx context.Context, t *ticket.Ticket, actor string) (visible, workable bool, err error) {
+	if t.ProjectID == nil {
+		return true, true, nil
+	}
+	visible, err = h.checker.CanViewTicket(ctx, t.ID, actor, spicedb.VisibilityMode(t.Visibility))
+	if err != nil || !visible {
+		return false, false, err
+	}
+	workable, err = spicedb.CanWorkTicket(ctx, h.checker, t.ID, actor)
+	return true, workable, err
 }

@@ -45,9 +45,13 @@ func (w *Writer) WriteProjectMember(ctx context.Context, projectID uuid.UUID, us
 	return w.write(ctx, touch(TypeProject, projectID.String(), role, TypeUser, userID, ""))
 }
 
+// projectMemberRoles lists every direct project role relation. A role missing
+// here survives a member removal, so keep it in step with project.Role.
+var projectMemberRoles = []string{"admin", "editor", "member", "viewer"}
+
 // DeleteProjectMember removes all direct role relations for a user in a project.
 func (w *Writer) DeleteProjectMember(ctx context.Context, projectID uuid.UUID, userID string) error {
-	for _, role := range []string{"admin", "member", "viewer"} {
+	for _, role := range projectMemberRoles {
 		if err := w.delete(ctx, TypeProject, projectID.String(), role, TypeUser, userID, ""); err != nil {
 			return err
 		}
