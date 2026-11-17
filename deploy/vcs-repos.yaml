@@ -64,3 +64,6 @@ repos:
   - repo: tojiuni/obarun
     project: obarun
     workspace: obarun
+  # iim-hub: iim 프로젝트 연결 (2026-11-17, toji-desk 요청). 웹훅은 vcs-reconcile이 생성.
+  - repo: tojiuni/iim-hub
+    project: iim
