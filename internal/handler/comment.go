@@ -54,12 +54,18 @@ type MentionNotifier interface {
 }
 
 type CommentHandler struct {
+	requester      *RequesterResolver
 	svc            CommentSvc
 	canSeeInternal CanSeeInternal
 	tickets        TicketGetter
 	mentions       MentionSvc
 	mentionEmitter MentionEmitter
 	notifier       MentionNotifier
+}
+
+func (h *CommentHandler) WithRequesterResolver(r *RequesterResolver) *CommentHandler {
+	h.requester = r
+	return h
 }
 
 // WithMentionNotifier enables mention notifications; optional.
@@ -157,7 +163,17 @@ func (h *CommentHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"comments": list})
+	type commentResponse struct {
+		*comment.Comment
+		Requester requesterIdentity `json:"requester"`
+	}
+	responses := make([]commentResponse, 0, len(list))
+	tk := auth.TicketFrom(r)
+	cache := make(map[string]requesterLookupResult)
+	for _, c := range list {
+		responses = append(responses, commentResponse{c, h.requester.resolveCached(r, tk, c.AuthorID, cache)})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"comments": responses})
 }
 
 // PATCH /tickets/:id/comments/:cid

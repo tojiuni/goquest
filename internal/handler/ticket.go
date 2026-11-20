@@ -48,20 +48,27 @@ type LinksProvider interface {
 // ticket->vcs import cycle.
 type ticketWithLinks struct {
 	*ticket.Ticket
-	VcsLinks []vcs.VcsLink `json:"vcs_links,omitempty"`
+	VcsLinks  []vcs.VcsLink     `json:"vcs_links,omitempty"`
+	Requester requesterIdentity `json:"requester"`
 }
 
 type TicketHandler struct {
-	svc      *ticket.Service
-	checker  spicedb.PermissionChecker
-	writer   spicedb.RelationshipWriter
-	resolver ProjectResolver
-	tags     TagResolver
-	audit    audit.Logger
-	links    LinksProvider
-	cogito   CogitoSplitter
+	requester *RequesterResolver
+	svc       *ticket.Service
+	checker   spicedb.PermissionChecker
+	writer    spicedb.RelationshipWriter
+	resolver  ProjectResolver
+	tags      TagResolver
+	audit     audit.Logger
+	links     LinksProvider
+	cogito    CogitoSplitter
 	// approvals mirrors POST /approve sign-offs as approval records; optional.
 	approvals ApproveRecorder
+}
+
+func (h *TicketHandler) WithRequesterResolver(r *RequesterResolver) *TicketHandler {
+	h.requester = r
+	return h
 }
 
 // ApproveRecorder records a legacy /approve sign-off as an approval record.
@@ -212,7 +219,7 @@ func (h *TicketHandler) GetByName(w http.ResponseWriter, r *http.Request) {
 	if h.links != nil {
 		links, _ = h.links.LinksForTicket(r.Context(), t.ID)
 	}
-	writeJSON(w, http.StatusOK, ticketWithLinks{Ticket: t, VcsLinks: links})
+	writeJSON(w, http.StatusOK, ticketWithLinks{Ticket: t, VcsLinks: links, Requester: h.requester.resolve(r, t, t.RequesterID)})
 }
 
 // orgScopeForSide builds the caller's org-axis filter, but only when they
@@ -372,7 +379,7 @@ func (h *TicketHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if h.links != nil {
 		links, _ = h.links.LinksForTicket(r.Context(), t.ID)
 	}
-	writeJSON(w, http.StatusOK, ticketWithLinks{Ticket: t, VcsLinks: links})
+	writeJSON(w, http.StatusOK, ticketWithLinks{Ticket: t, VcsLinks: links, Requester: h.requester.resolve(r, t, t.RequesterID)})
 }
 
 func (h *TicketHandler) Update(w http.ResponseWriter, r *http.Request) {
