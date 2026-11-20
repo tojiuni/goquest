@@ -340,10 +340,19 @@ func main() {
 	// LymphhubOIDCURL) → noopLookuper, so /users/lookup stays live but always
 	// returns [] until the lymphhub service client secrets are provisioned.
 	var userLookup directory.Lookuper = noopLookuper{}
+	var requesterAccounts interface {
+		ResolveRequester(context.Context, uuid.UUID, string) (*directory.Actor, error)
+	}
 	if cfg.LymphhubOIDCURL != "" && cfg.LymphhubServiceClientID != "" {
 		directoryClient := directory.NewClient(cfg.LymphhubOIDCURL, cfg.LymphhubOIDCHost, cfg.LymphhubServiceClientID, cfg.LymphhubServiceClientSecret, http.DefaultClient)
 		userLookup = directory.NewCachedLookuper(directoryClient, 5*time.Minute)
+		if cfg.LymphhubServiceClientSecret != "" {
+			requesterAccounts = handler.NewTenantRequesterAccounts(cfg.LymphhubOIDCHost, directoryClient)
+		}
 	}
+	requesterResolver := handler.NewRequesterResolver(pjSvc, wsSvc, requesterAccounts)
+	ticketH.WithRequesterResolver(requesterResolver)
+	commentH.WithRequesterResolver(requesterResolver)
 	usersH := handler.NewUsersHandler(userLookup)
 	mentionH := handler.NewMentionHandler(mentionSvc, userLookup)
 	// Notify people (Zulip DM) and session accounts (signed webhook) about new
