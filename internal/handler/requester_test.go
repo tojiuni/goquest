@@ -8,8 +8,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/tojiuni/goquest/internal/auth"
+	"github.com/tojiuni/goquest/internal/comment"
 	"github.com/tojiuni/goquest/internal/directory"
 	"github.com/tojiuni/goquest/internal/project"
 	"github.com/tojiuni/goquest/internal/ticket"
@@ -89,5 +91,125 @@ func TestRequesterTenantLookup(t *testing.T) {
 				t.Fatal("lookup called without tenant host")
 			}
 		})
+	}
+}
+
+type requesterLookupFunc func(context.Context, []string) ([]directory.Actor, error)
+
+func (f requesterLookupFunc) Lookup(ctx context.Context, ids []string) ([]directory.Actor, error) {
+	return f(ctx, ids)
+}
+
+func TestRequesterRejectsMismatchedLookup(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		actors []directory.Actor
+	}{
+		{"prefix", []directory.Actor{{ID: "alice-more", Email: "alice-more@example.com"}}},
+		{"two results", []directory.Actor{{ID: "alice", Email: "alice@example.com"}, {ID: "other"}}},
+		{"different id", []directory.Actor{{ID: "other", Email: "other@example.com"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pid := uuid.New()
+			tk := &ticket.Ticket{ProjectID: &pid}
+			lookup := requesterLookupFunc(func(context.Context, []string) ([]directory.Actor, error) { return tc.actors, nil })
+			resolver := NewRequesterResolver(requesterTestProject{uuid.New()}, requesterTestMember{true}, NewTenantRequesterAccounts("tenant.example", lookup))
+			r := httptest.NewRequest("GET", "/", nil)
+			r = r.WithContext(auth.WithRequesterID(r.Context(), "caller"))
+			got := resolver.resolve(r, tk, "alice")
+			if got.ActorID != "" || got.Email != "" || got.DisplayName != "alice" {
+				t.Fatalf("unexpected requester: %+v", got)
+			}
+		})
+	}
+}
+
+type requesterCommentSvc struct{ list []*comment.Comment }
+
+func (s requesterCommentSvc) ListByTicket(context.Context, uuid.UUID, bool) ([]*comment.Comment, error) {
+	return s.list, nil
+}
+func (s requesterCommentSvc) Create(context.Context, uuid.UUID, string, comment.AuthorKind, comment.CreateReq) (*comment.Comment, error) {
+	return nil, nil
+}
+func (s requesterCommentSvc) Update(context.Context, uuid.UUID, string, comment.UpdateReq) (*comment.Comment, error) {
+	return nil, nil
+}
+func (s requesterCommentSvc) Delete(context.Context, uuid.UUID, string) error { return nil }
+func (s requesterCommentSvc) Publish(context.Context, uuid.UUID, comment.AuthorKind) error {
+	return nil
+}
+
+type requesterCountingMember struct {
+	calls  int
+	member bool
+}
+
+func (m *requesterCountingMember) GetMember(context.Context, uuid.UUID, string) (*workspace.Member, error) {
+	m.calls++
+	if m.member {
+		return &workspace.Member{}, nil
+	}
+	return nil, errors.New("not member")
+}
+
+func TestRequesterTicketAndCommentResponses(t *testing.T) {
+	pid, tid := uuid.New(), uuid.New()
+	tk := &ticket.Ticket{ID: tid, ProjectID: &pid, RequesterID: "alice"}
+	calls := 0
+	lookup := requesterLookupFunc(func(_ context.Context, ids []string) ([]directory.Actor, error) {
+		calls++
+		return []directory.Actor{{ID: ids[0], DisplayName: "Alice", Email: "alice@example.com"}}, nil
+	})
+	members := &requesterCountingMember{member: true}
+	resolver := NewRequesterResolver(requesterTestProject{uuid.New()}, members, NewTenantRequesterAccounts("tenant.example", lookup))
+	request := func() *http.Request {
+		r := httptest.NewRequest("GET", "/", nil)
+		ctx := auth.WithTicket(r.Context(), tk)
+		ctx = auth.WithRequesterID(ctx, "caller")
+		route := chi.NewRouteContext()
+		route.URLParams.Add("id", tid.String())
+		ctx = context.WithValue(ctx, chi.RouteCtxKey, route)
+		return r.WithContext(ctx)
+	}
+	ticketHandler := NewTicketHandler(nil, nil, nil, nil, nil, nil, nil, nil).WithRequesterResolver(resolver)
+	rec := httptest.NewRecorder()
+	ticketHandler.Get(rec, request())
+	var ticketBody struct {
+		Requester requesterIdentity `json:"requester"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &ticketBody); err != nil || rec.Code != http.StatusOK || ticketBody.Requester.ActorID != "alice" || ticketBody.Requester.Email != "alice@example.com" {
+		t.Fatalf("ticket: %d %s %v", rec.Code, rec.Body.String(), err)
+	}
+	calls = 0
+	members.calls = 0
+	commentHandler := NewCommentHandler(requesterCommentSvc{[]*comment.Comment{{AuthorID: "alice"}, {AuthorID: "alice"}}}, nil).WithRequesterResolver(resolver)
+	rec = httptest.NewRecorder()
+	commentHandler.List(rec, request())
+	var body struct {
+		Comments []struct {
+			Requester requesterIdentity `json:"requester"`
+		} `json:"comments"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || rec.Code != http.StatusOK || len(body.Comments) != 2 {
+		t.Fatalf("comments: %d %s %v", rec.Code, rec.Body.String(), err)
+	}
+	for _, c := range body.Comments {
+		if c.Requester.ActorID != "alice" || c.Requester.Email != "alice@example.com" {
+			t.Fatalf("comment requester: %+v", c.Requester)
+		}
+	}
+	if calls != 1 || members.calls != 2 {
+		t.Fatalf("lookups=%d membership checks=%d", calls, members.calls)
+	}
+	members.member = false
+	rec = httptest.NewRecorder()
+	commentHandler.List(rec, request())
+	body.Comments = nil
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Comments[0].Requester.Email != "" || calls != 2 {
+		t.Fatalf("membership or request cache leaked: %s", rec.Body.String())
 	}
 }

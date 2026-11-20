@@ -59,6 +59,15 @@ func NewRequesterResolver(p requesterProjects, m requesterMembers, d requesterTe
 }
 
 func (rr *RequesterResolver) resolve(r *http.Request, t *ticket.Ticket, raw string) requesterIdentity {
+	return rr.resolveCached(r, t, raw, nil)
+}
+
+type requesterLookupResult struct {
+	actor *directory.Actor
+	err   error
+}
+
+func (rr *RequesterResolver) resolveCached(r *http.Request, t *ticket.Ticket, raw string, cache map[string]requesterLookupResult) requesterIdentity {
 	result := requesterIdentity{DisplayName: raw}
 	if rr == nil || rr.accounts == nil || t == nil || t.ProjectID == nil || rr.projects == nil {
 		return result
@@ -67,7 +76,14 @@ func (rr *RequesterResolver) resolve(r *http.Request, t *ticket.Ticket, raw stri
 	if err != nil || p == nil {
 		return result
 	}
-	a, err := rr.accounts.ResolveRequester(r.Context(), p.WorkspaceID, raw)
+	entry, ok := cache[raw]
+	if !ok {
+		entry.actor, entry.err = rr.accounts.ResolveRequester(r.Context(), p.WorkspaceID, raw)
+		if cache != nil {
+			cache[raw] = entry
+		}
+	}
+	a, err := entry.actor, entry.err
 	if err != nil || a == nil || a.ID == "" {
 		return result
 	}

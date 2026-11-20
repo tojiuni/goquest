@@ -169,8 +169,9 @@ func (h *CommentHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	responses := make([]commentResponse, 0, len(list))
 	tk := auth.TicketFrom(r)
+	cache := make(map[string]requesterLookupResult)
 	for _, c := range list {
-		responses = append(responses, commentResponse{c, h.requester.resolve(r, tk, c.AuthorID)})
+		responses = append(responses, commentResponse{c, h.requester.resolveCached(r, tk, c.AuthorID, cache)})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"comments": responses})
 }

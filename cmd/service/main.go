@@ -344,7 +344,7 @@ func main() {
 		ResolveRequester(context.Context, uuid.UUID, string) (*directory.Actor, error)
 	}
 	if cfg.LymphhubOIDCURL != "" && cfg.LymphhubServiceClientID != "" {
-		directoryClient := directory.NewClient(cfg.LymphhubOIDCURL, cfg.LymphhubOIDCHost, cfg.LymphhubServiceClientID, cfg.LymphhubServiceClientSecret, http.DefaultClient)
+		directoryClient := directory.NewClient(cfg.LymphhubOIDCURL, cfg.LymphhubOIDCHost, cfg.LymphhubServiceClientID, cfg.LymphhubServiceClientSecret, &http.Client{Timeout: 5 * time.Second})
 		userLookup = directory.NewCachedLookuper(directoryClient, 5*time.Minute)
 		if cfg.LymphhubServiceClientSecret != "" {
 			requesterAccounts = handler.NewTenantRequesterAccounts(cfg.LymphhubOIDCHost, directoryClient)
