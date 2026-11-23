@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -127,7 +128,11 @@ func (h *CommentHandler) extractMentions(ctx context.Context, ticketID, commentI
 		return
 	}
 	t, err := h.tickets.Get(ctx, ticketID)
-	if err != nil || t.ProjectID == nil {
+	if err != nil {
+		log.Printf("mention: load ticket %s for mentions failed, mentions skipped: %v", ticketID, err)
+		return
+	}
+	if t.ProjectID == nil {
 		return
 	}
 	if t.Visibility == ticket.VisibilityRestricted {
@@ -137,6 +142,7 @@ func (h *CommentHandler) extractMentions(ctx context.Context, ticketID, commentI
 	}
 	created, err := h.mentions.CreateFromBody(ctx, ticketID, *t.ProjectID, &commentID, mention.SourceComment, authorID, body)
 	if err != nil {
+		log.Printf("mention: create rows for comment %s on ticket %s failed: %v", commentID, ticketID, err)
 		return
 	}
 	if h.mentionEmitter != nil {

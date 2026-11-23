@@ -1,7 +1,11 @@
 package mention_test
 
 import (
+	"bytes"
 	"context"
+	"log"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -105,6 +109,122 @@ func TestCreateFromBody_OnlyMentionsProjectMembers(t *testing.T) {
 	got := map[string]bool{created[0].MentionedActorID: true, created[1].MentionedActorID: true}
 	if !got["alice"] || !got["bob"] {
 		t.Fatalf("expected alice+bob mentioned, got %v", got)
+	}
+}
+
+// goq-session-mention-row-not-created: a sentence-final "." or "-" must not
+// stop an exact member id from matching.
+func TestCreateFromBody_TrailingPunctuationStillMatches(t *testing.T) {
+	store := &mockStore{}
+	members := &mockMembers{members: []*mention.ProjectMember{{UserID: "alice"}}}
+	svc := mention.NewService(store, members)
+
+	created, err := svc.CreateFromBody(
+		context.Background(), uuid.New(), uuid.New(), nil, mention.SourceComment,
+		"carol", "확인 부탁해요 @alice. 그리고 @alice-",
+	)
+	if err != nil {
+		t.Fatalf("CreateFromBody: %v", err)
+	}
+	if len(created) != 1 || created[0].MentionedActorID != "alice" {
+		t.Fatalf("want exactly one alice row (deduped), got %+v", created)
+	}
+}
+
+// ULID member keys keep working unchanged (the case that already passed).
+func TestCreateFromBody_ULIDMentionUnchanged(t *testing.T) {
+	const ulid = "01M518QYPETVGD07NA3H7CFNA7"
+	store := &mockStore{}
+	members := &mockMembers{members: []*mention.ProjectMember{{UserID: ulid}}}
+	svc := mention.NewService(store, members)
+
+	created, err := svc.CreateFromBody(
+		context.Background(), uuid.New(), uuid.New(), nil, mention.SourceComment,
+		"carol", "@"+ulid+" 확인",
+	)
+	if err != nil {
+		t.Fatalf("CreateFromBody: %v", err)
+	}
+	if len(created) != 1 || created[0].MentionedActorID != ulid {
+		t.Fatalf("want one ULID row, got %+v", created)
+	}
+}
+
+// Restricted tickets: a workspace-only member must not become mentionable.
+func TestCreateFromBody_RestrictedTicketHidesWorkspaceOnlyMember(t *testing.T) {
+	store := &mockStore{}
+	lister := mention.EligibleLister{
+		Project:     func(context.Context, uuid.UUID) ([]string, error) { return []string{"alice"}, nil },
+		WorkspaceOf: func(context.Context, uuid.UUID) (uuid.UUID, error) { return uuid.New(), nil },
+		Workspace:   func(context.Context, uuid.UUID) ([]string, error) { return []string{"eve"}, nil },
+	}
+	svc := mention.NewService(store, lister)
+
+	ctx := mention.WithProjectMembersOnly(context.Background())
+	created, err := svc.CreateFromBody(
+		ctx, uuid.New(), uuid.New(), nil, mention.SourceComment,
+		"carol", "@eve @alice.",
+	)
+	if err != nil {
+		t.Fatalf("CreateFromBody: %v", err)
+	}
+	if len(created) != 1 || created[0].MentionedActorID != "alice" {
+		t.Fatalf("restricted ticket must mention only project member alice, got %+v", created)
+	}
+}
+
+// A member id that itself ends with "." must still match exactly (raw first).
+func TestCreateFromBody_MemberIdEndingInDotMatchesExactly(t *testing.T) {
+	store := &mockStore{}
+	members := &mockMembers{members: []*mention.ProjectMember{{UserID: "bot."}}}
+	svc := mention.NewService(store, members)
+
+	created, err := svc.CreateFromBody(
+		context.Background(), uuid.New(), uuid.New(), nil, mention.SourceComment,
+		"carol", "ping @bot.",
+	)
+	if err != nil {
+		t.Fatalf("CreateFromBody: %v", err)
+	}
+	if len(created) != 1 || created[0].MentionedActorID != "bot." {
+		t.Fatalf("want exact match bot., got %+v", created)
+	}
+}
+
+// Ignored-token logs must not contain the comment body, must mask email-shaped
+// tokens, must truncate long tokens, and must be capped per comment.
+func TestCreateFromBody_IgnoredTokenLogIsBoundedAndPrivate(t *testing.T) {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+
+	store := &mockStore{}
+	members := &mockMembers{members: []*mention.ProjectMember{{UserID: "alice"}}}
+	svc := mention.NewService(store, members)
+
+	long := strings.Repeat("x", 200)
+	body := "secret-body-text @secretuser@corp.example.com @" + long + " @a1 @a2 @a3 @a4 @a5 @a6"
+	if _, err := svc.CreateFromBody(
+		context.Background(), uuid.New(), uuid.New(), nil, mention.SourceComment,
+		"carol", body,
+	); err != nil {
+		t.Fatalf("CreateFromBody: %v", err)
+	}
+	out := buf.String()
+	if strings.Contains(out, "secret-body-text") {
+		t.Fatalf("log leaked comment body: %s", out)
+	}
+	if strings.Contains(out, "secretuser@corp.example.com") {
+		t.Fatalf("log leaked full email-shaped token: %s", out)
+	}
+	if strings.Contains(out, long) {
+		t.Fatalf("log leaked untruncated long token")
+	}
+	if n := strings.Count(out, "mention: ignored token "); n != 5 {
+		t.Fatalf("want 5 per-token log lines (cap), got %d: %s", n, out)
+	}
+	if !strings.Contains(out, "more ignored tokens") {
+		t.Fatalf("want summary line for overflow: %s", out)
 	}
 }
 
