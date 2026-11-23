@@ -3,7 +3,9 @@ package mention
 import (
 	"context"
 	"fmt"
+	"log"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -60,8 +62,9 @@ func NewService(store Store, members MemberLister) *Service {
 }
 
 // CreateFromBody parses body for @mention tokens, keeps only ids that are
-// current members of projectID (unknown/non-member ids are silently
-// ignored — the token stays as plain text), excludes a self-mention
+// current members of projectID (unknown/non-member ids are not mentioned and
+// the token stays as plain text; each such token is logged, capped per
+// comment, never with the body), excludes a self-mention
 // (authorID mentioning themselves), and persists one Mention row per
 // remaining id. Returns the mentions actually created.
 func (svc *Service) CreateFromBody(
@@ -89,10 +92,24 @@ func (svc *Service) CreateFromBody(
 
 	now := time.Now().UTC()
 	var created []*Mention
-	for _, id := range ids {
-		if id == authorID || !memberSet[id] {
+	matched := make(map[string]bool, len(ids))
+	logged, dropped := 0, 0
+	for _, raw := range ids {
+		id, reason := resolveCandidate(raw, memberSet, authorID)
+		if id == "" {
+			// A silent drop here hid goq-session-mention-row-not-created. Log the
+			// token (never the body), masked and truncated, capped per comment.
+			dropped++
+			if logged < maxIgnoredLogsPerComment {
+				logged++
+				log.Printf("mention: ignored token %s on ticket %s: %s", safeTokenForLog(raw), ticketID, reason)
+			}
 			continue
 		}
+		if matched[id] {
+			continue
+		}
+		matched[id] = true
 		m := &Mention{
 			ID:               uuid.New(),
 			TicketID:         ticketID,
@@ -107,7 +124,58 @@ func (svc *Service) CreateFromBody(
 		}
 		created = append(created, m)
 	}
+	if dropped > logged {
+		log.Printf("mention: %d more ignored tokens on ticket %s not logged (cap %d)", dropped-logged, ticketID, maxIgnoredLogsPerComment)
+	}
 	return created, nil
+}
+
+// maxIgnoredLogsPerComment caps per-token warn lines for one comment so a long
+// or hostile body cannot flood the log.
+const maxIgnoredLogsPerComment = 5
+
+// maxTokenLogLen bounds how much of an ignored token is written to the log.
+const maxTokenLogLen = 32
+
+// safeTokenForLog returns a bounded, privacy-reduced form of a mention token:
+// an email-shaped token keeps only its first local-part character and its
+// domain, and anything longer than maxTokenLogLen is cut.
+func safeTokenForLog(raw string) string {
+	s := raw
+	if i := strings.Index(s, "@"); i >= 0 && strings.Contains(s[i+1:], ".") {
+		local, domain := s[:i], s[i+1:]
+		if local != "" {
+			local = local[:1] + "***"
+		}
+		s = local + "@" + domain
+	}
+	if r := []rune(s); len(r) > maxTokenLogLen {
+		s = string(r[:maxTokenLogLen]) + "…"
+	}
+	return s
+}
+
+// trailingPunct is stripped from the end of a token. Only "." and "-" need it:
+// mentionRE captures those, and no other trailing punctuation reaches here.
+const trailingPunct = ".-"
+
+// resolveCandidate maps one parsed token to an eligible member id. The exact
+// token is tried first, then the token with trailing punctuation removed.
+// Returns "" and a reason when nothing eligible matches.
+func resolveCandidate(raw string, eligible map[string]bool, authorID string) (string, string) {
+	candidates := []string{raw}
+	if trimmed := strings.TrimRight(raw, trailingPunct); trimmed != raw && trimmed != "" {
+		candidates = append(candidates, trimmed)
+	}
+	for _, c := range candidates {
+		if c == authorID {
+			return "", "self-mention"
+		}
+		if eligible[c] {
+			return c, ""
+		}
+	}
+	return "", "not an eligible member"
 }
 
 func (svc *Service) ListByActor(ctx context.Context, actorID string, limit, offset int) ([]*Mention, error) {
