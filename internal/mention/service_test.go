@@ -275,3 +275,30 @@ func TestCreateFromBody_DescriptionSourceHasNilCommentID(t *testing.T) {
 		t.Fatalf("unexpected mention: %+v", created)
 	}
 }
+
+// goq-mention-parser-ignore-code-span: @ids inside code spans, fenced blocks,
+// or quote lines are not mentions; the same id outside them still is.
+func TestCreateFromBody_IgnoresCodeSpanAndQuoteMentions(t *testing.T) {
+	store := &mockStore{}
+	members := &mockMembers{members: []*mention.ProjectMember{{UserID: "alice"}, {UserID: "bob"}}}
+	svc := mention.NewService(store, members)
+
+	body := "title `@alice 재정의` ok\n> quoted @alice\n```\n@alice in fence\n```\nreal @bob"
+	created, err := svc.CreateFromBody(
+		context.Background(), uuid.New(), uuid.New(), nil, mention.SourceComment,
+		"carol", body,
+	)
+	if err != nil {
+		t.Fatalf("CreateFromBody: %v", err)
+	}
+	if len(created) != 1 || created[0].MentionedActorID != "bob" {
+		t.Fatalf("want only bob (code/quote mentions ignored), got %+v", created)
+	}
+}
+
+func TestParseMentionIDs_KeepsMentionOutsideCode(t *testing.T) {
+	got := mention.ParseMentionIDs("see `@x` and @alice")
+	if len(got) != 1 || got[0] != "alice" {
+		t.Fatalf("want [alice], got %v", got)
+	}
+}
