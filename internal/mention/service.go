@@ -22,7 +22,7 @@ var mentionRE = regexp.MustCompile(`@([\w.\-@]+)`)
 // validate them — callers must resolve each id against real project members
 // (see Service.CreateFromBody) before treating it as a real mention.
 func ParseMentionIDs(body string) []string {
-	matches := mentionRE.FindAllStringSubmatch(body, -1)
+	matches := mentionRE.FindAllStringSubmatch(stripNonMentionText(body), -1)
 	if len(matches) == 0 {
 		return nil
 	}
@@ -37,6 +37,21 @@ func ParseMentionIDs(body string) []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+var (
+	fencedCodeRE = regexp.MustCompile("(?s)```.*?```")
+	inlineCodeRE = regexp.MustCompile("`[^`\n]*`")
+	quoteLineRE  = regexp.MustCompile(`(?m)^[ \t]*>.*$`)
+)
+
+// stripNonMentionText removes text a reader does not see as a live mention:
+// fenced code blocks, inline code spans, and block-quote lines. A ticket title
+// quoted in a code span must not wake a member whose id appears in it.
+func stripNonMentionText(body string) string {
+	body = fencedCodeRE.ReplaceAllString(body, " ")
+	body = inlineCodeRE.ReplaceAllString(body, " ")
+	return quoteLineRE.ReplaceAllString(body, " ")
 }
 
 // MemberLister is the subset of project.Service this package depends on, so
